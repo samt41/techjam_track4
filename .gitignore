@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+.venv/
+.superpowers/
 .DS_Store
 .env
 results.json
