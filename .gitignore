@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .superpowers/
+.worktrees/
 .DS_Store
 .env
 results.json
