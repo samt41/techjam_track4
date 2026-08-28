@@ -11,6 +11,12 @@ Only the best run for each meaningful implementation class is retained. Generate
 | Unconditional counterfactual | 0.77 | 0.452417 | 4.875 | 0.643225 | 323.590 s | Rejected: small score gain, slower, lower hit rate |
 | Gated sparse-pool counterfactual | 0.785 | 0.38656 | 4.43 | 0.639868 | 185.492 s | Retained: sparse-pool safety with no metric regression |
 
+## Catalog artifact builds
+
+| Catalog | Products | Catalog size | Database size | Manifest size | Terms | FTS5 | Build time |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| `data/catalog.jsonl` | 50,000 | 60,546,327 B | 575,311,872 B | 652 B | 101,291 | yes | 116.967 s |
+
 ## Constraints and failures
 
 - The catalog contains 112 em-dash prices and five `from N` display prices; these normalize to unknown to avoid false hard-budget decisions.
@@ -18,3 +24,4 @@ Only the best run for each meaningful implementation class is retained. Generate
 - Intent-override remains the weakest public scenario at HitRate@10 0.2 and requires further diagnostic analysis.
 - Counterfactual routes run only when strict eligibility yields fewer than the requested slate size. Explicit exclusions are never relaxed.
 - Two final-schema runs had identical canonical summaries, all 200 session outcomes, and all 843 ordered slates. Runtime differed (185.492 s and 126.485 s).
+- The first full artifact build exceeded the 120-second command window while maintaining indexes row by row. Its verified temporary directory was deleted; batching inserts and building secondary indexes after loading produced the retained build above.

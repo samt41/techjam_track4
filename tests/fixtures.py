@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from starter.shopping_agent.catalog_artifacts import CatalogArtifactBuilder
+
 
 def sample_products() -> list[dict[str, object]]:
     products: list[dict[str, object]] = [
@@ -54,3 +56,13 @@ def write_catalog(directory: Path, products: list[dict[str, object]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def build_test_artifacts(
+    directory: Path,
+    products: list[dict[str, object]],
+) -> tuple[Path, Path]:
+    catalog_path = write_catalog(directory, products)
+    artifact_path = directory / "catalog.artifacts"
+    CatalogArtifactBuilder().build(catalog_path, artifact_path)
+    return catalog_path, artifact_path
