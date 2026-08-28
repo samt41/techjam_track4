@@ -145,7 +145,11 @@ class ProductRanker:
     ]:
         # Memoize so the coordinator's rank() and strict_population() calls on
         # the same candidate objects and intent do not fetch or belief-score
-        # twice within one turn.
+        # twice within one turn. The key is object identity, so the cache MUST
+        # retain references to those inputs (see the assignment below): CPython
+        # recycles the id() of a freed object, so without a live reference a
+        # later turn's new tuple could be allocated at a previous turn's address
+        # and score a false cache hit — a nondeterministic cross-run corruption.
         cache_key = (id(candidates), id(intent), id(profile))
         if self._scored_cache is not None and self._scored_cache[0] == cache_key:
             return self._scored_cache[1]
@@ -241,7 +245,9 @@ class ProductRanker:
                 )
 
         result = (eligible, posterior_by_id, contributions_by_id)
-        self._scored_cache = (cache_key, result)
+        # Retain the keyed inputs alongside the result so their id() cannot be
+        # reused by a later allocation while this entry is live.
+        self._scored_cache = (cache_key, result, candidates, intent, profile)
         return result
 
 
