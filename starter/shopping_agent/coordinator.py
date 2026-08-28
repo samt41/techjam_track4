@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.constraint_extractor import ConstraintExtractor
-from starter.shopping_agent.models import TurnResponse, UserProfile
+from starter.shopping_agent.models import (
+    RecommendationHistory,
+    TurnResponse,
+    UserProfile,
+)
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import ProductRanker
 from starter.shopping_agent.response import ResponseValidator
@@ -15,6 +19,7 @@ from starter.shopping_agent.retrieval import CandidateGenerator, RetrievalPlanne
 class _SessionState:
     profile: UserProfile
     ledger: PreferenceLedger
+    history: RecommendationHistory
 
 
 class TurnCoordinator:
@@ -38,6 +43,7 @@ class TurnCoordinator:
         self._sessions[session_id] = _SessionState(
             profile=profile,
             ledger=PreferenceLedger(),
+            history=RecommendationHistory(),
         )
 
     def respond(
@@ -62,10 +68,14 @@ class TurnCoordinator:
         recommendations = self._ranker.rank(
             candidates,
             intent,
-            shown_product_ids=frozenset(),
+            shown_product_ids=state.history.shown_for(intent.intent_version),
             top_k=top_k,
         )
         recommendations = self._validator.validate(recommendations, top_k)
+        state.history.record(
+            intent.intent_version,
+            tuple(item.parent_asin for item in recommendations),
+        )
         return TurnResponse(
             message="Here are the strongest matches for your current preferences.",
             ask_attribute=None,

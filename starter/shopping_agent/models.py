@@ -104,6 +104,7 @@ class PreferenceUpdate:
     confidence: float
     source_turn: int
     source_text: str
+    intent_override: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +122,24 @@ class ShoppingIntent:
     declined_attributes: frozenset[Attribute]
     asked_attributes: tuple[Attribute, ...]
     intent_version: int
+
+
+@dataclass(slots=True)
+class RecommendationHistory:
+    _intent_version: int | None = None
+    _shown_product_ids: frozenset[str] = frozenset()
+
+    def shown_for(self, intent_version: int) -> frozenset[str]:
+        if self._intent_version != intent_version:
+            return frozenset()
+        return self._shown_product_ids
+
+    def record(self, intent_version: int, product_ids: tuple[str, ...]) -> None:
+        if self._intent_version != intent_version:
+            self._intent_version = intent_version
+            self._shown_product_ids = frozenset(product_ids)
+            return
+        self._shown_product_ids = self._shown_product_ids.union(product_ids)
 
 
 @dataclass(frozen=True, slots=True)

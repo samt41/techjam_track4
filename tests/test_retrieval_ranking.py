@@ -12,6 +12,7 @@ from starter.shopping_agent.models import (
     RetrievalRoute,
     Strength,
     UpdateAction,
+    RecommendationHistory,
 )
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import EligibilityGate, ProductRanker
@@ -131,6 +132,13 @@ class RetrievalRankingTest(unittest.TestCase):
         self.assertEqual(len({item.parent_asin for item in ranked}), 10)
         self.assertTrue(all(item.exact_match for item in ranked))
         self.assertGreater(ranked[0].score, 0.0)
+
+    def test_recommendation_history_is_scoped_to_intent_version(self) -> None:
+        history = RecommendationHistory()
+        history.record(intent_version=1, product_ids=("A", "B"))
+
+        self.assertEqual(history.shown_for(intent_version=1), frozenset({"A", "B"}))
+        self.assertEqual(history.shown_for(intent_version=2), frozenset())
 
 
 if __name__ == "__main__":

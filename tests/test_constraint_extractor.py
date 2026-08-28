@@ -144,6 +144,21 @@ class ConstraintExtractorTest(unittest.TestCase):
 
         self.assertNotIn("i", [update.value for update in updates])
 
+    def test_slate_feedback_is_not_extracted_as_new_intent(self) -> None:
+        updates = self.extractor.extract(
+            "show me others", turn=2, asked_attribute=None
+        )
+
+        self.assertEqual(updates, ())
+
+    def test_correction_marks_updates_as_intent_override(self) -> None:
+        updates = self.extractor.extract(
+            "Actually I need black boots", turn=3, asked_attribute=None
+        )
+
+        self.assertTrue(updates)
+        self.assertTrue(all(update.intent_override for update in updates))
+
 
 if __name__ == "__main__":
     unittest.main()

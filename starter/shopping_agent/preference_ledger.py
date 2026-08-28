@@ -41,6 +41,7 @@ class PreferenceLedger:
         declined = set(self._intent.declined_attributes)
         concepts = list(self._intent.weighted_concepts)
         active_changed = False
+        explicit_override = any(update.intent_override for update in updates)
 
         for update in updates:
             if update.action is UpdateAction.DECLINE:
@@ -127,7 +128,7 @@ class PreferenceLedger:
             asked_attributes=self._intent.asked_attributes,
             intent_version=(
                 self._intent.intent_version + 1
-                if active_changed
+                if active_changed or explicit_override
                 else self._intent.intent_version
             ),
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.models import (
@@ -34,6 +35,12 @@ _CONTEXT_VALUE_RE = re.compile(
 )
 _SCOPE_BOUNDARY_RE = re.compile(r"[;,.!?]|\b(?:but|however|instead|rather|although)\b")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_SLATE_FEEDBACK_RE = re.compile(
+    r"^(?:show me (?:others|more|something else)|more options|other options|next)$"
+)
+_INTENT_OVERRIDE_RE = re.compile(
+    r"^(?:actually|instead|change|switch|rather)\b"
+)
 _ATTRIBUTE_PRIORITY = (
     Attribute.CATEGORY,
     Attribute.MATERIAL,
@@ -79,6 +86,8 @@ class ConstraintExtractor:
     ) -> tuple[PreferenceUpdate, ...]:
         normalized = normalize_text(message)
         if not normalized:
+            return ()
+        if _SLATE_FEEDBACK_RE.fullmatch(normalized):
             return ()
         if asked_attribute is not None and _DECLINE_RE.fullmatch(normalized):
             return (self._update(
@@ -145,6 +154,8 @@ class ConstraintExtractor:
                     turn=turn,
                     source_text=message,
                 ))
+        if _INTENT_OVERRIDE_RE.search(normalized):
+            updates = [replace(update, intent_override=True) for update in updates]
         return tuple(updates)
 
     def _price_updates(

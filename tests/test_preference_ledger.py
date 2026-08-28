@@ -22,6 +22,7 @@ def update(
     strength: Strength = Strength.SOFT,
     confidence: float = 0.80,
     turn: int = 1,
+    intent_override: bool = False,
 ) -> PreferenceUpdate:
     return PreferenceUpdate(
         action=action,
@@ -33,6 +34,7 @@ def update(
         confidence=confidence,
         source_turn=turn,
         source_text=value or "no preference",
+        intent_override=intent_override,
     )
 
 
@@ -107,6 +109,19 @@ class PreferenceLedgerTest(unittest.TestCase):
 
         self.assertEqual(second.intent_version, first.intent_version)
         self.assertEqual(len(second.active_constraints), 1)
+
+    def test_explicit_override_advances_version_for_history_reset(self) -> None:
+        ledger = PreferenceLedger()
+        first = ledger.apply((update(UpdateAction.SET, Attribute.COLOR, "black"),))
+        second = ledger.apply((update(
+            UpdateAction.SET,
+            Attribute.COLOR,
+            "black",
+            turn=2,
+            intent_override=True,
+        ),))
+
+        self.assertEqual(second.intent_version, first.intent_version + 1)
 
 
 if __name__ == "__main__":

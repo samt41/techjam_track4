@@ -35,6 +35,24 @@ def integration_products() -> list[dict[str, object]]:
     return products
 
 
+def rotation_products() -> list[dict[str, object]]:
+    return [
+        {
+            "parent_asin": f"RED-{number:02d}",
+            "title": f"Red walking shoe {number}",
+            "features": ["comfortable"],
+            "details": {"material": "synthetic", "color": "red"},
+            "description": ["Everyday footwear"],
+            "categories": ["Clothing", "Shoes"],
+            "store": "Example",
+            "average_rating": 4.5,
+            "rating_number": 100 - number,
+            "price": 50.0 + number,
+        }
+        for number in range(1, 25)
+    ]
+
+
 class AgentIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -92,6 +110,25 @@ class AgentIntegrationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "closed"):
             agent.respond("s1", "boots", 1, 10)
+
+    def test_failed_slate_rotates_but_override_resets_suppression(self) -> None:
+        catalog_path = write_catalog(
+            Path(self.temporary_directory.name),
+            rotation_products(),
+        )
+        agent = Agent(catalog_path=catalog_path)
+        self.addCleanup(agent.close)
+        agent.reset("rotate", PROFILE)
+
+        first = agent.respond("rotate", "red shoes", 1, 10)
+        second = agent.respond("rotate", "show me others", 2, 10)
+        override = agent.respond("rotate", "Actually I need red shoes", 3, 10)
+        first_ids = {item["parent_asin"] for item in first["recommendations"]}
+        second_ids = {item["parent_asin"] for item in second["recommendations"]}
+        override_ids = {item["parent_asin"] for item in override["recommendations"]}
+
+        self.assertFalse(first_ids & second_ids)
+        self.assertTrue(first_ids & override_ids)
 
 
 if __name__ == "__main__":
