@@ -25,3 +25,4 @@ Only the best run for each meaningful implementation class is retained. Generate
 - Counterfactual routes run only when strict eligibility yields fewer than the requested slate size. Explicit exclusions are never relaxed.
 - Two final-schema runs had identical canonical summaries, all 200 session outcomes, and all 843 ordered slates. Runtime differed (185.492 s and 126.485 s).
 - The first full artifact build exceeded the 120-second command window while maintaining indexes row by row. Its verified temporary directory was deleted; batching inserts and building secondary indexes after loading produced the retained build above.
+- The fixed backend request has no turn identifier. Exact filtered counts remain uncached in the backend so results cannot leak across turn scopes; shared per-turn route counts belong in the Task 5 coordinator lifecycle.

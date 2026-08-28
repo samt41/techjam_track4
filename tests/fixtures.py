@@ -49,6 +49,37 @@ def sample_products() -> list[dict[str, object]]:
     return products
 
 
+def excluded_prefix_products() -> list[dict[str, object]]:
+    products: list[dict[str, object]] = []
+    for number in range(200):
+        products.append({
+            "parent_asin": f"LEATHER-{number:03d}",
+            "title": f"Premium leather boot {number}",
+            "features": ["basic footwear"],
+            "details": {"material": "leather", "color": "black"},
+            "description": ["General use"],
+            "categories": ["Clothing", "Boots"],
+            "store": "Example",
+            "average_rating": 5.0,
+            "rating_number": 10_000,
+            "price": 100.0,
+        })
+    for number in range(50):
+        products.append({
+            "parent_asin": f"CANVAS-{number:03d}",
+            "title": f"Canvas boot {number}",
+            "features": ["basic footwear"],
+            "details": {"material": "canvas", "color": "black"},
+            "description": ["General use"],
+            "categories": ["Clothing", "Boots"],
+            "store": "Example",
+            "average_rating": 4.0,
+            "rating_number": 100,
+            "price": 70.0,
+        })
+    return products
+
+
 def write_catalog(directory: Path, products: list[dict[str, object]]) -> Path:
     path = directory / "catalog.jsonl"
     path.write_text(

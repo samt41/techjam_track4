@@ -46,6 +46,22 @@ class StructuredFilter:
             raise ValueError("filter value must not be empty")
         if not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
             raise ValueError("filter confidence must be between 0 and 1")
+        if self.confidence < 0.90:
+            raise ValueError("hard filter confidence must be at least 0.90")
+        if (
+            self.attribute is not Attribute.BUDGET
+            and self.operator is not ComparisonOperator.EQUALS
+        ):
+            raise ValueError("range operator requires a numeric budget filter")
+        if self.attribute is Attribute.BUDGET:
+            try:
+                numeric_value = float(self.value)
+            except ValueError as error:
+                raise ValueError(
+                    "budget filter value must be finite numeric text"
+                ) from error
+            if not math.isfinite(numeric_value):
+                raise ValueError("budget filter value must be finite numeric text")
 
 
 @dataclass(frozen=True, slots=True)
