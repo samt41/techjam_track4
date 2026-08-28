@@ -179,20 +179,72 @@ with concept detection swapped for embedding resolution.
 **Anti-overfit:** hold-out paraphrases NOT in the catalog ("cozy",
 "water-repellent") → prove open-vocab generalization.
 
-## Sequencing (risk-ordered — NOT "embeddings first")
+## B1 RESULT (RAN 2026-08-29) — embeddings de-prioritized to nil for public
 
-1. **DF-gated gazetteer + context-gating** — pure counting, no embeddings,
-   principled replacement for the junk-regex whack-a-mole. Measurable,
-   catalog-derived, not overfit. DO FIRST.
-2. **Miss-classification experiment** — for each full-200 miss, classify:
-   junk-constraint / real-constraint-target-lacks / vocab-gap. Decides whether
-   any embedding work is worth it. Uses existing trace infra.
-3. **NegEx-style cue/scope/pseudo tables** — formalize the crude
-   `_NEGATION_CUE_RE`/`_SCOPE_BOUNDARY_RE` into the 3-operator model.
-4. **PMI synonym mining** — derive warm→insulated from the 50k catalog.
-5. **Embeddings + counter-fitting + polarity veto** — ONLY if step 2 proves a
-   material vocab gap. Numberbatch (hard-constraint) or Amazon-Reviews-trained
-   word2vec (better fit, external dep). Deferred, last, evidence-gated.
+Miss-classification of all **48 misses** in the retained 0.76 run
+(`experiments/scalable-strict/`), reconstructed from typed traces + the
+deterministic evaluator + catalog DF. Analysis is offline over retained
+artifacts; no re-run.
+
+| Cause class | Count / 48 |
+| --- | ---: |
+| **Vocab-gap** (user word ≠ catalog surface, target satisfies semantically) | **0** |
+| **Genuine target-lacks** (target really lacks a required attribute) | **0** |
+| Junk `other='those options are not quite right yet'` filler carried | 48 |
+| Material-as-category misclassification (`category:equals:cotton`) | 18 |
+| Overlong whole-description feature string (DF ≤ 1) | 5 |
+| **intent_override: target in slate PRE-override, rotated out after** | **18** |
+| Never retrieved (6 IO + tail) | 6 |
+
+**Finding 1 — the embedding layer (§D) recovers zero on this evaluator, by
+construction.** `local_evaluator.intent_card()` builds the simulated user's
+words *verbatim from the target product's own catalog strings* (whitespace-clean
++ 180-char truncate; no paraphrase, no synonym substitution). So the
+user→catalog register mismatch that motivates §C/§D (PMI synonyms, Numberbatch,
+Amazon-Reviews word2vec) is **null on the public set**. All 6 apparent
+"target-lacks" were false positives of a literal-substring check — after
+stripping the injected `material: `/`color : ` dict-key prefixes, every content
+word of every constraint is present in the target's own text. → **Drop §C and §D
+for public scoring.** They would matter only on a private set with genuinely
+paraphrased users — unproven and unmeasurable from here. Do NOT build embeddings
+until such a probe exists.
+
+**Finding 2 — the dominant single lever is a rotation bug, not NLP.** 18/48
+(37.5%) are intent_override sessions where our slate *contained the target* at an
+early turn — but every appearance was strictly BEFORE the override fired (the
+evaluator credits a hit only once `override_applied` is true, at `rng.choice([3,4])`),
+and the shown-set rotation then permanently excluded the already-shown target.
+**0** cases had the target in-slate at/after the override. Fix = re-admit on
+override (an override is a fresh intent → clear the shown-set so the now-best
+matches, which include the target, resurface). **Ceiling ≈ +18/200: hit@10
+0.76 → ~0.85, no semantic work.** Ship carefully: naive shown-set removal
+already regressed buying 0.775→0.7375 (rotation coupling is real — decouple on
+intent-change, don't disable).
+
+**Finding 3 — the remaining 42 are precision/pollution**, all catalog-derivable,
+no embeddings: junk `other` filler (48), material-as-category (18), overlong
+feature strings (5). This is exactly the DF-gated gazetteer's job.
+
+## Sequencing (REVISED post-B1 — rotation first, embeddings dropped)
+
+1. **Rotation-decoupling / override re-admission** — NEW #1. Biggest measured
+   lever (18 misses, ~+0.09 hit@10 ceiling), pure ranking logic, zero NLP.
+   Decouple shown-set rotation from intent_version; on an override
+   (old-preference replaced) treat as fresh intent and clear the shown-set.
+   Guard against the known buying regression (measure buying + IO together).
+2. **DF-gated gazetteer + context-gating** — addresses the 42 precision cases
+   (junk `other`, material-as-category, overlong features). Catalog-derived,
+   measurable, replaces the overfit phrase-regexes. Still worthwhile.
+3. **NegEx-style cue/scope/pseudo tables** — correctness scaffolding for
+   negation/modality; formalize `_NEGATION_CUE_RE`/`_SCOPE_BOUNDARY_RE`.
+4. ~~**PMI synonym mining**~~ — **DROPPED for public** (B1: 0 vocab-gaps). Revisit
+   only if a private-set paraphrase probe proves a gap.
+5. ~~**Embeddings + counter-fitting**~~ — **DROPPED for public** (B1 Finding 1).
+   Deferred indefinitely, evidence-gated on a private-set probe that does not
+   yet exist.
+
+The B1 analysis script is `experiments/analyze_misses_b1.py` (offline over
+retained traces; safe to re-run).
 
 ## Sources (key)
 
