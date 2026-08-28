@@ -22,6 +22,18 @@ class Strength(StrEnum):
     SOFT = "soft"
 
 
+class ComparisonOperator(StrEnum):
+    EQUALS = "equals"
+    LESS_THAN_OR_EQUAL = "less_than_or_equal"
+    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
+
+
+class ConstraintStatus(StrEnum):
+    ACTIVE = "active"
+    REMOVED = "removed"
+    SUPERSEDED = "superseded"
+
+
 class UpdateAction(StrEnum):
     SET = "set"
     ADD = "add"
@@ -65,12 +77,14 @@ class ProductRecord:
 class PreferenceConstraint:
     constraint_id: str
     attribute: Attribute
+    operator: ComparisonOperator
     value: str
     excluded: bool
     strength: Strength
     confidence: float
     source_turn: int
     source_text: str
+    status: ConstraintStatus
 
     def validate(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -83,6 +97,7 @@ class PreferenceConstraint:
 class PreferenceUpdate:
     action: UpdateAction
     attribute: Attribute
+    operator: ComparisonOperator
     value: str | None
     excluded: bool
     strength: Strength
@@ -101,6 +116,7 @@ class WeightedConcept:
 @dataclass(frozen=True, slots=True)
 class ShoppingIntent:
     active_constraints: tuple[PreferenceConstraint, ...]
+    constraint_history: tuple[PreferenceConstraint, ...]
     weighted_concepts: tuple[WeightedConcept, ...]
     declined_attributes: frozenset[Attribute]
     asked_attributes: tuple[Attribute, ...]

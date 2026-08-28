@@ -5,6 +5,8 @@ import unittest
 from starter.shopping_agent.models import (
     Attribute,
     ClarificationDecision,
+    ComparisonOperator,
+    ConstraintStatus,
     EligibilityDecision,
     PreferenceConstraint,
     ProductCandidate,
@@ -29,12 +31,14 @@ class PreferenceConstraintTest(unittest.TestCase):
         constraint = PreferenceConstraint(
             constraint_id="c1",
             attribute=Attribute.MATERIAL,
+            operator=ComparisonOperator.EQUALS,
             value="leather",
             excluded=False,
             strength=Strength.HARD,
             confidence=0.89,
             source_turn=1,
             source_text="must be leather",
+            status=ConstraintStatus.ACTIVE,
         )
 
         with self.assertRaisesRegex(ValueError, "hard constraint"):
@@ -44,12 +48,14 @@ class PreferenceConstraintTest(unittest.TestCase):
         constraint = PreferenceConstraint(
             constraint_id="c2",
             attribute=Attribute.COLOR,
+            operator=ComparisonOperator.EQUALS,
             value="blue",
             excluded=False,
             strength=Strength.SOFT,
             confidence=1.01,
             source_turn=1,
             source_text="prefer blue",
+            status=ConstraintStatus.ACTIVE,
         )
 
         with self.assertRaisesRegex(ValueError, "between 0 and 1"):
@@ -114,6 +120,7 @@ class PreferenceConstraintTest(unittest.TestCase):
         update = PreferenceUpdate(
             action=UpdateAction.SET,
             attribute=Attribute.MATERIAL,
+            operator=ComparisonOperator.EQUALS,
             value="leather",
             excluded=False,
             strength=Strength.HARD,
@@ -124,6 +131,7 @@ class PreferenceConstraintTest(unittest.TestCase):
         concept = WeightedConcept(value="winter", weight=0.8, source_turn=1)
         intent = ShoppingIntent(
             active_constraints=(),
+            constraint_history=(),
             weighted_concepts=(concept,),
             declined_attributes=frozenset(),
             asked_attributes=(),
