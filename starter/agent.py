@@ -4,6 +4,7 @@ from pathlib import Path
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.coordinator import TurnCoordinator
+from starter.shopping_agent.diagnostics import EvaluationTrace
 from starter.shopping_agent.models import UserProfile
 from starter.shopping_agent.response import response_payload
 
@@ -11,8 +12,15 @@ from starter.shopping_agent.response import response_payload
 class Agent:
     """Organizer adapter for the deterministic offline shopping coordinator."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
-        self._coordinator = TurnCoordinator(CatalogIndex.from_path(catalog_path))
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        trace: EvaluationTrace | None = None,
+    ) -> None:
+        self._coordinator = TurnCoordinator(
+            CatalogIndex.from_path(catalog_path),
+            trace=trace,
+        )
 
     def reset(self, session_id: str, user_profile: dict[str, object]) -> None:
         self._coordinator.reset(session_id, _profile_from_payload(user_profile))
