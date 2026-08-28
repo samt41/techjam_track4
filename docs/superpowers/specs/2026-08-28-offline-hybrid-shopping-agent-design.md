@@ -3,6 +3,12 @@
 Date: 2026-08-28
 Status: Approved for implementation planning
 
+The approved next-revision decisions for scalable filtered retrieval, intent
+overrides, non-displacing exploration, Bayesian clarification, offline
+resilience, and diagnostic oversight are defined in
+`2026-08-28-scalable-retrieval-and-oversight-design.md`. Where the amendment is
+more specific, it supersedes this document.
+
 ## 1. Purpose
 
 This document defines the Track 4 shopping agent that the team will implement. It is written for an engineer joining the project without the prior design discussion. After reading it, that engineer should be able to produce a concrete implementation plan without making new product or architecture decisions.
