@@ -134,6 +134,8 @@ class RouteEvidence:
 class RetrievalPlan:
     route: RetrievalRoute
     query_terms: tuple[str, ...]
+    attribute: Attribute | None
+    attribute_value: str | None
     required_constraint_ids: tuple[str, ...]
     relaxed_constraint_ids: tuple[str, ...]
     limit: int

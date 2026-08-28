@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from starter.shopping_agent.catalog_index import CatalogIndex
@@ -22,9 +23,11 @@ class ConstraintExtractorTest(unittest.TestCase):
             Path(self.temporary_directory.name),
             sample_products(),
         )
-        self.extractor = ConstraintExtractor(CatalogIndex.from_path(catalog_path))
+        self.index = CatalogIndex.from_path(catalog_path)
+        self.extractor = ConstraintExtractor(self.index)
 
     def tearDown(self) -> None:
+        self.index.close()
         self.temporary_directory.cleanup()
 
     def test_negation_and_override_are_distinct_updates(self) -> None:
@@ -115,6 +118,31 @@ class ConstraintExtractorTest(unittest.TestCase):
             [(update.value, update.excluded) for update in updates],
             [("leather", True), ("rubber", False)],
         )
+
+    def test_extraction_does_not_compile_patterns_per_catalog_value(self) -> None:
+        with patch(
+            "starter.shopping_agent.constraint_extractor.re.compile",
+            wraps=__import__("re").compile,
+        ) as compile_pattern:
+            self.extractor.extract(
+                "I need black leather boots",
+                turn=1,
+                asked_attribute=None,
+            )
+
+        self.assertLessEqual(compile_pattern.call_count, 5)
+
+    def test_stopword_like_catalog_values_do_not_become_constraints(self) -> None:
+        products = sample_products()
+        products[0]["details"] = {"material": "leather", "color": "i"}
+        with tempfile.TemporaryDirectory() as directory:
+            index = CatalogIndex.from_path(write_catalog(Path(directory), products))
+            self.addCleanup(index.close)
+            extractor = ConstraintExtractor(index)
+
+            updates = extractor.extract("I need boots", turn=1, asked_attribute=None)
+
+        self.assertNotIn("i", [update.value for update in updates])
 
 
 if __name__ == "__main__":

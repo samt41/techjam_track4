@@ -66,6 +66,8 @@ class PreferenceConstraintTest(unittest.TestCase):
         plan = RetrievalPlan(
             route=RetrievalRoute.EXACT_FTS,
             query_terms=("winter", "boot"),
+            attribute=None,
+            attribute_value=None,
             required_constraint_ids=("c1",),
             relaxed_constraint_ids=(),
             limit=100,

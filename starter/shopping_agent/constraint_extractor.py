@@ -33,22 +33,43 @@ _CONTEXT_VALUE_RE = re.compile(
     r"(?:\bi need\b|\bmake it\b|\binstead(?: i (?:need|want))?\b)\s+(?:to be\s+)?([a-z0-9][a-z0-9 -]*)"
 )
 _SCOPE_BOUNDARY_RE = re.compile(r"[;,.!?]|\b(?:but|however|instead|rather|although)\b")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_ATTRIBUTE_PRIORITY = (
+    Attribute.CATEGORY,
+    Attribute.MATERIAL,
+    Attribute.COLOR,
+    Attribute.SIZE,
+    Attribute.STYLE,
+    Attribute.BRAND,
+    Attribute.FEATURE,
+    Attribute.USE_CASE,
+)
+_UNSAFE_METADATA_TOKENS = frozenset({
+    "a", "an", "and", "but", "for", "i", "in", "is", "it", "me", "my",
+    "of", "on", "or", "the", "to",
+})
 
 
 class ConstraintExtractor:
     def __init__(self, catalog_index: CatalogIndex) -> None:
         self._catalog_index = catalog_index
-        mentions: list[tuple[str, Attribute]] = []
-        for attribute in Attribute:
-            if attribute in (Attribute.BUDGET, Attribute.OTHER):
-                continue
-            mentions.extend(
-                (value, attribute) for value in catalog_index.values_for(attribute)
-            )
-        self._mentions = tuple(sorted(
-            set(mentions),
-            key=lambda item: (-len(item[0]), item[0], item[1].value),
-        ))
+        mention_by_phrase: dict[str, tuple[str, Attribute]] = {}
+        max_tokens = 1
+        for attribute in _ATTRIBUTE_PRIORITY:
+            for value in catalog_index.values_for(attribute):
+                canonical_phrase = " ".join(_TOKEN_RE.findall(value))
+                if (
+                    not canonical_phrase
+                    or (
+                        attribute is not Attribute.SIZE
+                        and canonical_phrase in _UNSAFE_METADATA_TOKENS
+                    )
+                ):
+                    continue
+                mention_by_phrase.setdefault(canonical_phrase, (value, attribute))
+                max_tokens = max(max_tokens, len(canonical_phrase.split()))
+        self._mention_by_phrase = mention_by_phrase
+        self._max_mention_tokens = max_tokens
 
     def extract(
         self,
@@ -154,15 +175,33 @@ class ConstraintExtractor:
         source_text: str,
         turn: int,
     ) -> tuple[tuple[PreferenceUpdate, ...], tuple[tuple[int, int], ...]]:
-        found: list[tuple[int, int, str, Attribute]] = []
+        tokens = tuple(_TOKEN_RE.finditer(normalized))
+        possible: list[tuple[int, int, str, Attribute]] = []
+        for start_index, start_token in enumerate(tokens):
+            last_index = min(len(tokens), start_index + self._max_mention_tokens)
+            phrase_tokens: list[str] = []
+            for end_index in range(start_index, last_index):
+                phrase_tokens.append(tokens[end_index].group())
+                mention = self._mention_by_phrase.get(" ".join(phrase_tokens))
+                if mention is not None:
+                    value, attribute = mention
+                    possible.append((
+                        start_token.start(),
+                        tokens[end_index].end(),
+                        value,
+                        attribute,
+                    ))
+
         occupied: list[tuple[int, int]] = []
-        for value, attribute in self._mentions:
-            pattern = re.compile(rf"(?<![a-z0-9]){re.escape(value)}(?![a-z0-9])")
-            for match in pattern.finditer(normalized):
-                if self._span_is_covered(match.span(), tuple(occupied)):
-                    continue
-                occupied.append(match.span())
-                found.append((match.start(), match.end(), value, attribute))
+        found: list[tuple[int, int, str, Attribute]] = []
+        for start, end, value, attribute in sorted(
+            possible,
+            key=lambda item: (-(item[1] - item[0]), item[0], item[3].value),
+        ):
+            if self._span_is_covered((start, end), tuple(occupied)):
+                continue
+            occupied.append((start, end))
+            found.append((start, end, value, attribute))
         found.sort(key=lambda item: item[0])
 
         updates: list[PreferenceUpdate] = []

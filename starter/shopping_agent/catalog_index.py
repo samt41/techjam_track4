@@ -19,6 +19,7 @@ class CatalogIndex:
     ) -> None:
         self.products = products
         self.connection = connection
+        self._closed = False
         self.fingerprint = fingerprint
         self.product_by_id = {product.parent_asin: product for product in products}
         self._values_by_attribute: dict[Attribute, tuple[str, ...]] = {}
@@ -26,6 +27,18 @@ class CatalogIndex:
             tuple[Attribute, str], tuple[ProductRecord, ...]
         ] = {}
         self._build_metadata_indexes()
+        quality_ranked = tuple(sorted(
+            self.products,
+            key=lambda product: (-_quality_score(product), product.parent_asin),
+        ))
+        self._quality_by_category: dict[str | None, tuple[ProductRecord, ...]] = {
+            None: quality_ranked,
+        }
+
+    def close(self) -> None:
+        if not self._closed:
+            self.connection.close()
+            self._closed = True
 
     @classmethod
     def from_path(cls, path: str | Path) -> CatalogIndex:
@@ -113,17 +126,16 @@ class CatalogIndex:
         return tuple(self.product_by_id[str(row[0])] for row in rows)
 
     def quality_fallback(self, category: str | None, limit: int) -> tuple[ProductRecord, ...]:
-        normalized_category = normalize_text(category)
-        eligible = (
-            product for product in self.products
-            if not normalized_category
-            or any(normalized_category in value for value in product.categories)
-        )
-        ranked = sorted(
-            eligible,
-            key=lambda product: (-_quality_score(product), product.parent_asin),
-        )
-        return tuple(ranked[:max(0, limit)])
+        normalized_category = normalize_text(category) or None
+        ranked = self._quality_by_category.get(normalized_category)
+        if ranked is None:
+            ranked = tuple(
+                product
+                for product in self._quality_by_category[None]
+                if any(normalized_category in value for value in product.categories)
+            )
+            self._quality_by_category[normalized_category] = ranked
+        return ranked[:max(0, limit)]
 
     def values_for(self, attribute: Attribute) -> tuple[str, ...]:
         return self._values_by_attribute.get(attribute, ())
@@ -157,7 +169,10 @@ class CatalogIndex:
 def _optional_float(value: object) -> float | None:
     if value in (None, ""):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _quality_score(product: ProductRecord) -> float:
