@@ -46,6 +46,17 @@ class PreferenceLedger:
             update.action is UpdateAction.RETRACT_PROVISIONAL
             for update in updates
         )
+        # Attributes the override newly constrains. A provisional preference on a
+        # DIFFERENT attribute survives as a soft scoring tie-breaker (the user
+        # replaced one axis, not their whole intent); one on the SAME attribute
+        # is a genuine correction and is retracted. An override with no added
+        # constraint is a pure retraction, so everything in the group goes.
+        override_added_attributes = frozenset(
+            update.attribute
+            for update in updates
+            if update.action in (UpdateAction.SET, UpdateAction.ADD)
+            and update.attribute is not None
+        )
 
         for update in updates:
             update.validate()
@@ -66,16 +77,16 @@ class PreferenceLedger:
                             constraint.status is ConstraintStatus.ACTIVE
                             and constraint.preference_group_id
                             == provisional_group_id
+                            and (
+                                not override_added_attributes
+                                or constraint.attribute
+                                in override_added_attributes
+                            )
                         ):
                             history[index] = replace(
                                 constraint,
                                 status=ConstraintStatus.RETRACTED,
                             )
-                    concepts = [
-                        concept
-                        for concept in concepts
-                        if concept.preference_group_id != provisional_group_id
-                    ]
                     active_changed = True
                 continue
             if update.action is UpdateAction.DECLINE:

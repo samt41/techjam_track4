@@ -91,12 +91,90 @@ class PreferenceLedgerTest(unittest.TestCase):
             ),
         ))
 
+        # The override adds a requirement on a DIFFERENT attribute (material)
+        # than the retracted provisional preference (color), so the provisional
+        # colour is soft-retained as a scoring tie-breaker rather than dropped.
         self.assertEqual(
             [(item.attribute, item.value) for item in intent.active_constraints],
-            [(Attribute.CATEGORY, "boots"), (Attribute.MATERIAL, "leather")],
+            [
+                (Attribute.CATEGORY, "boots"),
+                (Attribute.COLOR, "black"),
+                (Attribute.MATERIAL, "leather"),
+            ],
         )
         self.assertEqual(
             intent.constraint_history[1].status,
+            ConstraintStatus.ACTIVE,
+        )
+
+    def test_different_attribute_override_soft_retains_provisional(self) -> None:
+        ledger = PreferenceLedger()
+        ledger.apply((update(
+            UpdateAction.SET,
+            Attribute.COLOR,
+            "black",
+            preference_group_id="color-preference",
+        ),))
+
+        intent = ledger.apply((
+            retract_provisional(group="override"),
+            update(
+                UpdateAction.SET,
+                Attribute.MATERIAL,
+                "leather",
+                strength=Strength.HARD,
+                confidence=0.98,
+                turn=2,
+                evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+                preference_group_id="override",
+            ),
+        ))
+
+        active = {(item.attribute, item.value, item.strength) for item in intent.active_constraints}
+        self.assertIn((Attribute.COLOR, "black", Strength.SOFT), active)
+        self.assertIn((Attribute.MATERIAL, "leather", Strength.HARD), active)
+        self.assertIn("black", [concept.value for concept in intent.weighted_concepts])
+
+    def test_same_attribute_override_retracts_provisional_value(self) -> None:
+        ledger = PreferenceLedger()
+        ledger.apply((update(
+            UpdateAction.SET,
+            Attribute.MATERIAL,
+            "cotton",
+            preference_group_id="material-preference",
+        ),))
+
+        intent = ledger.apply((
+            retract_provisional(group="override"),
+            update(
+                UpdateAction.SET,
+                Attribute.MATERIAL,
+                "leather",
+                turn=2,
+                evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+                preference_group_id="override",
+            ),
+        ))
+
+        self.assertEqual(
+            [(item.attribute, item.value) for item in intent.active_constraints],
+            [(Attribute.MATERIAL, "leather")],
+        )
+
+    def test_pure_retraction_without_replacement_still_retracts(self) -> None:
+        ledger = PreferenceLedger()
+        ledger.apply((update(
+            UpdateAction.SET,
+            Attribute.COLOR,
+            "black",
+            preference_group_id="color-preference",
+        ),))
+
+        intent = ledger.apply((retract_provisional(group="override"),))
+
+        self.assertEqual(intent.active_constraints, ())
+        self.assertEqual(
+            intent.constraint_history[0].status,
             ConstraintStatus.RETRACTED,
         )
 
