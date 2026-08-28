@@ -14,6 +14,7 @@ from starter.shopping_agent.models import (
     Strength,
 )
 from starter.shopping_agent.search_backend import (
+    AttributeTarget,
     ProductSearchBackend,
     SearchRequest,
     SearchResult,
@@ -24,6 +25,18 @@ from starter.shopping_agent.search_backend import (
 _FIRM_EVIDENCE = frozenset({
     EvidenceKind.EXPLICIT_REQUIREMENT,
     EvidenceKind.CATEGORY_ANCHOR,
+})
+# Attributes stored as exact key/value rows in the structured `attributes`
+# table, so a soft preference on them can target the structured index directly.
+# Free-text attributes (OTHER/USE_CASE) and budget ranges are excluded.
+_TARGETABLE_ATTRIBUTES = frozenset({
+    Attribute.CATEGORY,
+    Attribute.MATERIAL,
+    Attribute.COLOR,
+    Attribute.SIZE,
+    Attribute.STYLE,
+    Attribute.BRAND,
+    Attribute.FEATURE,
 })
 
 
@@ -79,17 +92,25 @@ class RetrievalPlanner:
                 concept.value for concept in intent.weighted_concepts
             ))
         result_limit = max(top_k, self._route_limit)
-        routes: list[tuple[RetrievalRoute, tuple[str, ...]]] = [
-            (RetrievalRoute.METADATA, ()),
-        ]
+        routes: list[tuple[RetrievalRoute, tuple[str, ...], tuple[AttributeTarget, ...]]] = []
+        # One METADATA route per soft attribute value, targeting the structured
+        # index directly. Reciprocal-rank fusion then rewards a product that
+        # appears across several of these single-attribute routes (i.e. matches
+        # more of the stated preferences) — recovering the exact-match signal
+        # that a pure lexical query buries. Hard constraints still gate via
+        # `filters`; free-text attributes fall through to the lexical routes.
+        for target in _attribute_targets(positive_constraints):
+            routes.append((RetrievalRoute.METADATA, (), (target,)))
+        if not routes:
+            routes.append((RetrievalRoute.METADATA, (), ()))
         if exact_terms:
-            routes.append((RetrievalRoute.EXACT_FTS, exact_terms))
+            routes.append((RetrievalRoute.EXACT_FTS, exact_terms, ()))
             expanded_terms = tuple(dict.fromkeys(
                 term
                 for exact_term in exact_terms
                 for term in (exact_term, *_EXPANSIONS.get(exact_term, ()))
             ))
-            routes.append((RetrievalRoute.EXPANDED_FTS, expanded_terms))
+            routes.append((RetrievalRoute.EXPANDED_FTS, expanded_terms, ()))
         category = next(
             (
                 constraint.value
@@ -101,6 +122,7 @@ class RetrievalPlanner:
         routes.append((
             RetrievalRoute.CATEGORY_FALLBACK,
             () if category is None else (category,),
+            (),
         ))
         return tuple(
             PlannedSearch(
@@ -110,10 +132,11 @@ class RetrievalPlanner:
                     filters=filters,
                     limit=result_limit,
                     work_limit=self._route_work_limit,
+                    targets=route_targets,
                 ),
                 relaxed_constraint_id=None,
             )
-            for route, query_terms in routes
+            for route, query_terms, route_targets in routes
         )
 
     def counterfactuals(
@@ -137,6 +160,22 @@ class RetrievalPlanner:
             for reliability in ordered
             if reliability.constraint_id in constraint_by_id
         )
+
+
+def _attribute_targets(
+    positive_constraints: tuple[PreferenceConstraint, ...],
+) -> tuple[AttributeTarget, ...]:
+    values_by_attribute: dict[Attribute, list[str]] = {}
+    for constraint in positive_constraints:
+        if constraint.attribute not in _TARGETABLE_ATTRIBUTES:
+            continue
+        values = values_by_attribute.setdefault(constraint.attribute, [])
+        if constraint.value not in values:
+            values.append(constraint.value)
+    return tuple(
+        AttributeTarget(attribute=attribute, values=tuple(values))
+        for attribute, values in values_by_attribute.items()
+    )
 
 
 def _hard_filters(

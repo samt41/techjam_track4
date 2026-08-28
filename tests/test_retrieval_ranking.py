@@ -123,6 +123,30 @@ class RetrievalRankingTest(unittest.TestCase):
             {constraint.constraint_id for constraint in intent.active_constraints},
         )
 
+    def test_soft_attributes_emit_targeted_metadata_routes(self) -> None:
+        intent = PreferenceLedger().apply((
+            preference(Attribute.CATEGORY, "boots", strength=Strength.SOFT),
+            preference(Attribute.MATERIAL, "leather", strength=Strength.SOFT),
+        ))
+
+        plans = RetrievalPlanner().strict(intent)
+        metadata_targets = tuple(
+            target
+            for plan in plans
+            if plan.request.route is RetrievalRoute.METADATA
+            for target in plan.request.targets
+        )
+
+        # One targeted metadata route per soft attribute value, so fusion can
+        # reward a product matching several structured preferences.
+        self.assertEqual(
+            {(target.attribute, target.values) for target in metadata_targets},
+            {
+                (Attribute.CATEGORY, ("boots",)),
+                (Attribute.MATERIAL, ("leather",)),
+            },
+        )
+
     def test_backend_plan_returns_ranked_route_evidence(self) -> None:
         intent = PreferenceLedger().apply((
             preference(Attribute.MATERIAL, "leather"),

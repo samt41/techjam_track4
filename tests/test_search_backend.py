@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import Attribute, ComparisonOperator, RetrievalRoute
 from starter.shopping_agent.search_backend import (
+    AttributeTarget,
     FacetBucket,
     FacetRequest,
     FacetResult,
@@ -282,6 +283,37 @@ class LocalSearchBackendTest(unittest.TestCase):
         self.assertTrue(
             all(hit.parent_asin.startswith("CANVAS-") for hit in result.hits)
         )
+
+    def test_metadata_route_targets_products_having_soft_attribute_value(self) -> None:
+        # Products that structurally HAVE material=leather are retrieved and
+        # quality-ordered, independent of whether their free text mentions it.
+        products = sample_products()
+        products[0]["details"] = {"material": "leather", "color": "black"}
+        products[0]["title"] = "Slim bifold"  # no lexical "leather"
+        products[0]["average_rating"] = 4.9
+        products[0]["rating_number"] = 9000
+        products[5]["details"] = {"material": "leather", "color": "brown"}
+        products[5]["title"] = "Card holder"
+        backend = self.backend(products)
+        request = SearchRequest(
+            route=RetrievalRoute.METADATA,
+            lexical_terms=(),
+            filters=(),
+            targets=(AttributeTarget(
+                attribute=Attribute.MATERIAL,
+                values=("leather",),
+            ),),
+            limit=10,
+            work_limit=50_000,
+        )
+
+        result = backend.search(request)
+        ids = tuple(hit.parent_asin for hit in result.hits)
+
+        self.assertEqual(result.total_matches, 2)
+        self.assertIn("BOOT-1", ids)
+        self.assertIn("BOOT-6", ids)
+        self.assertEqual(ids[0], "BOOT-1")  # higher quality ranks first
 
     def test_positive_attribute_filters_intersect(self) -> None:
         backend = self.backend(sample_products())

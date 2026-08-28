@@ -23,6 +23,7 @@ from starter.shopping_agent.models import (
     RetrievalRoute,
 )
 from starter.shopping_agent.search_backend import (
+    AttributeTarget,
     FacetBucket,
     FacetRequest,
     FacetResult,
@@ -86,7 +87,7 @@ class LocalProductSearchBackend:
 
     def _search_quality(self, request: SearchRequest) -> SearchResult:
         started_at = time.perf_counter()
-        filter_clause = _compile_filter_clause(request.filters)
+        filter_clause = _compile_quality_clause(request.filters, request.targets)
         total_matches = int(self._artifacts.connection.execute(
             "SELECT COUNT(*) FROM products AS p" + filter_clause.sql,
             filter_clause.parameters,
@@ -430,6 +431,33 @@ class LocalProductSearchBackend:
 
     def close(self) -> None:
         self._artifacts.close()
+
+
+def _compile_quality_clause(
+    filters: tuple[StructuredFilter, ...],
+    targets: tuple[AttributeTarget, ...],
+) -> SqlFilterClause:
+    """Hard filters (eligibility, ANDed) plus soft targets (recall, a single
+    ORed membership set across every targeted attribute/value)."""
+    base = _compile_filter_clause(filters)
+    if not targets:
+        return base
+    disjuncts: list[str] = []
+    parameters: list[object] = list(base.parameters)
+    for target in targets:
+        for value in target.values:
+            disjuncts.append(
+                "p.ordinal IN (SELECT ordinal FROM attributes "
+                "WHERE attribute = ? AND value = ?)"
+            )
+            parameters.append(target.attribute.value)
+            parameters.append(normalize_text(value))
+    target_sql = "(" + " OR ".join(disjuncts) + ")"
+    if base.sql:
+        combined = base.sql + " AND " + target_sql
+    else:
+        combined = " WHERE " + target_sql
+    return SqlFilterClause(sql=combined, parameters=tuple(parameters))
 
 
 def _compile_filter_clause(

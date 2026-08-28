@@ -71,12 +71,33 @@ class StructuredFilter:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeTarget:
+    """Soft retrieval targeting: restrict a route to products that structurally
+    have one of these attribute values. Unlike StructuredFilter this expresses
+    recall intent for a soft preference, not a hard eligibility requirement, so
+    it carries no confidence floor and is never used to reject a product."""
+
+    attribute: Attribute
+    values: tuple[str, ...]
+
+    def validate(self) -> None:
+        if self.attribute is Attribute.BUDGET:
+            raise ValueError("attribute target does not support budget ranges")
+        if not self.values:
+            raise ValueError("attribute target must name at least one value")
+        for value in self.values:
+            if not value:
+                raise ValueError("attribute target values must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class SearchRequest:
     route: RetrievalRoute
     lexical_terms: tuple[str, ...]
     filters: tuple[StructuredFilter, ...]
     limit: int
     work_limit: int
+    targets: tuple[AttributeTarget, ...] = ()
 
     def validate(self) -> None:
         if self.limit < 1:
@@ -88,6 +109,8 @@ class SearchRequest:
                 raise ValueError("lexical terms must not be empty")
         for structured_filter in self.filters:
             structured_filter.validate()
+        for target in self.targets:
+            target.validate()
 
 
 @dataclass(frozen=True, slots=True)
