@@ -167,6 +167,24 @@ class ConstraintExtractorTest(unittest.TestCase):
             (UpdateAction.DECLINE, Attribute.COLOR, None),
         )
 
+    def test_verbose_decline_replies_are_declines_not_constraints(self) -> None:
+        # The evaluator's boundary/decline replies are full sentences, not the
+        # short "no preference". They must decline the asked attribute rather
+        # than becoming a literal attribute value.
+        for reply in (
+            "I don't have an additional preference for brand.",
+            "I don't have a preference for brand; please use your judgment.",
+            "I don't have a preference for brand, please use your judgment.",
+        ):
+            update = self.extractor.extract(
+                reply, turn=2, asked_attribute=Attribute.BRAND
+            )[0]
+            self.assertEqual(
+                (update.action, update.attribute, update.value),
+                (UpdateAction.DECLINE, Attribute.BRAND, None),
+                msg=reply,
+            )
+
     def test_negation_scope_stops_at_contrast_word(self) -> None:
         updates = self.extractor.extract(
             "not leather but rubber", turn=1, asked_attribute=None

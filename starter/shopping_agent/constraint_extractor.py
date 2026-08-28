@@ -18,6 +18,15 @@ from starter.shopping_agent.text_normalization import normalize_text
 _DECLINE_RE = re.compile(
     r"^(?:no|none|any|either|no preference|doesn'?t matter|do not care)$"
 )
+# Verbose decline replies (the evaluator's boundary answers) such as
+# "I don't have a preference for brand" or "I don't have an additional
+# preference for color; please use your judgment". Matched anywhere so trailing
+# clauses do not defeat it.
+_VERBOSE_DECLINE_RE = re.compile(
+    r"\b(?:don'?t|do not|have no|haven'?t got)\b[^.;,]*\bpreference\b"
+    r"|\bno (?:additional |particular |specific )?preference\b"
+    r"|\buse your (?:own )?judgment\b"
+)
 _PRICE_PATTERNS = (
     (
         re.compile(r"(?:under|below|at most|up to|max(?:imum)?(?: of)?)\s*\$?\s*(\d+(?:\.\d+)?)"),
@@ -106,7 +115,7 @@ class ConstraintExtractor:
             return ()
         if _SLATE_FEEDBACK_RE.fullmatch(normalized):
             return ()
-        if asked_attribute is not None and _DECLINE_RE.fullmatch(normalized):
+        if asked_attribute is not None and _is_decline(normalized):
             return (self._update(
                 action=UpdateAction.DECLINE,
                 attribute=asked_attribute,
@@ -207,7 +216,7 @@ class ConstraintExtractor:
             return DialogueAct.SLATE_FEEDBACK
         if _INTENT_OVERRIDE_RE.search(normalized):
             return DialogueAct.INTENT_OVERRIDE
-        if asked_attribute is not None and _DECLINE_RE.fullmatch(normalized):
+        if asked_attribute is not None and _is_decline(normalized):
             return DialogueAct.DECLINE
         if asked_attribute is not None:
             return DialogueAct.CLARIFICATION_ANSWER
@@ -384,6 +393,13 @@ class ConstraintExtractor:
             evidence_kind=evidence_kind,
             preference_group_id=preference_group_id,
         )
+
+
+def _is_decline(normalized: str) -> bool:
+    return bool(
+        _DECLINE_RE.fullmatch(normalized)
+        or _VERBOSE_DECLINE_RE.search(normalized)
+    )
 
 
 def _canonical_number(value: str) -> str:
