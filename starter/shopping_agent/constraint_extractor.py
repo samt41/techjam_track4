@@ -62,44 +62,106 @@ _ATTRIBUTE_PRIORITY = (
     Attribute.FEATURE,
     Attribute.USE_CASE,
 )
-# Single-word values that also appear as junk metadata in the catalog (a brand
-# literally named "key", a color "m", a feature "no"). Matching these from
-# incidental sentence words manufactures false constraints that pollute the
-# lexical query, so they are never extracted as standalone metadata mentions.
-# SIZE is exempted at the call site, so "a"/"m"/"s"/"l"/"xl" still parse as sizes.
-_UNSAFE_METADATA_TOKENS = frozenset({
-    # articles, conjunctions, prepositions, pronouns
-    "a", "an", "and", "but", "for", "i", "in", "is", "it", "me", "my",
-    "of", "on", "or", "the", "to", "at", "as", "be", "by", "if", "so",
-    "no", "not", "with", "without", "that", "this", "these", "those",
-    # single letters that are junk catalog values outside SIZE
-    "m", "s", "l", "b", "c", "d", "e", "f", "g", "h", "j", "k", "n",
-    "o", "p", "q", "r", "t", "u", "v", "w", "x", "y", "z",
-    # common request words that collide with junk brand/feature values
-    "key", "new", "set", "one", "two", "need", "want", "looking",
-    "requirement", "prefer", "preference", "additional", "specific",
-    "matters", "quality", "please", "judgment", "something", "options",
+# A phrase must be a real structured value on at least this many products to be
+# classified to a structured attribute. Single-occurrence structured values are
+# data-entry noise (a brand literally named "key", a colour code "a"); SIZE is
+# exempt so rare sizes still parse.
+_STRUCTURED_DF_FLOOR = 2
+# The free-text feature bucket is the residual class: a structured attribute wins
+# whenever it clears the floor, and a phrase falls to feature only when no
+# structured reading survives.
+_RESIDUAL_ATTRIBUTE = Attribute.FEATURE
+_ATTRIBUTE_RANK = {attribute: rank for rank, attribute in enumerate(_ATTRIBUTE_PRIORITY)}
+# Standard English stop words (Snowball/NLTK). Function words such as "on", "by",
+# and "no" also occur as junk catalog metadata; a generic list suppresses them
+# without any evaluator- or catalog-specific tuning. It contains no garment
+# vocabulary (a catalog-derived stop list would wrongly drop "buckle"/"dress").
+_STOPWORDS = frozenset({
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your",
+    "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she",
+    "her", "hers", "herself", "it", "its", "itself", "they", "them", "their",
+    "theirs", "themselves", "what", "which", "who", "whom", "this", "that",
+    "these", "those", "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an",
+    "the", "and", "but", "if", "or", "because", "as", "until", "while", "of",
+    "at", "by", "for", "with", "about", "against", "between", "into", "through",
+    "during", "before", "after", "above", "below", "to", "from", "up", "down",
+    "in", "out", "on", "off", "over", "under", "again", "further", "then",
+    "once", "here", "there", "when", "where", "why", "how", "all", "any",
+    "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+    "not", "only", "own", "same", "so", "than", "too", "very", "s", "t", "can",
+    "will", "just", "don", "should", "now",
 })
+
+
+def _resolve_phrase(
+    phrase: str,
+    candidates: dict[Attribute, tuple[str, int]],
+) -> tuple[str, Attribute] | None:
+    """Classify a catalog phrase to one attribute using document frequency.
+
+    ``candidates`` maps each attribute the phrase appears under to its original
+    catalog value and that value's product count (document frequency). Returns
+    the original value and chosen attribute, or ``None`` when the phrase is junk
+    that should never manufacture a constraint. Pure and deterministic — the
+    gazetteer is frozen at construction from these counts.
+    """
+    if phrase in _STOPWORDS:
+        return None
+    has_size = Attribute.SIZE in candidates
+    if len(phrase) == 1 and not has_size:
+        return None
+    structured = {
+        attribute: (value, count)
+        for attribute, (value, count) in candidates.items()
+        if attribute is not _RESIDUAL_ATTRIBUTE
+    }
+    surviving = {
+        attribute: pair
+        for attribute, pair in structured.items()
+        if pair[1] >= _STRUCTURED_DF_FLOOR or attribute is Attribute.SIZE
+    }
+    if surviving:
+        attribute = max(
+            surviving,
+            key=lambda candidate: (surviving[candidate][1], -_ATTRIBUTE_RANK[candidate]),
+        )
+        return surviving[attribute][0], attribute
+    if _RESIDUAL_ATTRIBUTE in candidates:
+        return candidates[_RESIDUAL_ATTRIBUTE][0], _RESIDUAL_ATTRIBUTE
+    if len(phrase.split()) > 1:
+        # A multi-word value is specific enough to keep even at low frequency;
+        # it will not fire from incidental sentence words.
+        attribute = max(
+            structured,
+            key=lambda candidate: (structured[candidate][1], -_ATTRIBUTE_RANK[candidate]),
+        )
+        return structured[attribute][0], attribute
+    return None
 
 
 class ConstraintExtractor:
     def __init__(self, catalog_index: CatalogIndex) -> None:
         self._catalog_index = catalog_index
+        # Phase 1: gather every attribute + document frequency each phrase can
+        # take, keyed by the canonical token-joined form used for matching.
+        phrase_candidates: dict[str, dict[Attribute, tuple[str, int]]] = {}
+        for attribute in _ATTRIBUTE_PRIORITY:
+            for value, count in catalog_index.value_counts(attribute).items():
+                canonical_phrase = " ".join(_TOKEN_RE.findall(value))
+                if not canonical_phrase:
+                    continue
+                by_attribute = phrase_candidates.setdefault(canonical_phrase, {})
+                by_attribute.setdefault(attribute, (value, count))
+        # Phase 2: resolve each phrase to a single attribute by catalog evidence.
         mention_by_phrase: dict[str, tuple[str, Attribute]] = {}
         max_tokens = 1
-        for attribute in _ATTRIBUTE_PRIORITY:
-            for value in catalog_index.values_for(attribute):
-                canonical_phrase = " ".join(_TOKEN_RE.findall(value))
-                if (
-                    not canonical_phrase
-                    or (
-                        attribute is not Attribute.SIZE
-                        and canonical_phrase in _UNSAFE_METADATA_TOKENS
-                    )
-                ):
-                    continue
-                mention_by_phrase.setdefault(canonical_phrase, (value, attribute))
-                max_tokens = max(max_tokens, len(canonical_phrase.split()))
+        for canonical_phrase, candidates in phrase_candidates.items():
+            resolved = _resolve_phrase(canonical_phrase, candidates)
+            if resolved is None:
+                continue
+            mention_by_phrase[canonical_phrase] = resolved
+            max_tokens = max(max_tokens, len(canonical_phrase.split()))
         self._mention_by_phrase = mention_by_phrase
         self._max_mention_tokens = max_tokens
 

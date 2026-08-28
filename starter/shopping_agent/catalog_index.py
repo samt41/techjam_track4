@@ -25,6 +25,21 @@ class CatalogIndex:
         ))
         return tuple(sorted(bucket.value for bucket in result.buckets))
 
+    def value_counts(self, attribute: Attribute) -> dict[str, int]:
+        """Per-value document frequency (product count) for an attribute.
+
+        Same facet scan as ``values_for`` but preserves ``FacetBucket.count``
+        instead of discarding it — the gazetteer uses this catalog evidence to
+        classify a phrase to the attribute where it is a strong structured value
+        rather than a rare data-entry artifact.
+        """
+        result = self.backend.facets(FacetRequest(
+            filters=(),
+            attributes=(attribute,),
+            work_limit=1_000_000_000,
+        ))
+        return {bucket.value: bucket.count for bucket in result.buckets}
+
     def get_products(
         self,
         parent_asins: tuple[str, ...],
