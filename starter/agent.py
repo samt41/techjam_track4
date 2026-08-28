@@ -6,7 +6,7 @@ from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.coordinator import TurnCoordinator
 from starter.shopping_agent.diagnostics import EvaluationTrace
 from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
-from starter.shopping_agent.models import UserProfile
+from starter.shopping_agent.models import TurnRecord, UserProfile
 from starter.shopping_agent.response import response_payload
 from starter.shopping_agent.search_backend import LexicalMode
 
@@ -41,6 +41,9 @@ class Agent:
 
     def close(self) -> None:
         self._coordinator.close()
+
+    def turn_history(self, session_id: str) -> tuple[TurnRecord, ...]:
+        return self._coordinator.turn_history(session_id)
 
     def respond(
         self,

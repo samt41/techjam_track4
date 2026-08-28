@@ -8,6 +8,7 @@ from starter.shopping_agent.models import (
     ComparisonOperator,
     ConstraintStatus,
     EligibilityDecision,
+    EvidenceKind,
     PreferenceConstraint,
     ProductCandidate,
     ProductRecord,
@@ -37,6 +38,8 @@ class PreferenceConstraintTest(unittest.TestCase):
             confidence=0.89,
             source_turn=1,
             source_text="must be leather",
+            evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+            preference_group_id="test-material",
             status=ConstraintStatus.ACTIVE,
         )
 
@@ -54,6 +57,8 @@ class PreferenceConstraintTest(unittest.TestCase):
             confidence=1.01,
             source_turn=1,
             source_text="prefer blue",
+            evidence_kind=EvidenceKind.PROVISIONAL_PREFERENCE,
+            preference_group_id="test-color",
             status=ConstraintStatus.ACTIVE,
         )
 
@@ -119,8 +124,15 @@ class PreferenceConstraintTest(unittest.TestCase):
             confidence=0.98,
             source_turn=1,
             source_text="must be leather",
+            evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+            preference_group_id="test-material",
         )
-        concept = WeightedConcept(value="winter", weight=0.8, source_turn=1)
+        concept = WeightedConcept(
+            value="winter",
+            weight=0.8,
+            source_turn=1,
+            preference_group_id="test-winter",
+        )
         intent = ShoppingIntent(
             active_constraints=(),
             constraint_history=(),

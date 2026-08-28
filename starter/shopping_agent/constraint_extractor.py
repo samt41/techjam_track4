@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
+    DialogueAct,
+    EvidenceKind,
     PreferenceUpdate,
     Strength,
     UpdateAction,
@@ -31,7 +32,8 @@ _REMOVAL_CUE_RE = re.compile(r"\b(?:ignore|remove|drop|forget|no longer)\b")
 _NEGATION_CUE_RE = re.compile(r"\b(?:not|no|without|avoid|exclude)\b")
 _HARD_CUE_RE = re.compile(r"\b(?:must|need|required|only|have to)\b")
 _CONTEXT_VALUE_RE = re.compile(
-    r"(?:\bi need\b|\bmake it\b|\binstead(?: i (?:need|want))?\b)\s+(?:to be\s+)?([a-z0-9][a-z0-9 -]*)"
+    r"(?:\bi need\b|\bmake it\b|\binstead(?: i (?:need|want))?\b)"
+    r"\s+(?:to be\s+)?([a-z0-9][a-z0-9 -]*)"
 )
 _SCOPE_BOUNDARY_RE = re.compile(r"[;,.!?]|\b(?:but|however|instead|rather|although)\b")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -39,7 +41,7 @@ _SLATE_FEEDBACK_RE = re.compile(
     r"^(?:show me (?:others|more|something else)|more options|other options|next)$"
 )
 _INTENT_OVERRIDE_RE = re.compile(
-    r"^(?:actually|instead|change|switch|rather)\b"
+    r"^(?:actually|instead|change|switch|rather|ignore my earlier preference)\b"
 )
 _ATTRIBUTE_PRIORITY = (
     Attribute.CATEGORY,
@@ -85,6 +87,7 @@ class ConstraintExtractor:
         asked_attribute: Attribute | None,
     ) -> tuple[PreferenceUpdate, ...]:
         normalized = normalize_text(message)
+        dialogue_act = self.dialogue_act(message, asked_attribute)
         if not normalized:
             return ()
         if _SLATE_FEEDBACK_RE.fullmatch(normalized):
@@ -100,6 +103,8 @@ class ConstraintExtractor:
                 confidence=0.98,
                 turn=turn,
                 source_text=message,
+                evidence_kind=EvidenceKind.CLARIFICATION_ANSWER,
+                preference_group_id=self._group_id(turn, 0),
             ),)
 
         price_updates = self._price_updates(normalized, message, turn)
@@ -120,6 +125,8 @@ class ConstraintExtractor:
                     confidence=0.98,
                     turn=turn,
                     source_text=message,
+                    evidence_kind=EvidenceKind.CLARIFICATION_ANSWER,
+                    preference_group_id=self._group_id(turn, 0),
                 ))
 
         inherited_attribute = self._removed_attribute(updates)
@@ -138,6 +145,8 @@ class ConstraintExtractor:
                         confidence=0.98,
                         turn=turn,
                         source_text=message,
+                        evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+                        preference_group_id=self._group_id(turn, 0),
                     ))
 
         if not updates:
@@ -153,10 +162,42 @@ class ConstraintExtractor:
                     confidence=0.55,
                     turn=turn,
                     source_text=message,
+                    evidence_kind=EvidenceKind.PROVISIONAL_PREFERENCE,
+                    preference_group_id=self._group_id(turn, 0),
                 ))
-        if _INTENT_OVERRIDE_RE.search(normalized):
-            updates = [replace(update, intent_override=True) for update in updates]
+        if dialogue_act is DialogueAct.INTENT_OVERRIDE:
+            updates.insert(0, self._update(
+                action=UpdateAction.RETRACT_PROVISIONAL,
+                attribute=None,
+                operator=ComparisonOperator.EQUALS,
+                value=None,
+                excluded=False,
+                strength=Strength.SOFT,
+                confidence=0.98,
+                turn=turn,
+                source_text=message,
+                evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+                preference_group_id=f"t{turn}:override",
+            ))
         return tuple(updates)
+
+    @staticmethod
+    def dialogue_act(
+        message: str,
+        asked_attribute: Attribute | None,
+    ) -> DialogueAct:
+        normalized = normalize_text(message)
+        if not normalized:
+            return DialogueAct.EMPTY
+        if _SLATE_FEEDBACK_RE.fullmatch(normalized):
+            return DialogueAct.SLATE_FEEDBACK
+        if _INTENT_OVERRIDE_RE.search(normalized):
+            return DialogueAct.INTENT_OVERRIDE
+        if asked_attribute is not None and _DECLINE_RE.fullmatch(normalized):
+            return DialogueAct.DECLINE
+        if asked_attribute is not None:
+            return DialogueAct.CLARIFICATION_ANSWER
+        return DialogueAct.REQUEST
 
     def _price_updates(
         self,
@@ -177,6 +218,11 @@ class ConstraintExtractor:
                     confidence=0.92,
                     turn=turn,
                     source_text=source_text,
+                    evidence_kind=EvidenceKind.EXPLICIT_REQUIREMENT,
+                    preference_group_id=self._group_id(
+                        turn,
+                        self._clause_ordinal(normalized, match.start()),
+                    ),
                 ))
         return tuple(updates)
 
@@ -221,6 +267,16 @@ class ConstraintExtractor:
             removal = _REMOVAL_CUE_RE.search(scope) is not None
             excluded = not removal and _NEGATION_CUE_RE.search(scope) is not None
             hard = excluded or _HARD_CUE_RE.search(scope) is not None
+            if excluded:
+                evidence_kind = EvidenceKind.EXCLUSION
+            elif removal or _INTENT_OVERRIDE_RE.search(normalized):
+                evidence_kind = EvidenceKind.EXPLICIT_REQUIREMENT
+            elif attribute is Attribute.CATEGORY:
+                evidence_kind = EvidenceKind.CATEGORY_ANCHOR
+            elif hard:
+                evidence_kind = EvidenceKind.EXPLICIT_REQUIREMENT
+            else:
+                evidence_kind = EvidenceKind.PROVISIONAL_PREFERENCE
             updates.append(self._update(
                 action=(
                     UpdateAction.REMOVE
@@ -235,6 +291,18 @@ class ConstraintExtractor:
                 confidence=0.98 if removal or excluded else 0.92 if hard else 0.80,
                 turn=turn,
                 source_text=source_text,
+                evidence_kind=evidence_kind,
+                preference_group_id=(
+                    self._group_id(
+                        turn,
+                        self._clause_ordinal(normalized, start),
+                    )
+                    + (
+                        ":category-anchor"
+                        if evidence_kind is EvidenceKind.CATEGORY_ANCHOR
+                        else ""
+                    )
+                ),
             ))
         return tuple(updates), tuple(occupied)
 
@@ -265,10 +333,20 @@ class ConstraintExtractor:
         return any(span[0] < end and start < span[1] for start, end in occupied)
 
     @staticmethod
+    def _clause_ordinal(normalized: str, position: int) -> int:
+        return 1 + sum(
+            1 for match in _SCOPE_BOUNDARY_RE.finditer(normalized[:position])
+        )
+
+    @staticmethod
+    def _group_id(turn: int, clause_ordinal: int) -> str:
+        return f"t{turn}:clause{clause_ordinal}"
+
+    @staticmethod
     def _update(
         *,
         action: UpdateAction,
-        attribute: Attribute,
+        attribute: Attribute | None,
         operator: ComparisonOperator,
         value: str | None,
         excluded: bool,
@@ -276,6 +354,8 @@ class ConstraintExtractor:
         confidence: float,
         turn: int,
         source_text: str,
+        evidence_kind: EvidenceKind,
+        preference_group_id: str,
     ) -> PreferenceUpdate:
         return PreferenceUpdate(
             action=action,
@@ -287,6 +367,8 @@ class ConstraintExtractor:
             confidence=confidence,
             source_turn=turn,
             source_text=source_text,
+            evidence_kind=evidence_kind,
+            preference_group_id=preference_group_id,
         )
 
 

@@ -76,6 +76,27 @@ def abundant_strict_products() -> list[dict[str, object]]:
     return products
 
 
+def generic_override_products() -> list[dict[str, object]]:
+    return [
+        {
+            "parent_asin": f"OVERRIDE-{number:02d}",
+            "title": f"{'Red synthetic' if number <= 6 else 'Blue leather'} boot",
+            "features": ["durable"],
+            "details": {
+                "material": "synthetic" if number <= 6 else "leather",
+                "color": "red" if number <= 6 else "blue",
+            },
+            "description": ["Everyday boot"],
+            "categories": ["Clothing", "Boots"],
+            "store": "Example",
+            "average_rating": 4.8 if number <= 6 else 4.5,
+            "rating_number": 100,
+            "price": 60.0 + number,
+        }
+        for number in range(1, 13)
+    ]
+
+
 class AgentIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -136,6 +157,45 @@ class AgentIntegrationTest(unittest.TestCase):
             item["parent_asin"].startswith("CANVAS-")
             for item in response["recommendations"]
         ))
+
+    def test_generic_override_retracts_color_but_preserves_boot_category(self) -> None:
+        catalog_path, artifact_path = self.product_set(
+            "generic-override",
+            generic_override_products(),
+        )
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
+        self.addCleanup(agent.close)
+        agent.reset("generic-override", PROFILE)
+        agent.respond("generic-override", "I prefer red boots", 1, 10)
+
+        response = agent.respond(
+            "generic-override",
+            "ignore my earlier preference; what I need is leather boots",
+            2,
+            10,
+        )
+
+        self.assertEqual(len(response["recommendations"]), 6)
+        self.assertTrue(all(
+            int(item["parent_asin"].rsplit("-", 1)[1]) > 6
+            for item in response["recommendations"]
+        ))
+
+    def test_turn_history_is_typed_and_capped_at_ten(self) -> None:
+        agent = Agent(
+            catalog_path=self.catalog_path,
+            artifact_path=self.artifact_path,
+        )
+        self.addCleanup(agent.close)
+        agent.reset("history", PROFILE)
+
+        for turn in range(1, 13):
+            agent.respond("history", "show me others", turn, 10)
+
+        history = agent.turn_history("history")
+        self.assertEqual(len(history), 10)
+        self.assertTrue(all(record.message == "show me others" for record in history))
+        self.assertTrue(all(record.dialogue_act.value == "slate_feedback" for record in history))
 
     def test_empty_message_still_fills_the_requested_slate(self) -> None:
         agent = Agent(catalog_path=self.catalog_path)

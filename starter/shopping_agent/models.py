@@ -32,6 +32,7 @@ class ConstraintStatus(StrEnum):
     ACTIVE = "active"
     REMOVED = "removed"
     SUPERSEDED = "superseded"
+    RETRACTED = "retracted"
 
 
 class UpdateAction(StrEnum):
@@ -39,6 +40,24 @@ class UpdateAction(StrEnum):
     ADD = "add"
     REMOVE = "remove"
     DECLINE = "decline"
+    RETRACT_PROVISIONAL = "retract_provisional"
+
+
+class EvidenceKind(StrEnum):
+    CATEGORY_ANCHOR = "category_anchor"
+    PROVISIONAL_PREFERENCE = "provisional_preference"
+    EXPLICIT_REQUIREMENT = "explicit_requirement"
+    EXCLUSION = "exclusion"
+    CLARIFICATION_ANSWER = "clarification_answer"
+
+
+class DialogueAct(StrEnum):
+    REQUEST = "request"
+    CLARIFICATION_ANSWER = "clarification_answer"
+    DECLINE = "decline"
+    SLATE_FEEDBACK = "slate_feedback"
+    INTENT_OVERRIDE = "intent_override"
+    EMPTY = "empty"
 
 
 class RetrievalRoute(StrEnum):
@@ -84,6 +103,8 @@ class PreferenceConstraint:
     confidence: float
     source_turn: int
     source_text: str
+    evidence_kind: EvidenceKind
+    preference_group_id: str
     status: ConstraintStatus
 
     def validate(self) -> None:
@@ -91,12 +112,14 @@ class PreferenceConstraint:
             raise ValueError("constraint confidence must be between 0 and 1")
         if self.strength is Strength.HARD and self.confidence < 0.90:
             raise ValueError("hard constraint confidence must be at least 0.90")
+        if not self.preference_group_id:
+            raise ValueError("preference_group_id must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
 class PreferenceUpdate:
     action: UpdateAction
-    attribute: Attribute
+    attribute: Attribute | None
     operator: ComparisonOperator
     value: str | None
     excluded: bool
@@ -104,7 +127,20 @@ class PreferenceUpdate:
     confidence: float
     source_turn: int
     source_text: str
-    intent_override: bool = False
+    evidence_kind: EvidenceKind
+    preference_group_id: str
+
+    def validate(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("update confidence must be between 0 and 1")
+        if not self.preference_group_id:
+            raise ValueError("preference_group_id must not be empty")
+        if self.action is UpdateAction.RETRACT_PROVISIONAL:
+            if self.attribute is not None or self.value is not None:
+                raise ValueError("provisional retraction cannot name an attribute or value")
+            return
+        if self.attribute is None:
+            raise ValueError("attribute is required for non-retraction updates")
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +148,7 @@ class WeightedConcept:
     value: str
     weight: float
     source_turn: int
+    preference_group_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,3 +231,16 @@ class TurnResponse:
     message: str
     ask_attribute: Attribute | None
     recommendations: tuple[RankedRecommendation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRecord:
+    message: str
+    dialogue_act: DialogueAct
+    updates: tuple[PreferenceUpdate, ...]
+    before_intent_version: int
+    after_intent_version: int
+    question_attribute: Attribute | None
+    strict_product_ids: tuple[str, ...]
+    exploratory_product_ids: tuple[str, ...]
+    relaxed_constraint_ids: tuple[str, ...]

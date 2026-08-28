@@ -5,6 +5,7 @@ from dataclasses import replace
 from starter.shopping_agent.models import (
     Attribute,
     ConstraintStatus,
+    EvidenceKind,
     PreferenceConstraint,
     PreferenceUpdate,
     ShoppingIntent,
@@ -41,14 +42,49 @@ class PreferenceLedger:
         declined = set(self._intent.declined_attributes)
         concepts = list(self._intent.weighted_concepts)
         active_changed = False
-        explicit_override = any(update.intent_override for update in updates)
+        explicit_override = any(
+            update.action is UpdateAction.RETRACT_PROVISIONAL
+            for update in updates
+        )
 
         for update in updates:
+            update.validate()
+            if update.action is UpdateAction.RETRACT_PROVISIONAL:
+                provisional_group_id = next(
+                    (
+                        constraint.preference_group_id
+                        for constraint in reversed(history)
+                        if constraint.status is ConstraintStatus.ACTIVE
+                        and constraint.evidence_kind
+                        is EvidenceKind.PROVISIONAL_PREFERENCE
+                    ),
+                    None,
+                )
+                if provisional_group_id is not None:
+                    for index, constraint in enumerate(history):
+                        if (
+                            constraint.status is ConstraintStatus.ACTIVE
+                            and constraint.preference_group_id
+                            == provisional_group_id
+                        ):
+                            history[index] = replace(
+                                constraint,
+                                status=ConstraintStatus.RETRACTED,
+                            )
+                    concepts = [
+                        concept
+                        for concept in concepts
+                        if concept.preference_group_id != provisional_group_id
+                    ]
+                    active_changed = True
+                continue
             if update.action is UpdateAction.DECLINE:
+                assert update.attribute is not None
                 declined.add(update.attribute)
                 continue
             if update.value is None:
                 continue
+            assert update.attribute is not None
             if update.action is UpdateAction.REMOVE:
                 removed = False
                 for index, constraint in enumerate(history):
@@ -102,6 +138,8 @@ class PreferenceLedger:
                 confidence=update.confidence,
                 source_turn=update.source_turn,
                 source_text=update.source_text,
+                evidence_kind=update.evidence_kind,
+                preference_group_id=update.preference_group_id,
                 status=ConstraintStatus.ACTIVE,
             )
             constraint.validate()
@@ -112,6 +150,7 @@ class PreferenceLedger:
                     value=update.value,
                     weight=self._concept_weight(update),
                     source_turn=update.source_turn,
+                    preference_group_id=update.preference_group_id,
                 ))
             active_changed = True
 
@@ -120,12 +159,24 @@ class PreferenceLedger:
             for constraint in history
             if constraint.status is ConstraintStatus.ACTIVE
         )
+        active_group_ids = {
+            constraint.preference_group_id for constraint in active_constraints
+        }
+        concepts = [
+            concept
+            for concept in concepts
+            if concept.preference_group_id in active_group_ids
+        ]
         self._intent = ShoppingIntent(
             active_constraints=active_constraints,
             constraint_history=tuple(history),
             weighted_concepts=tuple(concepts),
-            declined_attributes=frozenset(declined),
-            asked_attributes=self._intent.asked_attributes,
+            declined_attributes=(
+                frozenset() if explicit_override else frozenset(declined)
+            ),
+            asked_attributes=(
+                () if explicit_override else self._intent.asked_attributes
+            ),
             intent_version=(
                 self._intent.intent_version + 1
                 if active_changed or explicit_override
@@ -145,6 +196,7 @@ class PreferenceLedger:
 
     @staticmethod
     def _constraint_id(update: PreferenceUpdate, ordinal: int) -> str:
+        assert update.attribute is not None
         value = (update.value or "none").replace(" ", "-")
         polarity = "exclude" if update.excluded else "include"
         return (

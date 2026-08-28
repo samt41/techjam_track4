@@ -19,6 +19,7 @@ from starter.shopping_agent.diagnostics import (
 from starter.shopping_agent.models import (
     Attribute,
     RecommendationHistory,
+    TurnRecord,
     TurnResponse,
     UserProfile,
     RetrievalRoute,
@@ -35,6 +36,7 @@ class _SessionState:
     ledger: PreferenceLedger
     history: RecommendationHistory
     last_asked_attribute: Attribute | None
+    turn_history: tuple[TurnRecord, ...]
 
 
 class TurnCoordinator:
@@ -66,7 +68,14 @@ class TurnCoordinator:
             ledger=PreferenceLedger(),
             history=RecommendationHistory(),
             last_asked_attribute=None,
+            turn_history=(),
         )
+
+    def turn_history(self, session_id: str) -> tuple[TurnRecord, ...]:
+        state = self._sessions.get(session_id)
+        if state is None:
+            raise RuntimeError("reset must be called before reading turn history")
+        return state.turn_history
 
     def respond(
         self,
@@ -81,6 +90,11 @@ class TurnCoordinator:
         state = self._sessions.get(session_id)
         if state is None:
             raise RuntimeError("reset must be called before respond")
+        dialogue_act = self._extractor.dialogue_act(
+            message,
+            state.last_asked_attribute,
+        )
+        before_intent_version = state.ledger.intent.intent_version
         updates = self._extractor.extract(
             message,
             turn,
@@ -197,6 +211,30 @@ class TurnCoordinator:
             intent.intent_version,
             elapsed_ms,
         )
+        strict_product_ids = tuple(
+            item.parent_asin for item in recommendations if item.exact_match
+        )
+        exploratory_product_ids = tuple(
+            item.parent_asin for item in recommendations if not item.exact_match
+        )
+        relaxed_constraint_ids = tuple(dict.fromkeys(
+            item.relaxed_constraint_id
+            for item in recommendations
+            if item.relaxed_constraint_id is not None
+        ))
+        state.turn_history = (*state.turn_history, TurnRecord(
+            message=message,
+            dialogue_act=dialogue_act,
+            updates=updates,
+            before_intent_version=before_intent_version,
+            after_intent_version=intent.intent_version,
+            question_attribute=(
+                clarification.attribute if clarification is not None else None
+            ),
+            strict_product_ids=strict_product_ids,
+            exploratory_product_ids=exploratory_product_ids,
+            relaxed_constraint_ids=relaxed_constraint_ids,
+        ))[-10:]
         return TurnResponse(
             message=recommendation_message(
                 recommendations,

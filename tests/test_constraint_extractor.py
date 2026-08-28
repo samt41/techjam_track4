@@ -11,6 +11,7 @@ from starter.shopping_agent.local_search_backend import LocalProductSearchBacken
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
+    EvidenceKind,
     Strength,
     UpdateAction,
 )
@@ -18,6 +19,25 @@ from tests.fixtures import build_test_artifacts, sample_products
 
 
 class ConstraintExtractorTest(unittest.TestCase):
+    def test_evidence_kinds_distinguish_anchor_preference_and_exclusion(self) -> None:
+        updates = self.extractor.extract(
+            "I need black boots but not leather",
+            turn=1,
+            asked_attribute=None,
+        )
+        evidence_by_value = {
+            update.value: update.evidence_kind
+            for update in updates
+            if update.value is not None
+        }
+
+        self.assertEqual(evidence_by_value["boots"], EvidenceKind.CATEGORY_ANCHOR)
+        self.assertEqual(
+            evidence_by_value["black"],
+            EvidenceKind.EXPLICIT_REQUIREMENT,
+        )
+        self.assertEqual(evidence_by_value["leather"], EvidenceKind.EXCLUSION)
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -47,12 +67,16 @@ class ConstraintExtractorTest(unittest.TestCase):
         self.assertEqual(
             [(update.action, update.value) for update in updates],
             [
+                (UpdateAction.RETRACT_PROVISIONAL, None),
                 (UpdateAction.REMOVE, "leather"),
                 (UpdateAction.SET, "canvas"),
             ],
         )
         self.assertTrue(
-            all(update.attribute is Attribute.MATERIAL for update in updates)
+            all(
+                update.attribute is Attribute.MATERIAL
+                for update in updates[1:]
+            )
         )
 
     def test_hard_soft_and_negative_cues_have_distinct_semantics(self) -> None:
@@ -156,13 +180,14 @@ class ConstraintExtractorTest(unittest.TestCase):
 
         self.assertEqual(updates, ())
 
-    def test_correction_marks_updates_as_intent_override(self) -> None:
+    def test_correction_emits_typed_provisional_retraction(self) -> None:
         updates = self.extractor.extract(
             "Actually I need black boots", turn=3, asked_attribute=None
         )
 
-        self.assertTrue(updates)
-        self.assertTrue(all(update.intent_override for update in updates))
+        self.assertIs(updates[0].action, UpdateAction.RETRACT_PROVISIONAL)
+        self.assertIsNone(updates[0].attribute)
+        self.assertTrue(all(update.preference_group_id for update in updates))
 
 
 if __name__ == "__main__":

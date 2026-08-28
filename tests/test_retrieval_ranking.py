@@ -9,6 +9,7 @@ from starter.shopping_agent.local_search_backend import LocalProductSearchBacken
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
+    EvidenceKind,
     PreferenceUpdate,
     ProductCandidate,
     RecommendationHistory,
@@ -41,6 +42,12 @@ def preference(
         confidence=0.98 if strength is Strength.HARD else 0.80,
         source_turn=1,
         source_text=value,
+        evidence_kind=(
+            EvidenceKind.EXPLICIT_REQUIREMENT
+            if strength is Strength.HARD
+            else EvidenceKind.PROVISIONAL_PREFERENCE
+        ),
+        preference_group_id=f"test-{attribute.value}",
     )
 
 
