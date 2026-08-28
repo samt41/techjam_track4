@@ -21,6 +21,7 @@ class Agent:
         artifact_path: str | Path | None = None,
         lexical_mode: LexicalMode = LexicalMode.AUTO,
         trace: EvaluationTrace | None = None,
+        exploration: str = "tail-only",
     ) -> None:
         resolved_catalog_path = Path(catalog_path)
         resolved_artifact_path = (
@@ -39,6 +40,7 @@ class Agent:
             catalog_index,
             trace=trace,
             startup_ms=startup_ms,
+            exploration=exploration,
         )
 
     def reset(self, session_id: str, user_profile: dict[str, object]) -> None:

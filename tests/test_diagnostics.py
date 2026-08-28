@@ -174,6 +174,76 @@ class TraceEventTest(unittest.TestCase):
                 output_root=output_root,
             )
 
+    def test_experiment_records_revision_config_and_miss_reasons(self) -> None:
+        # A large same-category catalog with one low-quality target that
+        # rotation cannot surface within ten turns forces a genuine miss.
+        crowded = [
+            {
+                "parent_asin": f"BOOT-{number:03d}",
+                "title": f"Boot {number}",
+                "features": ["durable"],
+                "details": {"material": "leather", "color": "black"},
+                "description": ["boot"],
+                "categories": ["Clothing", "Boots"],
+                "store": "Example",
+                "average_rating": 5.0 if number < 149 else 1.0,
+                "rating_number": 1000 if number < 149 else 1,
+                "price": 80.0,
+            }
+            for number in range(150)
+        ]
+        catalog_path, _ = build_test_artifacts(self.root, crowded)
+        dataset_path = self.root / "public.jsonl"
+        dataset_path.write_text("\n".join((
+            json.dumps({
+                "sample_id": "hit-sample",
+                "scenario_type": "buying",
+                "user_profile": {"summary": "test"},
+                "ground_truth": {"parent_asin": "BOOT-000"},
+            }),
+            json.dumps({
+                "sample_id": "miss-sample",
+                "scenario_type": "buying",
+                "user_profile": {"summary": "test"},
+                "ground_truth": {"parent_asin": "BOOT-149"},
+            }),
+        )) + "\n", encoding="utf-8")
+        output_root = self.root / "experiments"
+
+        run_directory = run_experiment(
+            run_id="attrib-run",
+            catalog_path=catalog_path,
+            dataset_path=dataset_path,
+            output_root=output_root,
+        )
+
+        summary = json.loads(
+            (run_directory / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(summary["code_revision"])
+        self.assertIn("belief_configuration", summary)
+        self.assertIn("question_configuration", summary)
+        self.assertEqual(summary["exploration"], "tail-only")
+
+        failure_lines = (
+            (run_directory / "failures.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        failures = [json.loads(line) for line in failure_lines if line.strip()]
+        self.assertTrue(failures)
+        self.assertTrue(all(failure["primary_reason"] for failure in failures))
+
+        sessions = [
+            json.loads(line)
+            for line in (run_directory / "sessions.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        miss_session = next(s for s in sessions if s["sample_id"] == "miss-sample")
+        self.assertIsNotNone(miss_session["first_miss_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

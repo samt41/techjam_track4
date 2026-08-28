@@ -69,6 +69,7 @@ class TurnCoordinator:
         catalog_index: CatalogIndex,
         trace: EvaluationTrace | None = None,
         startup_ms: float = 0.0,
+        exploration: str = "tail-only",
     ) -> None:
         self._catalog_index = catalog_index
         self._extractor = ConstraintExtractor(catalog_index)
@@ -83,6 +84,7 @@ class TurnCoordinator:
         self._closed = False
         self._trace = trace or NoOpEvaluationTrace()
         self._startup_ms = startup_ms
+        self._exploration_enabled = exploration != "disabled"
         self._traced = not isinstance(self._trace, NoOpEvaluationTrace)
         if self._traced and not tracemalloc.is_tracing():
             tracemalloc.start()
@@ -183,7 +185,7 @@ class TurnCoordinator:
             turn,
         )
 
-        if len(recommendations) < top_k:
+        if self._exploration_enabled and len(recommendations) < top_k:
             recommendations = self._fill_tail(
                 session_id,
                 turn,
