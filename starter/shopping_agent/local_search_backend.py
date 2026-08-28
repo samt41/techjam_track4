@@ -156,30 +156,15 @@ class LocalProductSearchBackend:
             return self._lexical_fallback_search(
                 request, tokens, filter_clause, started_at
             )
-        # FTS5 path: FTS5 runs its own bounded query, so only a cheap posting
-        # COUNT is needed to honor the work-limit discard contract. Materializing
-        # up to work_limit posting rows here is pure waste on a large catalog.
-        posting_count = self._bounded_posting_count(
-            tokens,
-            filter_clause,
-            request.work_limit,
-        )
-        if posting_count > request.work_limit:
-            return SearchResult(
-                hits=(),
-                total_matches=posting_count - 1,
-                total_relation=TotalRelation.LOWER_BOUND,
-                route=request.route,
-                reason=SearchReason.WORK_LIMIT_EXCEEDED,
-                work_consumed=request.work_limit,
-                elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
-            )
+        # FTS5 path: FTS5 runs its own index-bounded query with LIMIT, so the
+        # posting-set scan (used only by the deterministic fallback) is skipped
+        # entirely here. Materializing up to work_limit posting rows was pure
+        # waste on a large catalog and dominated per-turn runtime.
         try:
             return self._fts5_result(
                 request,
                 tokens,
                 filter_clause,
-                posting_count,
                 started_at,
             )
         except sqlite3.DatabaseError:
@@ -197,7 +182,7 @@ class LocalProductSearchBackend:
                 total_relation=TotalRelation.LOWER_BOUND,
                 route=request.route,
                 reason=SearchReason.FTS5_UNAVAILABLE,
-                work_consumed=posting_count,
+                work_consumed=0,
                 elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
             )
 
@@ -259,31 +244,6 @@ class LocalProductSearchBackend:
             (*filter_clause.parameters, *tokens, work_limit + 1),
         ).fetchall()
 
-    def _bounded_posting_count(
-        self,
-        tokens: tuple[str, ...],
-        filter_clause: SqlFilterClause,
-        work_limit: int,
-    ) -> int:
-        placeholders = ", ".join("?" for _ in tokens)
-        term_filter_sql = (
-            filter_clause.sql + " AND"
-            if filter_clause.sql
-            else " WHERE"
-        )
-        # Bound the scan to work_limit + 1 index rows without materializing them,
-        # so a route that exceeds its budget is still discarded but a completed
-        # route pays only for a cheap COUNT rather than a full posting fetch.
-        row = self._artifacts.connection.execute(
-            "SELECT COUNT(*) FROM (SELECT posting.ordinal "
-            "FROM lexical_postings AS posting "
-            "JOIN products AS p ON p.ordinal = posting.ordinal"
-            + term_filter_sql
-            + f" posting.term IN ({placeholders}) LIMIT ?)",
-            (*filter_clause.parameters, *tokens, work_limit + 1),
-        ).fetchone()
-        return int(row[0])
-
     def _fallback_result(
         self,
         request: SearchRequest,
@@ -332,7 +292,6 @@ class LocalProductSearchBackend:
         request: SearchRequest,
         tokens: tuple[str, ...],
         filter_clause: SqlFilterClause,
-        work_consumed: int,
         started_at: float,
     ) -> SearchResult:
         expression = " OR ".join(f'"{token}"' for token in tokens)
@@ -348,21 +307,23 @@ class LocalProductSearchBackend:
             + hard_filter_sql
         )
         parameters = (expression, *filter_clause.parameters)
-        total_matches = int(self._artifacts.connection.execute(
-            "SELECT COUNT(*)" + from_and_where,
-            parameters,
-        ).fetchone()[0])
         bm25_expression = (
             "bm25(products_fts, "
             f"{TITLE_WEIGHT}, {CATEGORY_WEIGHT}, {FEATURE_WEIGHT}, "
             f"{DETAILS_WEIGHT}, {STORE_WEIGHT}, {DESCRIPTION_WEIGHT})"
         )
+        # Fetch one extra row instead of a separate COUNT(*). If the extra row is
+        # present the true total exceeds the returned slice, reported as a lower
+        # bound; otherwise the returned count is the exact total. This halves the
+        # FTS index traversals per route on a large catalog.
         rows = self._artifacts.connection.execute(
             "SELECT p.parent_asin, -" + bm25_expression
             + from_and_where
             + " ORDER BY " + bm25_expression + " ASC, p.parent_asin ASC LIMIT ?",
-            (*parameters, request.limit),
+            (*parameters, request.limit + 1),
         ).fetchall()
+        truncated = len(rows) > request.limit
+        rows = rows[:request.limit]
         result = SearchResult(
             hits=tuple(
                 SearchHit(
@@ -372,11 +333,13 @@ class LocalProductSearchBackend:
                 )
                 for rank, row in enumerate(rows, start=1)
             ),
-            total_matches=total_matches,
-            total_relation=TotalRelation.EXACT,
+            total_matches=len(rows) + (1 if truncated else 0),
+            total_relation=(
+                TotalRelation.LOWER_BOUND if truncated else TotalRelation.EXACT
+            ),
             route=request.route,
             reason=SearchReason.COMPLETED,
-            work_consumed=work_consumed,
+            work_consumed=len(rows),
             elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
         )
         result.validate()
