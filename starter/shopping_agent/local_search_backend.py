@@ -85,7 +85,7 @@ class LocalProductSearchBackend:
             "SELECT COUNT(*) FROM products AS p" + filter_clause.sql,
             filter_clause.parameters,
         ).fetchone()[0])
-        if total_matches > request.work_limit:
+        if request.limit > request.work_limit:
             return SearchResult(
                 hits=(),
                 total_matches=total_matches,
@@ -115,7 +115,7 @@ class LocalProductSearchBackend:
             total_relation=TotalRelation.EXACT,
             route=request.route,
             reason=SearchReason.COMPLETED,
-            work_consumed=total_matches,
+            work_consumed=len(rows),
             elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
         )
         result.validate()
@@ -414,17 +414,15 @@ def _compile_filter_clause(
 ) -> SqlFilterClause:
     clauses: list[str] = []
     parameters: list[object] = []
-    for index, structured_filter in enumerate(filters):
+    for structured_filter in filters:
         structured_filter.validate()
         if structured_filter.attribute is Attribute.BUDGET:
             clause, clause_parameters = _compile_price_filter(structured_filter)
         else:
-            alias = f"attribute_{index}"
-            existence = "NOT EXISTS" if structured_filter.excluded else "EXISTS"
+            membership = "NOT IN" if structured_filter.excluded else "IN"
             clause = (
-                f"{existence} (SELECT 1 FROM attributes AS {alias} "
-                f"WHERE {alias}.ordinal = p.ordinal "
-                f"AND {alias}.attribute = ? AND {alias}.value = ?)"
+                f"p.ordinal {membership} (SELECT ordinal FROM attributes "
+                "WHERE attribute = ? AND value = ?)"
             )
             clause_parameters = (
                 structured_filter.attribute.value,

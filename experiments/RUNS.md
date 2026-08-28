@@ -17,6 +17,12 @@ Only the best run for each meaningful implementation class is retained. Generate
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
 | `data/catalog.jsonl` | 50,000 | 60,546,327 B | 575,311,872 B | 652 B | 101,291 | yes | 116.967 s |
 
+## Artifact-backed retrieval microbenchmarks
+
+| Catalog | Startup validation | Filtered count + Top-10 | FTS Top-1,000 | Filtered quality Top-10 |
+| --- | ---: | ---: | ---: | ---: |
+| 50,000 products | 453.760 ms | 8.192 ms | 81.365 ms | 8.321 ms |
+
 ## Constraints and failures
 
 - The catalog contains 112 em-dash prices and five `from N` display prices; these normalize to unknown to avoid false hard-budget decisions.
@@ -25,4 +31,5 @@ Only the best run for each meaningful implementation class is retained. Generate
 - Counterfactual routes run only when strict eligibility yields fewer than the requested slate size. Explicit exclusions are never relaxed.
 - Two final-schema runs had identical canonical summaries, all 200 session outcomes, and all 843 ordered slates. Runtime differed (185.492 s and 126.485 s).
 - The first full artifact build exceeded the 120-second command window while maintaining indexes row by row. Its verified temporary directory was deleted; batching inserts and building secondary indexes after loading produced the retained build above.
-- The fixed backend request has no turn identifier. Exact filtered counts remain uncached in the backend so results cannot leak across turn scopes; shared per-turn route counts belong in the Task 5 coordinator lifecycle.
+- The fixed backend request has no turn identifier. Exact filtered counts remain uncached so results cannot leak across turn scopes; indexed posting-set filters reduced the retained measured request to 8.192 ms.
+- Correlated categorical `EXISTS`/`NOT EXISTS` measured 263–293 ms warm on 50,000 products. Equivalent parameterized posting-set `IN`/`NOT IN` measured 3–7 ms and is the retained filter implementation.

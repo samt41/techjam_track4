@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.models import (
     PreferenceConstraint,
     RankedRecommendation,
     TurnResponse,
 )
+from starter.shopping_agent.search_backend import ProductSearchBackend
 
 
 class ResponseValidator:
-    def __init__(self, catalog_index: CatalogIndex) -> None:
-        self._catalog_index = catalog_index
+    def __init__(self, backend: ProductSearchBackend) -> None:
+        self._backend = backend
 
     def validate(
         self,
@@ -22,7 +22,7 @@ class ResponseValidator:
         for recommendation in recommendations:
             if (
                 recommendation.parent_asin in seen
-                or recommendation.parent_asin not in self._catalog_index.product_by_id
+                or not self._backend.contains_product(recommendation.parent_asin)
             ):
                 continue
             seen.add(recommendation.parent_asin)

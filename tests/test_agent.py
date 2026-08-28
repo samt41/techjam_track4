@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 
 from starter.agent import Agent
-from tests.fixtures import sample_products, write_catalog
+from tests.fixtures import (
+    build_test_artifacts,
+    excluded_prefix_products,
+    sample_products,
+)
 
 
 PROFILE = {
@@ -75,13 +79,20 @@ def abundant_strict_products() -> list[dict[str, object]]:
 class AgentIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.catalog_path = write_catalog(
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.catalog_path, self.artifact_path = build_test_artifacts(
             Path(self.temporary_directory.name),
             integration_products(),
         )
 
-    def tearDown(self) -> None:
-        self.temporary_directory.cleanup()
+    def product_set(
+        self,
+        name: str,
+        products: list[dict[str, object]],
+    ) -> tuple[Path, Path]:
+        directory = Path(self.temporary_directory.name) / name
+        directory.mkdir()
+        return build_test_artifacts(directory, products)
 
     def test_agent_recommends_while_accumulating_constraint_answers(self) -> None:
         agent = Agent(catalog_path=self.catalog_path)
@@ -103,6 +114,28 @@ class AgentIntegrationTest(unittest.TestCase):
             len({item["parent_asin"] for item in second["recommendations"]}),
             10,
         )
+
+    def test_agent_returns_ten_strict_products_beyond_lexical_budget(self) -> None:
+        catalog_path, artifact_path = self.product_set(
+            "excluded-prefix",
+            excluded_prefix_products(),
+        )
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
+        self.addCleanup(agent.close)
+        agent.reset("strict-fill", PROFILE)
+
+        response = agent.respond(
+            "strict-fill",
+            "I need boots, but not leather",
+            1,
+            10,
+        )
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertTrue(all(
+            item["parent_asin"].startswith("CANVAS-")
+            for item in response["recommendations"]
+        ))
 
     def test_empty_message_still_fills_the_requested_slate(self) -> None:
         agent = Agent(catalog_path=self.catalog_path)
@@ -131,11 +164,11 @@ class AgentIntegrationTest(unittest.TestCase):
             agent.respond("s1", "boots", 1, 10)
 
     def test_failed_slate_rotates_but_override_resets_suppression(self) -> None:
-        catalog_path = write_catalog(
-            Path(self.temporary_directory.name),
+        catalog_path, artifact_path = self.product_set(
+            "rotation",
             rotation_products(),
         )
-        agent = Agent(catalog_path=catalog_path)
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
         self.addCleanup(agent.close)
         agent.reset("rotate", PROFILE)
 
@@ -174,27 +207,26 @@ class AgentIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(first["ask_attribute"])
         self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
 
-    def test_near_matches_are_tail_ranked_and_disclosed(self) -> None:
+    def test_sparse_strict_pool_is_not_relaxed_in_strict_migration_slice(self) -> None:
         agent = Agent(catalog_path=self.catalog_path)
         self.addCleanup(agent.close)
         agent.reset("near", PROFILE)
 
         response = agent.respond("near", "Boots that must be leather", 1, 10)
 
-        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertEqual(len(response["recommendations"]), 6)
         self.assertTrue(all(
             item["parent_asin"].startswith("MATCH-")
             for item in response["recommendations"][:6]
         ))
-        self.assertIn("material", response["message"].lower())
-        self.assertIn("near match", response["message"].lower())
+        self.assertNotIn("near match", response["message"].lower())
 
     def test_abundant_strict_pool_does_not_execute_relaxations(self) -> None:
-        catalog_path = write_catalog(
-            Path(self.temporary_directory.name),
+        catalog_path, artifact_path = self.product_set(
+            "abundant",
             abundant_strict_products(),
         )
-        agent = Agent(catalog_path=catalog_path)
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
         self.addCleanup(agent.close)
         agent.reset("strict", PROFILE)
 

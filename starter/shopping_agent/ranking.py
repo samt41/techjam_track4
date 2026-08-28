@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
@@ -13,6 +12,7 @@ from starter.shopping_agent.models import (
     ShoppingIntent,
     Strength,
 )
+from starter.shopping_agent.search_backend import ProductSearchBackend
 
 
 class EligibilityGate:
@@ -41,10 +41,10 @@ class EligibilityGate:
 class ProductRanker:
     def __init__(
         self,
-        catalog_index: CatalogIndex,
+        backend: ProductSearchBackend,
         eligibility_gate: EligibilityGate | None = None,
     ) -> None:
-        self._catalog_index = catalog_index
+        self._backend = backend
         self._eligibility_gate = eligibility_gate or EligibilityGate()
 
     def rank(
@@ -58,8 +58,6 @@ class ProductRanker:
         relaxed_by_id: dict[str, str | None] = {}
         strict_ids: set[str] = set()
         for candidate in candidates:
-            if candidate.parent_asin not in self._catalog_index.product_by_id:
-                continue
             evidence_by_id.setdefault(candidate.parent_asin, []).extend(
                 candidate.evidence
             )
@@ -71,9 +69,13 @@ class ProductRanker:
                     candidate.relaxed_constraint_id,
                 )
 
+        products = self._backend.get_products(tuple(evidence_by_id))
+        product_by_id = {product.parent_asin: product for product in products}
         ranked: list[RankedRecommendation] = []
         for parent_asin, evidence in evidence_by_id.items():
-            product = self._catalog_index.product_by_id[parent_asin]
+            product = product_by_id.get(parent_asin)
+            if product is None:
+                continue
             strict_eligibility = self._eligibility_gate.evaluate(
                 product,
                 intent.active_constraints,
@@ -109,22 +111,7 @@ class ProductRanker:
         ))
         strict = [item for item in ranked if item.exact_match]
         exploratory = [item for item in ranked if not item.exact_match]
-        if not exploratory or top_k <= 0:
-            return tuple(strict[:max(0, top_k)])
-
-        exploratory_target = min(3, max(1, round(top_k * 0.30)))
-        strict_target = max(0, top_k - exploratory_target)
-        selected = strict[:strict_target]
-        selected.extend(exploratory[:exploratory_target])
-        if len(selected) < top_k:
-            selected_ids = {item.parent_asin for item in selected}
-            remaining = (
-                item
-                for item in (*strict[strict_target:], *exploratory[exploratory_target:])
-                if item.parent_asin not in selected_ids
-            )
-            selected.extend(tuple(remaining)[:top_k - len(selected)])
-        return tuple(selected[:top_k])
+        return tuple((*strict, *exploratory)[:max(0, top_k)])
 
 
 def _matches(product: ProductRecord, constraint: PreferenceConstraint) -> bool:

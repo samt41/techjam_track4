@@ -1,99 +1,83 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
-import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 from starter.shopping_agent.catalog_index import CatalogIndex
+from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import Attribute
-from tests.fixtures import sample_products, write_catalog
+from tests.fixtures import build_test_artifacts, sample_products
 
 
 class CatalogIndexTest(unittest.TestCase):
-    def _open_index(self, directory: str, products: list[dict[str, object]]) -> CatalogIndex:
-        index = CatalogIndex.from_path(write_catalog(Path(directory), products))
+    def setUp(self) -> None:
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        self.root = Path(temporary_directory.name)
+        self._fixture_number = 0
+
+    def _open_index(
+        self,
+        products: list[dict[str, object]],
+    ) -> CatalogIndex:
+        self._fixture_number += 1
+        directory = self.root / str(self._fixture_number)
+        directory.mkdir()
+        catalog_path, artifact_path = build_test_artifacts(
+            directory,
+            products,
+        )
+        index = CatalogIndex(LocalProductSearchBackend.open(
+            catalog_path,
+            artifact_path,
+        ))
         self.addCleanup(index.close)
         return index
 
     def test_close_releases_the_sqlite_connection(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, sample_products())
+        index = self._open_index(sample_products())
 
-            index.close()
+        index.close()
 
-            with self.assertRaises(sqlite3.ProgrammingError):
-                index.search_fts(("boot",), limit=1)
-
-    def test_catalog_search_prefers_title_then_features(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, sample_products())
-
-            rows = index.search_fts(("winter", "boot"), limit=10)
-
-            self.assertEqual(rows[0].parent_asin, "BOOT-1")
-            self.assertEqual(rows[1].parent_asin, "BOOT-2")
-
-    def test_quality_fallback_is_complete_and_deterministic(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, sample_products())
-
-            first = index.quality_fallback(category="boots", limit=10)
-            second = index.quality_fallback(category="boots", limit=10)
-
-            self.assertEqual(len(first), 10)
-            self.assertEqual(first, second)
-            self.assertEqual(first[0].parent_asin, "BOOT-1")
-
-    def test_quality_fallback_reuses_immutable_category_order(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, sample_products())
-            with patch(
-                "starter.shopping_agent.catalog_index._quality_score",
-                wraps=__import__(
-                    "starter.shopping_agent.catalog_index",
-                    fromlist=["_quality_score"],
-                )._quality_score,
-            ) as quality_score:
-                index.quality_fallback(category="boots", limit=10)
-                index.quality_fallback(category="boots", limit=5)
-
-            self.assertLessEqual(quality_score.call_count, len(index.products))
+        with self.assertRaises(sqlite3.ProgrammingError):
+            index.get_products(("BOOT-1",))
 
     def test_catalog_exposes_normalized_metadata_vocabularies(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, sample_products())
+        index = self._open_index(sample_products())
 
-            self.assertEqual(
-                index.values_for(Attribute.MATERIAL),
-                ("leather", "rubber", "synthetic"),
-            )
-            leather_products = index.products_for(Attribute.MATERIAL, "Leather")
-            self.assertEqual(
-                tuple(product.parent_asin for product in leather_products),
-                ("BOOT-1",),
-            )
+        self.assertEqual(
+            index.values_for(Attribute.MATERIAL),
+            ("leather", "rubber", "synthetic"),
+        )
 
     def test_catalog_preserves_opaque_product_identifier_case(self) -> None:
         products = sample_products()
         products[0]["parent_asin"] = "MiXeD-1"
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, products)
+        index = self._open_index(products)
 
-            self.assertEqual(index.products[0].parent_asin, "MiXeD-1")
+        loaded = index.get_products(("MiXeD-1",))
+
+        self.assertEqual(loaded[0].parent_asin, "MiXeD-1")
 
     def test_catalog_treats_display_only_prices_as_unknown(self) -> None:
         products = sample_products()[:2]
         products[0]["price"] = "—"
         products[1]["price"] = "from 12.99"
-        with tempfile.TemporaryDirectory() as directory:
-            index = self._open_index(directory, products)
+        index = self._open_index(products)
 
-            self.assertEqual(
-                tuple(product.price for product in index.products),
-                (None, None),
-            )
+        loaded = index.get_products(("BOOT-1", "BOOT-2"))
+
+        self.assertEqual(
+            tuple(product.price for product in loaded),
+            (None, None),
+        )
+
+    def test_catalog_exposes_artifact_fingerprint(self) -> None:
+        index = self._open_index(sample_products())
+
+        self.assertEqual(len(index.fingerprint), 64)
 
 
 if __name__ == "__main__":

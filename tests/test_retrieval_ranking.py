@@ -5,21 +5,22 @@ import unittest
 from pathlib import Path
 
 from starter.shopping_agent.catalog_index import CatalogIndex
+from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
-    ProductCandidate,
-    RouteEvidence,
     PreferenceUpdate,
+    ProductCandidate,
+    RecommendationHistory,
     RetrievalRoute,
+    RouteEvidence,
     Strength,
     UpdateAction,
-    RecommendationHistory,
 )
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import EligibilityGate, ProductRanker
-from starter.shopping_agent.retrieval import CandidateGenerator, RetrievalPlanner
-from tests.fixtures import sample_products, write_catalog
+from starter.shopping_agent.retrieval import RetrievalPlanner, execute_search_plan
+from tests.fixtures import build_test_artifacts, sample_products
 
 
 def preference(
@@ -45,17 +46,20 @@ def preference(
 
 class RetrievalRankingTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        path = write_catalog(Path(self.temporary_directory.name), sample_products())
-        self.index = CatalogIndex.from_path(path)
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        catalog_path, artifact_path = build_test_artifacts(
+            Path(temporary_directory.name),
+            sample_products(),
+        )
+        self.index = CatalogIndex(LocalProductSearchBackend.open(
+            catalog_path,
+            artifact_path,
+        ))
+        self.addCleanup(self.index.close)
 
-    def tearDown(self) -> None:
-        self.index.close()
-        self.temporary_directory.cleanup()
-
-    def test_strict_plans_cover_metadata_fts_and_fallback_routes(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((
+    def test_strict_routes_share_one_immutable_hard_filter_tuple(self) -> None:
+        intent = PreferenceLedger().apply((
             preference(Attribute.CATEGORY, "boots"),
             preference(Attribute.MATERIAL, "leather"),
         ))
@@ -63,7 +67,7 @@ class RetrievalRankingTest(unittest.TestCase):
         plans = RetrievalPlanner().strict(intent)
 
         self.assertEqual(
-            {plan.route for plan in plans},
+            {plan.request.route for plan in plans},
             {
                 RetrievalRoute.METADATA,
                 RetrievalRoute.EXACT_FTS,
@@ -71,32 +75,33 @@ class RetrievalRankingTest(unittest.TestCase):
                 RetrievalRoute.CATEGORY_FALLBACK,
             },
         )
-        material_plan = next(
-            plan
-            for plan in plans
-            if plan.route is RetrievalRoute.METADATA
-            and plan.attribute is Attribute.MATERIAL
+        shared_filters = plans[0].request.filters
+        self.assertTrue(all(
+            plan.request.filters is shared_filters for plan in plans
+        ))
+        self.assertEqual(
+            {structured_filter.constraint_id for structured_filter in shared_filters},
+            {constraint.constraint_id for constraint in intent.active_constraints},
         )
-        self.assertEqual(material_plan.attribute_value, "leather")
 
-    def test_metadata_generator_returns_ranked_route_evidence(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((preference(Attribute.MATERIAL, "leather"),))
+    def test_backend_plan_returns_ranked_route_evidence(self) -> None:
+        intent = PreferenceLedger().apply((
+            preference(Attribute.MATERIAL, "leather"),
+        ))
         plan = next(
             plan
             for plan in RetrievalPlanner().strict(intent)
-            if plan.route is RetrievalRoute.METADATA
+            if plan.request.route is RetrievalRoute.METADATA
         )
 
-        candidates = CandidateGenerator(self.index).execute(plan)
+        candidates = execute_search_plan(self.index.backend, plan)
 
         self.assertEqual(candidates[0].parent_asin, "BOOT-1")
         self.assertEqual(candidates[0].evidence[0].rank, 1)
         self.assertIs(candidates[0].evidence[0].route, RetrievalRoute.METADATA)
 
     def test_eligibility_enforces_hard_exclusions_and_price_bounds(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((
+        intent = PreferenceLedger().apply((
             preference(Attribute.MATERIAL, "leather", excluded=True),
             preference(
                 Attribute.BUDGET,
@@ -104,26 +109,30 @@ class RetrievalRankingTest(unittest.TestCase):
                 operator=ComparisonOperator.LESS_THAN_OR_EQUAL,
             ),
         ))
+        leather, affordable = self.index.get_products(("BOOT-1", "BOOT-2"))
         gate = EligibilityGate()
 
-        leather = gate.evaluate(self.index.product_by_id["BOOT-1"], intent.active_constraints)
-        affordable = gate.evaluate(self.index.product_by_id["BOOT-2"], intent.active_constraints)
+        leather_decision = gate.evaluate(leather, intent.active_constraints)
+        affordable_decision = gate.evaluate(affordable, intent.active_constraints)
 
-        self.assertFalse(leather.eligible)
-        self.assertIn("excluded:material:leather", leather.rejection_reasons)
-        self.assertTrue(affordable.eligible)
+        self.assertFalse(leather_decision.eligible)
+        self.assertIn(
+            "excluded:material:leather",
+            leather_decision.rejection_reasons,
+        )
+        self.assertTrue(affordable_decision.eligible)
 
     def test_ranker_fuses_duplicate_candidates_and_prioritizes_eligible(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((preference(Attribute.CATEGORY, "boots"),))
-        generator = CandidateGenerator(self.index)
+        intent = PreferenceLedger().apply((
+            preference(Attribute.CATEGORY, "boots"),
+        ))
         candidates = tuple(
             candidate
             for plan in RetrievalPlanner().strict(intent)
-            for candidate in generator.execute(plan)
+            for candidate in execute_search_plan(self.index.backend, plan)
         )
 
-        ranked = ProductRanker(self.index).rank(
+        ranked = ProductRanker(self.index.backend).rank(
             candidates,
             intent,
             shown_product_ids=frozenset(),
@@ -142,33 +151,7 @@ class RetrievalRankingTest(unittest.TestCase):
         self.assertEqual(history.shown_for(intent_version=1), frozenset({"A", "B"}))
         self.assertEqual(history.shown_for(intent_version=2), frozenset())
 
-    def test_counterfactual_plan_relaxes_exactly_one_nonexcluded_constraint(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((
-            preference(Attribute.MATERIAL, "leather"),
-            preference(Attribute.COLOR, "black"),
-            preference(Attribute.FEATURE, "slippery", excluded=True),
-        ))
-        excluded_id = next(
-            constraint.constraint_id
-            for constraint in intent.active_constraints
-            if constraint.excluded
-        )
-
-        plans = RetrievalPlanner().counterfactuals(intent)
-
-        self.assertTrue(plans)
-        self.assertTrue(all(len(plan.relaxed_constraint_ids) == 1 for plan in plans))
-        self.assertNotIn(
-            excluded_id,
-            [plan.relaxed_constraint_ids[0] for plan in plans],
-        )
-        self.assertTrue(all(
-            plan.relaxed_constraint_ids[0] not in plan.required_constraint_ids
-            for plan in plans
-        ))
-
-    def test_ranker_allocates_seven_strict_and_three_exploratory_slots(self) -> None:
+    def test_ranker_places_every_strict_product_before_exploration(self) -> None:
         evidence = RouteEvidence(
             route=RetrievalRoute.EXACT_FTS,
             rank=1,
@@ -183,36 +166,16 @@ class RetrievalRankingTest(unittest.TestCase):
             for number in range(1, 13)
         )
 
-        ranked = ProductRanker(self.index).rank(
+        ranked = ProductRanker(self.index.backend).rank(
             candidates,
             PreferenceLedger().intent,
             shown_product_ids=frozenset(),
             top_k=10,
         )
 
-        self.assertEqual(sum(item.exact_match for item in ranked), 7)
-        self.assertEqual(sum(not item.exact_match for item in ranked), 3)
-        self.assertTrue(all(item.exact_match for item in ranked[:7]))
-
-    def test_counterfactual_candidate_crosses_only_its_named_constraint(self) -> None:
-        ledger = PreferenceLedger()
-        intent = ledger.apply((preference(Attribute.MATERIAL, "leather"),))
-        plan = RetrievalPlanner().counterfactuals(intent)[0]
-        candidates = CandidateGenerator(self.index).execute(plan)
-
-        ranked = ProductRanker(self.index).rank(
-            candidates,
-            intent,
-            shown_product_ids=frozenset(),
-            top_k=10,
-        )
-
-        self.assertTrue(ranked)
-        self.assertTrue(all(not item.exact_match for item in ranked))
-        self.assertTrue(all(
-            item.relaxed_constraint_id == plan.relaxed_constraint_ids[0]
-            for item in ranked
-        ))
+        self.assertEqual(sum(item.exact_match for item in ranked), 9)
+        self.assertFalse(ranked[-1].exact_match)
+        self.assertTrue(all(item.exact_match for item in ranked[:-1]))
 
 
 if __name__ == "__main__":

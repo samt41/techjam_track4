@@ -15,7 +15,7 @@ from starter.shopping_agent.diagnostics import (
     TraceReason,
 )
 from starter.shopping_agent.models import Attribute, RetrievalRoute
-from tests.fixtures import sample_products, write_catalog
+from tests.fixtures import build_test_artifacts, sample_products
 
 
 def route_event(reason: TraceReason = TraceReason.STRICT_RESULTS) -> TraceEvent:
@@ -36,10 +36,8 @@ def route_event(reason: TraceReason = TraceReason.STRICT_RESULTS) -> TraceEvent:
 class EvaluationTraceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
         self.root = Path(self.temporary_directory.name)
-
-    def tearDown(self) -> None:
-        self.temporary_directory.cleanup()
 
     def test_noop_trace_does_not_create_files(self) -> None:
         NoOpEvaluationTrace().record(route_event())
@@ -75,7 +73,7 @@ class EvaluationTraceTest(unittest.TestCase):
         )
 
     def test_public_experiment_writes_exactly_five_artifacts_and_refuses_overwrite(self) -> None:
-        catalog_path = write_catalog(self.root, sample_products())
+        catalog_path, _ = build_test_artifacts(self.root, sample_products())
         dataset_path = self.root / "public.jsonl"
         dataset_path.write_text(json.dumps({
             "sample_id": "sample-1",
@@ -118,7 +116,7 @@ class EvaluationTraceTest(unittest.TestCase):
             )
 
     def test_agent_emits_required_turn_event_types(self) -> None:
-        catalog_path = write_catalog(self.root, sample_products())
+        catalog_path, _ = build_test_artifacts(self.root, sample_products())
         trace_path = self.root / "turn.jsonl"
         agent = Agent(catalog_path, trace=JsonlEvaluationTrace(trace_path))
         self.addCleanup(agent.close)

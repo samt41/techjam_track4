@@ -5,8 +5,10 @@ from pathlib import Path
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.coordinator import TurnCoordinator
 from starter.shopping_agent.diagnostics import EvaluationTrace
+from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import UserProfile
 from starter.shopping_agent.response import response_payload
+from starter.shopping_agent.search_backend import LexicalMode
 
 
 class Agent:
@@ -15,10 +17,22 @@ class Agent:
     def __init__(
         self,
         catalog_path: str | Path = "data/catalog.jsonl",
+        artifact_path: str | Path | None = None,
+        lexical_mode: LexicalMode = LexicalMode.AUTO,
         trace: EvaluationTrace | None = None,
     ) -> None:
+        resolved_catalog_path = Path(catalog_path)
+        resolved_artifact_path = (
+            Path(artifact_path)
+            if artifact_path is not None
+            else resolved_catalog_path.with_suffix(".artifacts")
+        )
         self._coordinator = TurnCoordinator(
-            CatalogIndex.from_path(catalog_path),
+            CatalogIndex(LocalProductSearchBackend.open(
+                resolved_catalog_path,
+                resolved_artifact_path,
+                lexical_mode=lexical_mode,
+            )),
             trace=trace,
         )
 

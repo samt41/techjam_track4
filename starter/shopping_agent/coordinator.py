@@ -26,7 +26,7 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import ProductRanker
 from starter.shopping_agent.response import ResponseValidator, recommendation_message
-from starter.shopping_agent.retrieval import CandidateGenerator, RetrievalPlanner
+from starter.shopping_agent.retrieval import RetrievalPlanner, execute_search_plan
 
 
 @dataclass(slots=True)
@@ -46,9 +46,8 @@ class TurnCoordinator:
         self._catalog_index = catalog_index
         self._extractor = ConstraintExtractor(catalog_index)
         self._planner = RetrievalPlanner()
-        self._generator = CandidateGenerator(catalog_index)
-        self._ranker = ProductRanker(catalog_index)
-        self._validator = ResponseValidator(catalog_index)
+        self._ranker = ProductRanker(catalog_index.backend)
+        self._validator = ResponseValidator(catalog_index.backend)
         self._question_estimator = QuestionValueEstimator()
         self._clarification_policy = ClarificationPolicy()
         self._sessions: dict[str, _SessionState] = {}
@@ -90,8 +89,11 @@ class TurnCoordinator:
         state.last_asked_attribute = None
         intent = state.ledger.apply(updates)
         strict_candidates_list = []
-        for plan in self._planner.strict(intent):
-            route_candidates = self._generator.execute(plan)
+        for plan in self._planner.strict(intent, top_k):
+            route_candidates = execute_search_plan(
+                self._catalog_index.backend,
+                plan,
+            )
             strict_candidates_list.extend(route_candidates)
             self._record(
                 session_id,
@@ -102,8 +104,8 @@ class TurnCoordinator:
                     if route_candidates
                     else TraceReason.EMPTY_STRICT_POOL
                 ),
-                plan.route,
-                plan.attribute,
+                plan.request.route,
+                None,
                 len(route_candidates),
                 0,
                 intent.intent_version,
@@ -130,55 +132,15 @@ class TurnCoordinator:
             intent.intent_version,
             0.0,
         )
-        if len(recommendations) < top_k:
-            exploratory_candidates_list = []
-            for plan in self._planner.counterfactuals(intent):
-                route_candidates = self._generator.execute(plan)
-                exploratory_candidates_list.extend(route_candidates)
-                self._record(
-                    session_id,
-                    turn,
-                    TraceEventType.ROUTE,
-                    TraceReason.COUNTERFACTUAL_RESULTS,
-                    plan.route,
-                    plan.attribute,
-                    len(route_candidates),
-                    0,
-                    intent.intent_version,
-                    0.0,
-                )
-            exploratory_candidates = tuple(exploratory_candidates_list)
-            candidate_count += len(exploratory_candidates)
-            recommendations = self._ranker.rank(
-                (*strict_candidates, *exploratory_candidates),
-                intent,
-                shown_product_ids=shown_product_ids,
-                top_k=top_k,
-            )
-            self._record(
-                session_id,
-                turn,
-                TraceEventType.FALLBACK,
-                (
-                    TraceReason.EMPTY_STRICT_POOL
-                    if not strict_candidates
-                    else TraceReason.SPARSE_STRICT_POOL
-                ),
-                RetrievalRoute.COUNTERFACTUAL,
-                None,
-                len(exploratory_candidates),
-                len(recommendations),
-                intent.intent_version,
-                0.0,
-            )
         recommendations = self._validator.validate(recommendations, top_k)
         state.history.record(
             intent.intent_version,
             tuple(item.parent_asin for item in recommendations),
         )
         products = tuple(
-            self._catalog_index.product_by_id[item.parent_asin]
-            for item in recommendations
+            self._catalog_index.get_products(tuple(
+                item.parent_asin for item in recommendations
+            ))
         )
         question_candidates = self._question_estimator.score_candidates(
             products,

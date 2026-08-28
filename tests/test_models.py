@@ -14,7 +14,6 @@ from starter.shopping_agent.models import (
     PreferenceUpdate,
     QuestionCandidate,
     RankedRecommendation,
-    RetrievalPlan,
     RetrievalRoute,
     RouteEvidence,
     Strength,
@@ -63,15 +62,6 @@ class PreferenceConstraintTest(unittest.TestCase):
 
     def test_retrieval_and_response_types_have_fixed_nested_values(self) -> None:
         evidence = RouteEvidence(route=RetrievalRoute.EXACT_FTS, rank=1, score=0.75)
-        plan = RetrievalPlan(
-            route=RetrievalRoute.EXACT_FTS,
-            query_terms=("winter", "boot"),
-            attribute=None,
-            attribute_value=None,
-            required_constraint_ids=("c1",),
-            relaxed_constraint_ids=(),
-            limit=100,
-        )
         candidate = ProductCandidate(
             parent_asin="BOOT-1",
             evidence=(evidence,),
@@ -95,7 +85,7 @@ class PreferenceConstraintTest(unittest.TestCase):
             recommendations=(recommendation,),
         )
 
-        self.assertEqual(plan.limit, 100)
+        self.assertEqual(candidate.evidence[0].rank, 1)
         self.assertEqual(response.recommendations[0].parent_asin, "BOOT-1")
 
     def test_catalog_and_intent_types_use_explicit_fields(self) -> None:

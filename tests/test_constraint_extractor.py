@@ -7,28 +7,35 @@ from pathlib import Path
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.constraint_extractor import ConstraintExtractor
+from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
     Strength,
     UpdateAction,
 )
-from tests.fixtures import sample_products, write_catalog
+from tests.fixtures import build_test_artifacts, sample_products
 
 
 class ConstraintExtractorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
-        catalog_path = write_catalog(
-            Path(self.temporary_directory.name),
-            sample_products(),
-        )
-        self.index = CatalogIndex.from_path(catalog_path)
+        self.addCleanup(self.temporary_directory.cleanup)
+        self._fixture_number = 0
+        self.index = self.open_index(sample_products())
         self.extractor = ConstraintExtractor(self.index)
 
-    def tearDown(self) -> None:
-        self.index.close()
-        self.temporary_directory.cleanup()
+    def open_index(self, products: list[dict[str, object]]) -> CatalogIndex:
+        self._fixture_number += 1
+        directory = Path(self.temporary_directory.name) / str(self._fixture_number)
+        directory.mkdir()
+        catalog_path, artifact_path = build_test_artifacts(directory, products)
+        index = CatalogIndex(LocalProductSearchBackend.open(
+            catalog_path,
+            artifact_path,
+        ))
+        self.addCleanup(index.close)
+        return index
 
     def test_negation_and_override_are_distinct_updates(self) -> None:
         updates = self.extractor.extract(
@@ -135,12 +142,10 @@ class ConstraintExtractorTest(unittest.TestCase):
     def test_stopword_like_catalog_values_do_not_become_constraints(self) -> None:
         products = sample_products()
         products[0]["details"] = {"material": "leather", "color": "i"}
-        with tempfile.TemporaryDirectory() as directory:
-            index = CatalogIndex.from_path(write_catalog(Path(directory), products))
-            self.addCleanup(index.close)
-            extractor = ConstraintExtractor(index)
+        index = self.open_index(products)
+        extractor = ConstraintExtractor(index)
 
-            updates = extractor.extract("I need boots", turn=1, asked_attribute=None)
+        updates = extractor.extract("I need boots", turn=1, asked_attribute=None)
 
         self.assertNotIn("i", [update.value for update in updates])
 

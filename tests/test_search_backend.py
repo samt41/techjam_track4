@@ -562,7 +562,7 @@ class LocalSearchBackendTest(unittest.TestCase):
         self.assertEqual(result.total_relation, TotalRelation.LOWER_BOUND)
         self.assertEqual(result.work_consumed, 1)
 
-    def test_quality_route_is_discarded_when_match_budget_is_exhausted(self) -> None:
+    def test_quality_route_is_discarded_when_result_budget_is_exhausted(self) -> None:
         backend = self.backend(sample_products())
         result = backend.search(SearchRequest(
             route=RetrievalRoute.CATEGORY_FALLBACK,

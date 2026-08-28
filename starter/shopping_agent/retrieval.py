@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from starter.shopping_agent.catalog_index import CatalogIndex
+from dataclasses import dataclass
+
 from starter.shopping_agent.models import (
     Attribute,
     ProductCandidate,
-    RetrievalPlan,
     RetrievalRoute,
     RouteEvidence,
     ShoppingIntent,
+    Strength,
+)
+from starter.shopping_agent.search_backend import (
+    ProductSearchBackend,
+    SearchRequest,
+    StructuredFilter,
 )
 
 
@@ -28,33 +34,44 @@ _EXPANSIONS = {
 }
 
 
-class RetrievalPlanner:
-    def __init__(self, route_limit: int = 200) -> None:
-        self._route_limit = route_limit
+@dataclass(frozen=True, slots=True)
+class PlannedSearch:
+    request: SearchRequest
+    relaxed_constraint_id: str | None
 
-    def strict(self, intent: ShoppingIntent) -> tuple[RetrievalPlan, ...]:
-        required_ids = tuple(
-            constraint.constraint_id for constraint in intent.active_constraints
+
+class RetrievalPlanner:
+    def __init__(
+        self,
+        route_limit: int = 1_000,
+        route_work_limit: int = 250_000,
+    ) -> None:
+        self._route_limit = route_limit
+        self._route_work_limit = route_work_limit
+
+    def strict(
+        self,
+        intent: ShoppingIntent,
+        top_k: int = 10,
+    ) -> tuple[PlannedSearch, ...]:
+        filters = tuple(
+            StructuredFilter(
+                constraint_id=constraint.constraint_id,
+                attribute=constraint.attribute,
+                operator=constraint.operator,
+                value=constraint.value,
+                excluded=constraint.excluded,
+                confidence=constraint.confidence,
+            )
+            for constraint in intent.active_constraints
+            if constraint.strength is Strength.HARD
         )
-        plans: list[RetrievalPlan] = []
         positive_constraints = tuple(
             constraint
             for constraint in intent.active_constraints
             if not constraint.excluded
+            and constraint.attribute is not Attribute.BUDGET
         )
-        for constraint in positive_constraints:
-            if constraint.attribute is Attribute.BUDGET:
-                continue
-            plans.append(RetrievalPlan(
-                route=RetrievalRoute.METADATA,
-                query_terms=(constraint.value,),
-                attribute=constraint.attribute,
-                attribute_value=constraint.value,
-                required_constraint_ids=required_ids,
-                relaxed_constraint_ids=(),
-                limit=self._route_limit,
-            ))
-
         exact_terms = tuple(dict.fromkeys(
             constraint.value for constraint in positive_constraints
         ))
@@ -62,31 +79,18 @@ class RetrievalPlanner:
             exact_terms = tuple(dict.fromkeys(
                 concept.value for concept in intent.weighted_concepts
             ))
+        result_limit = max(top_k, self._route_limit)
+        routes: list[tuple[RetrievalRoute, tuple[str, ...]]] = [
+            (RetrievalRoute.METADATA, ()),
+        ]
         if exact_terms:
-            plans.append(RetrievalPlan(
-                route=RetrievalRoute.EXACT_FTS,
-                query_terms=exact_terms,
-                attribute=None,
-                attribute_value=None,
-                required_constraint_ids=required_ids,
-                relaxed_constraint_ids=(),
-                limit=self._route_limit,
-            ))
+            routes.append((RetrievalRoute.EXACT_FTS, exact_terms))
             expanded_terms = tuple(dict.fromkeys(
                 term
                 for exact_term in exact_terms
                 for term in (exact_term, *_EXPANSIONS.get(exact_term, ()))
             ))
-            plans.append(RetrievalPlan(
-                route=RetrievalRoute.EXPANDED_FTS,
-                query_terms=expanded_terms,
-                attribute=None,
-                attribute_value=None,
-                required_constraint_ids=required_ids,
-                relaxed_constraint_ids=(),
-                limit=self._route_limit,
-            ))
-
+            routes.append((RetrievalRoute.EXPANDED_FTS, expanded_terms))
         category = next(
             (
                 constraint.value
@@ -95,97 +99,40 @@ class RetrievalPlanner:
             ),
             None,
         )
-        plans.append(RetrievalPlan(
-            route=RetrievalRoute.CATEGORY_FALLBACK,
-            query_terms=() if category is None else (category,),
-            attribute=Attribute.CATEGORY if category is not None else None,
-            attribute_value=category,
-            required_constraint_ids=required_ids,
-            relaxed_constraint_ids=(),
-            limit=self._route_limit,
+        routes.append((
+            RetrievalRoute.CATEGORY_FALLBACK,
+            () if category is None else (category,),
         ))
-        return tuple(plans)
-
-    def counterfactuals(self, intent: ShoppingIntent) -> tuple[RetrievalPlan, ...]:
-        eligible = tuple(
-            constraint
-            for constraint in intent.active_constraints
-            if not constraint.excluded
-        )
-        ordered = tuple(sorted(
-            enumerate(eligible),
-            key=lambda item: (
-                item[1].confidence,
-                item[1].strength.value,
-                item[1].source_turn,
-                item[0],
-            ),
-        ))
-        plans: list[RetrievalPlan] = []
-        for _, relaxed in ordered:
-            retained = tuple(
-                constraint
-                for constraint in intent.active_constraints
-                if constraint.constraint_id != relaxed.constraint_id
-            )
-            query_terms = tuple(dict.fromkeys(
-                constraint.value
-                for constraint in retained
-                if not constraint.excluded
-                and constraint.attribute is not Attribute.BUDGET
-            ))
-            plans.append(RetrievalPlan(
-                route=RetrievalRoute.COUNTERFACTUAL,
-                query_terms=query_terms,
-                attribute=None,
-                attribute_value=None,
-                required_constraint_ids=tuple(
-                    constraint.constraint_id for constraint in retained
-                ),
-                relaxed_constraint_ids=(relaxed.constraint_id,),
-                limit=self._route_limit,
-            ))
-        return tuple(plans)
-
-
-class CandidateGenerator:
-    def __init__(self, catalog_index: CatalogIndex) -> None:
-        self._catalog_index = catalog_index
-
-    def execute(self, plan: RetrievalPlan) -> tuple[ProductCandidate, ...]:
-        if (
-            plan.route is RetrievalRoute.METADATA
-            and plan.attribute is not None
-            and plan.attribute_value is not None
-        ):
-            products = self._catalog_index.products_for(
-                plan.attribute,
-                plan.attribute_value,
-            )[:plan.limit]
-        elif plan.route in (RetrievalRoute.EXACT_FTS, RetrievalRoute.EXPANDED_FTS):
-            products = self._catalog_index.search_fts(plan.query_terms, plan.limit)
-        elif plan.route is RetrievalRoute.COUNTERFACTUAL and plan.query_terms:
-            products = self._catalog_index.search_fts(plan.query_terms, plan.limit)
-        else:
-            products = self._catalog_index.quality_fallback(
-                plan.attribute_value,
-                plan.limit,
-            )
-        relaxed_id = (
-            plan.relaxed_constraint_ids[0]
-            if len(plan.relaxed_constraint_ids) == 1
-            else None
-        )
-        weight = _ROUTE_WEIGHTS[plan.route]
         return tuple(
-            ProductCandidate(
-                parent_asin=product.parent_asin,
-                evidence=(RouteEvidence(
-                    route=plan.route,
-                    rank=rank,
-                    score=weight,
-                ),),
-                relaxed_constraint_id=relaxed_id,
+            PlannedSearch(
+                request=SearchRequest(
+                    route=route,
+                    lexical_terms=query_terms,
+                    filters=filters,
+                    limit=result_limit,
+                    work_limit=self._route_work_limit,
+                ),
+                relaxed_constraint_id=None,
             )
-            for rank, product in enumerate(products, start=1)
+            for route, query_terms in routes
         )
+
+
+def execute_search_plan(
+    backend: ProductSearchBackend,
+    plan: PlannedSearch,
+) -> tuple[ProductCandidate, ...]:
+    result = backend.search(plan.request)
+    route_weight = _ROUTE_WEIGHTS[plan.request.route]
+    return tuple(
+        ProductCandidate(
+            parent_asin=hit.parent_asin,
+            evidence=(RouteEvidence(
+                route=plan.request.route,
+                rank=hit.rank,
+                score=route_weight,
+            ),),
+            relaxed_constraint_id=plan.relaxed_constraint_id,
+        )
+        for hit in result.hits
+    )
