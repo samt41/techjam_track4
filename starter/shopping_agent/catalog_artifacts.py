@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import shutil
 import sqlite3
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from starter.shopping_agent.models import Attribute, ProductRecord
@@ -474,11 +475,13 @@ def _build_database(
         """)
         fts5_built = fts5_enabled and _create_fts5_table(connection)
         document_frequencies: Counter[str] = Counter()
+        material_vocabulary = _material_vocabulary(products)
         product_rows: list[tuple[object, ...]] = []
         attribute_rows: list[tuple[int, str, str]] = []
         posting_rows: list[tuple[str, int, float]] = []
         fts_rows: list[tuple[object, ...]] = []
         for ordinal, product in enumerate(products):
+            product = _with_recovered_materials(product, material_vocabulary)
             product_rows.append((
                 ordinal,
                 product.parent_asin,
@@ -607,6 +610,64 @@ def _weighted_terms(product: ProductRecord) -> Counter[str]:
         for term in search_terms(text):
             weighted_terms[term] += weight
     return weighted_terms
+
+
+_MATERIAL_TOKEN_RE = re.compile(r"[a-z]+")
+_MATERIAL_PERCENT_RE = re.compile(r"\d+\s*%|\bpercent\b")
+_MATERIAL_BLEND_RE = re.compile(r"\band\b|[/,&+]")
+_MATERIAL_VOCAB_FLOOR = 2
+
+
+def _material_vocabulary(products: tuple[ProductRecord, ...]) -> frozenset[str]:
+    counts: Counter[str] = Counter()
+    for product in products:
+        for key, value in product.details:
+            if key != Attribute.MATERIAL.value:
+                continue
+            tokens = _MATERIAL_TOKEN_RE.findall(value)
+            if len(tokens) == 1:
+                counts[tokens[0]] += 1
+    return frozenset(
+        token for token, count in counts.items() if count >= _MATERIAL_VOCAB_FLOOR
+    )
+
+
+def _feature_material_tokens(
+    features: tuple[str, ...],
+    vocabulary: frozenset[str],
+) -> tuple[str, ...]:
+    found: list[str] = []
+    for feature in features:
+        stripped = _MATERIAL_PERCENT_RE.sub(" ", feature)
+        for part in _MATERIAL_BLEND_RE.split(stripped):
+            tokens = _MATERIAL_TOKEN_RE.findall(part)
+            if tokens and tokens[-1] in vocabulary:
+                found.append(tokens[-1])
+    return tuple(dict.fromkeys(found))
+
+
+def _with_recovered_materials(
+    product: ProductRecord,
+    vocabulary: frozenset[str],
+) -> ProductRecord:
+    """Fold materials recovered from free-text features into ``details``.
+
+    Making the recovered material part of the canonical ``details`` is the single
+    source every consumer reads: the structured ``attributes`` table (retrieval
+    SQL), the stored ``details_json`` the runtime rebuilds a ProductRecord from,
+    and therefore the eligibility gate and soft scorer. Writing it only into the
+    attributes table would let retrieval accept a product the gate then rejects.
+    """
+    existing = {value for key, value in product.details if key == Attribute.MATERIAL.value}
+    recovered = tuple(
+        token
+        for token in _feature_material_tokens(product.features, vocabulary)
+        if token not in existing
+    )
+    if not recovered:
+        return product
+    added = tuple((Attribute.MATERIAL.value, token) for token in recovered)
+    return replace(product, details=(*product.details, *added))
 
 
 def _attribute_values(

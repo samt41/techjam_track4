@@ -11,9 +11,132 @@ from starter.shopping_agent.catalog_artifacts import (
     ArtifactValidationError,
     CatalogArtifactBuilder,
     LoadedCatalogArtifacts,
+    _feature_material_tokens,
+    _material_vocabulary,
+    _with_recovered_materials,
 )
 from starter.shopping_agent.build_catalog_artifacts import main
+from starter.shopping_agent.models import Attribute, ProductRecord
 from tests.fixtures import sample_products, write_catalog
+
+
+def _product(features: tuple[str, ...], material: str | None = None) -> ProductRecord:
+    details = ((Attribute.MATERIAL.value, material),) if material else ()
+    return ProductRecord(
+        parent_asin="X",
+        title="item",
+        categories=("boots",),
+        features=features,
+        description="",
+        details=details,
+        store="store",
+        price=None,
+        average_rating=None,
+        rating_number=0,
+        searchable_text="",
+    )
+
+
+class MaterialCanonicalizationTest(unittest.TestCase):
+    _VOCAB = frozenset({"leather", "textile", "cotton", "fur", "synthetic"})
+
+    def test_percentage_and_qualifier_prefixes_resolve_to_the_material(self) -> None:
+        for feature in ("100% leather", "faux leather", "genuine leather", "soft leather"):
+            self.assertEqual(
+                _feature_material_tokens((feature,), self._VOCAB),
+                ("leather",),
+                msg=feature,
+            )
+
+    def test_component_phrases_do_not_resolve_to_the_material(self) -> None:
+        for feature in ("leather sole", "leather lining", "leather upper"):
+            self.assertEqual(
+                _feature_material_tokens((feature,), self._VOCAB),
+                (),
+                msg=feature,
+            )
+
+    def test_blend_contributes_every_material_token(self) -> None:
+        self.assertEqual(
+            _feature_material_tokens(("100% leather and textile",), self._VOCAB),
+            ("leather", "textile"),
+        )
+
+    def test_material_outside_the_vocabulary_is_ignored(self) -> None:
+        self.assertEqual(_feature_material_tokens(("titanium",), self._VOCAB), ())
+
+    def test_vocabulary_requires_repeated_single_token_material_values(self) -> None:
+        products = (
+            _product((), material="leather"),
+            _product((), material="leather"),
+            _product((), material="titanium"),
+            _product((), material="faux fur"),
+        )
+        self.assertEqual(_material_vocabulary(products), frozenset({"leather"}))
+
+    def test_recovered_material_is_added_to_details(self) -> None:
+        # The gate reads product.details, so the recovered material must land
+        # there (not only in the attributes table) or the product is retrieved
+        # then rejected.
+        product = _product(("100% leather", "buckle closure"))
+        augmented = _with_recovered_materials(product, self._VOCAB)
+        materials = [v for k, v in augmented.details if k == Attribute.MATERIAL.value]
+        self.assertEqual(materials, ["leather"])
+
+    def test_existing_structured_material_is_not_duplicated(self) -> None:
+        product = _product(("100% leather",), material="leather")
+        augmented = _with_recovered_materials(product, self._VOCAB)
+        materials = [v for k, v in augmented.details if k == Attribute.MATERIAL.value]
+        self.assertEqual(materials, ["leather"])
+
+    def test_feature_only_material_becomes_filterable(self) -> None:
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        root = Path(temporary_directory.name)
+        seed = [
+            {
+                "parent_asin": f"SEED-{n}",
+                "title": "leather boot",
+                "features": ["durable"],
+                "details": {"material": "leather", "color": "black"},
+                "categories": ["Clothing", "Boots"],
+                "store": "Example",
+                "average_rating": 4.5,
+                "rating_number": 100,
+                "price": 90.0,
+            }
+            for n in range(2)
+        ]
+        feature_only = [
+            {
+                "parent_asin": f"BELT-{n}",
+                "title": "leather belt",
+                "features": ["100% leather", "buckle closure"],
+                "details": {"color": "brown"},
+                "categories": ["Clothing", "Belts"],
+                "store": "Example",
+                "average_rating": 4.5,
+                "rating_number": 100,
+                "price": 40.0,
+            }
+            for n in range(3)
+        ]
+        catalog_path = write_catalog(root, seed + feature_only)
+        artifact_path = root / "catalog.artifacts"
+        CatalogArtifactBuilder().build(catalog_path, artifact_path)
+        loaded = LoadedCatalogArtifacts.open(catalog_path, artifact_path)
+        self.addCleanup(loaded.close)
+
+        material_rows = loaded.connection.execute(
+            "SELECT COUNT(*) FROM attributes WHERE attribute = 'material' AND value = 'leather'"
+        ).fetchone()[0]
+        # The stored details_json (what the runtime gate reads) also carries it.
+        belt_details = loaded.connection.execute(
+            "SELECT details_json FROM products WHERE parent_asin = 'BELT-0'"
+        ).fetchone()[0]
+
+        self.assertEqual(material_rows, 5)
+        self.assertIn("leather", belt_details)
 
 
 class CatalogArtifactTest(unittest.TestCase):
