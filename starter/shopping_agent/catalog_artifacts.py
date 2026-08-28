@@ -170,6 +170,9 @@ class ParsedCatalog:
 
 
 class CatalogArtifactBuilder:
+    def __init__(self, *, fts5_enabled: bool = True) -> None:
+        self._fts5_enabled = fts5_enabled
+
     def build(
         self,
         catalog_path: str | Path,
@@ -192,6 +195,7 @@ class CatalogArtifactBuilder:
             fts5_built, lexical_term_count = _build_database(
                 database_path,
                 parsed_catalog.products,
+                fts5_enabled=self._fts5_enabled,
             )
             manifest = CatalogArtifactManifest(
                 schema_version=ARTIFACT_SCHEMA_VERSION,
@@ -419,6 +423,8 @@ def _non_negative_int(value: object, line_number: int) -> int:
 def _build_database(
     database_path: Path,
     products: tuple[ProductRecord, ...],
+    *,
+    fts5_enabled: bool,
 ) -> tuple[bool, int]:
     connection = sqlite3.connect(database_path)
     try:
@@ -457,7 +463,7 @@ def _build_database(
                 document_frequency INTEGER NOT NULL
             );
         """)
-        fts5_built = _create_fts5_table(connection)
+        fts5_built = fts5_enabled and _create_fts5_table(connection)
         document_frequencies: Counter[str] = Counter()
         product_rows: list[tuple[object, ...]] = []
         attribute_rows: list[tuple[int, str, str]] = []

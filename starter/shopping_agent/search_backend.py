@@ -25,6 +25,12 @@ class SearchReason(StrEnum):
     MALFORMED_ARTIFACT = "malformed_artifact"
 
 
+class LexicalMode(StrEnum):
+    AUTO = "auto"
+    FTS5 = "fts5"
+    FALLBACK = "fallback"
+
+
 class TotalRelation(StrEnum):
     EXACT = "exact"
     LOWER_BOUND = "lower_bound"

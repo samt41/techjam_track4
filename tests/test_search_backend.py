@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import unittest
 from dataclasses import fields
 from pathlib import Path
@@ -11,6 +12,7 @@ from starter.shopping_agent.search_backend import (
     FacetBucket,
     FacetRequest,
     FacetResult,
+    LexicalMode,
     ProductSearchBackend,
     SearchHit,
     SearchRequest,
@@ -222,9 +224,20 @@ class LocalSearchBackendTest(unittest.TestCase):
     def backend(
         self,
         products: list[dict[str, object]],
+        *,
+        lexical_mode: LexicalMode = LexicalMode.AUTO,
+        artifact_fts5_enabled: bool = True,
     ) -> LocalProductSearchBackend:
-        catalog_path, artifact_path = build_test_artifacts(self.root, products)
-        backend = LocalProductSearchBackend.open(catalog_path, artifact_path)
+        catalog_path, artifact_path = build_test_artifacts(
+            self.root,
+            products,
+            fts5_enabled=artifact_fts5_enabled,
+        )
+        backend = LocalProductSearchBackend.open(
+            catalog_path,
+            artifact_path,
+            lexical_mode=lexical_mode,
+        )
         self.addCleanup(backend.close)
         return backend
 
@@ -414,6 +427,184 @@ class LocalSearchBackendTest(unittest.TestCase):
         self.assertEqual(products[1].details[0], ("material", "leather"))
         self.assertTrue(backend.contains_product("BOOT-1"))
         self.assertFalse(backend.contains_product("MISSING"))
+
+    def test_fallback_lexical_contract(self) -> None:
+        backend = self.backend(sample_products(), lexical_mode=LexicalMode.FALLBACK)
+        request = SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("winter", "boot"),
+            filters=(self.hard_filter(Attribute.MATERIAL, "leather"),),
+            limit=10,
+            work_limit=10_000,
+        )
+
+        result = backend.search(request)
+
+        self.assertEqual(result.hits[0].parent_asin, "BOOT-1")
+        self.assertTrue(
+            all(
+                ("material", "leather") in product.details
+                for product in backend.get_products(tuple(
+                    hit.parent_asin for hit in result.hits
+                ))
+            )
+        )
+
+    def test_fts5_lexical_contract(self) -> None:
+        backend = self.backend(sample_products(), lexical_mode=LexicalMode.FTS5)
+        request = SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("winter", "boot"),
+            filters=(self.hard_filter(Attribute.MATERIAL, "leather"),),
+            limit=10,
+            work_limit=10_000,
+        )
+
+        result = backend.search(request)
+
+        self.assertEqual(result.hits[0].parent_asin, "BOOT-1")
+        self.assertEqual(result.reason, SearchReason.COMPLETED)
+        self.assertTrue(
+            all(
+                ("material", "leather") in product.details
+                for product in backend.get_products(tuple(
+                    hit.parent_asin for hit in result.hits
+                ))
+            )
+        )
+
+    def test_auto_falls_back_when_artifact_has_no_fts5(self) -> None:
+        backend = self.backend(
+            sample_products(),
+            lexical_mode=LexicalMode.AUTO,
+            artifact_fts5_enabled=False,
+        )
+        request = SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("winter", "boot"),
+            filters=(self.hard_filter(Attribute.MATERIAL, "leather"),),
+            limit=10,
+            work_limit=10_000,
+        )
+
+        result = backend.search(request)
+
+        self.assertEqual(result.hits[0].parent_asin, "BOOT-1")
+        self.assertEqual(result.reason, SearchReason.FTS5_UNAVAILABLE)
+
+    def test_auto_falls_back_after_runtime_fts_failure(self) -> None:
+        catalog_path, artifact_path = build_test_artifacts(
+            self.root,
+            sample_products(),
+        )
+        backend = LocalProductSearchBackend.open(
+            catalog_path,
+            artifact_path,
+            lexical_mode=LexicalMode.AUTO,
+        )
+        self.addCleanup(backend.close)
+        writable_connection = sqlite3.connect(artifact_path / "catalog.sqlite3")
+        writable_connection.execute("DROP TABLE products_fts")
+        writable_connection.commit()
+        writable_connection.close()
+        request = SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("winter", "boot"),
+            filters=(self.hard_filter(Attribute.MATERIAL, "leather"),),
+            limit=10,
+            work_limit=10_000,
+        )
+
+        result = backend.search(request)
+
+        self.assertEqual(result.hits[0].parent_asin, "BOOT-1")
+        self.assertEqual(result.reason, SearchReason.FTS5_UNAVAILABLE)
+
+    def test_empty_lexical_terms_return_an_explicit_empty_result(self) -> None:
+        backend = self.backend(sample_products())
+        result = backend.search(SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=(" !!! ",),
+            filters=(),
+            limit=10,
+            work_limit=10_000,
+        ))
+
+        self.assertEqual(result.hits, ())
+        self.assertEqual(result.reason, SearchReason.EMPTY_QUERY)
+        self.assertEqual(result.work_consumed, 0)
+
+    def test_unsafe_lexical_syntax_is_tokenized_not_executed(self) -> None:
+        backend = self.backend(sample_products(), lexical_mode=LexicalMode.FTS5)
+        result = backend.search(SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=('winter" OR leather*',),
+            filters=(self.hard_filter(Attribute.MATERIAL, "leather"),),
+            limit=10,
+            work_limit=10_000,
+        ))
+
+        self.assertEqual(result.hits[0].parent_asin, "BOOT-1")
+        self.assertEqual(result.reason, SearchReason.COMPLETED)
+
+    def test_fallback_discards_route_when_posting_budget_is_exhausted(self) -> None:
+        backend = self.backend(sample_products(), lexical_mode=LexicalMode.FALLBACK)
+        result = backend.search(SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("boot",),
+            filters=(),
+            limit=10,
+            work_limit=1,
+        ))
+
+        self.assertEqual(result.hits, ())
+        self.assertEqual(result.reason, SearchReason.WORK_LIMIT_EXCEEDED)
+        self.assertEqual(result.total_relation, TotalRelation.LOWER_BOUND)
+        self.assertEqual(result.work_consumed, 1)
+
+    def test_quality_route_is_discarded_when_match_budget_is_exhausted(self) -> None:
+        backend = self.backend(sample_products())
+        result = backend.search(SearchRequest(
+            route=RetrievalRoute.CATEGORY_FALLBACK,
+            lexical_terms=(),
+            filters=(),
+            limit=10,
+            work_limit=1,
+        ))
+
+        self.assertEqual(result.hits, ())
+        self.assertEqual(result.total_matches, 12)
+        self.assertEqual(result.total_relation, TotalRelation.EXACT)
+        self.assertEqual(result.reason, SearchReason.WORK_LIMIT_EXCEEDED)
+        self.assertEqual(result.work_consumed, 1)
+
+    def test_facets_are_discarded_when_population_budget_is_exhausted(self) -> None:
+        backend = self.backend(sample_products())
+        result = backend.facets(FacetRequest(
+            filters=(),
+            attributes=(Attribute.MATERIAL,),
+            work_limit=1,
+        ))
+
+        self.assertEqual(result.buckets, ())
+        self.assertEqual(result.total_matches, 12)
+        self.assertEqual(result.reason, SearchReason.WORK_LIMIT_EXCEEDED)
+        self.assertEqual(result.work_consumed, 1)
+
+    def test_repeated_fallback_search_has_stable_order_and_scores(self) -> None:
+        backend = self.backend(sample_products(), lexical_mode=LexicalMode.FALLBACK)
+        request = SearchRequest(
+            route=RetrievalRoute.EXACT_FTS,
+            lexical_terms=("winter", "boot"),
+            filters=(),
+            limit=10,
+            work_limit=10_000,
+        )
+
+        first_result = backend.search(request)
+        second_result = backend.search(request)
+
+        self.assertEqual(first_result.hits, second_result.hits)
 
 
 if __name__ == "__main__":

@@ -92,8 +92,13 @@ def write_catalog(directory: Path, products: list[dict[str, object]]) -> Path:
 def build_test_artifacts(
     directory: Path,
     products: list[dict[str, object]],
+    *,
+    fts5_enabled: bool = True,
 ) -> tuple[Path, Path]:
     catalog_path = write_catalog(directory, products)
     artifact_path = directory / "catalog.artifacts"
-    CatalogArtifactBuilder().build(catalog_path, artifact_path)
+    CatalogArtifactBuilder(fts5_enabled=fts5_enabled).build(
+        catalog_path,
+        artifact_path,
+    )
     return catalog_path, artifact_path
