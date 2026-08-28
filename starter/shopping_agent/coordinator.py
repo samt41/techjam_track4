@@ -86,8 +86,6 @@ class TurnCoordinator:
         self._startup_ms = startup_ms
         self._exploration_enabled = exploration != "disabled"
         self._traced = not isinstance(self._trace, NoOpEvaluationTrace)
-        if self._traced and not tracemalloc.is_tracing():
-            tracemalloc.start()
 
     def close(self) -> None:
         if not self._closed:
@@ -454,6 +452,10 @@ class TurnCoordinator:
         turn: int,
         turn_ms: float,
     ) -> None:
+        # Continuous tracemalloc tracing instruments every allocation
+        # process-wide and dominated traced-run time, so it is off by default;
+        # peak allocation is reported only if some other component already
+        # enabled tracing (0 = not sampled).
         peak_python_bytes = 0
         if tracemalloc.is_tracing():
             _, peak_python_bytes = tracemalloc.get_traced_memory()

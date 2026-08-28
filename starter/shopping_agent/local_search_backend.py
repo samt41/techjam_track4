@@ -52,6 +52,11 @@ class LocalProductSearchBackend:
     ) -> None:
         self._artifacts = artifacts
         self._lexical_mode = lexical_mode
+        # The artifact catalog is immutable, so a materialized ProductRecord is
+        # valid for the life of the backend. Slate rotation re-surfaces
+        # overlapping candidates every turn; caching avoids re-fetching and
+        # re-parsing (three json.loads per row) the same products repeatedly.
+        self._product_cache: dict[str, ProductRecord] = {}
 
     @classmethod
     def open(
@@ -404,22 +409,27 @@ class LocalProductSearchBackend:
     ) -> tuple[ProductRecord, ...]:
         if not parent_asins:
             return ()
-        unique_parent_asins = tuple(dict.fromkeys(parent_asins))
-        placeholders = ", ".join("?" for _ in unique_parent_asins)
-        rows = self._artifacts.connection.execute(
-            "SELECT parent_asin, title, categories_json, features_json, description, "
-            "details_json, store, price, average_rating, rating_number, searchable_text "
-            f"FROM products WHERE parent_asin IN ({placeholders})",
-            unique_parent_asins,
-        ).fetchall()
-        product_by_id = {
-            str(row[0]): _product_from_row(row)
-            for row in rows
-        }
-        return tuple(
-            product_by_id[parent_asin]
+        cache = self._product_cache
+        missing = tuple(dict.fromkeys(
+            parent_asin
             for parent_asin in parent_asins
-            if parent_asin in product_by_id
+            if parent_asin not in cache
+        ))
+        if missing:
+            placeholders = ", ".join("?" for _ in missing)
+            rows = self._artifacts.connection.execute(
+                "SELECT parent_asin, title, categories_json, features_json, description, "
+                "details_json, store, price, average_rating, rating_number, searchable_text "
+                f"FROM products WHERE parent_asin IN ({placeholders})",
+                missing,
+            ).fetchall()
+            for row in rows:
+                record = _product_from_row(row)
+                cache[record.parent_asin] = record
+        return tuple(
+            cache[parent_asin]
+            for parent_asin in parent_asins
+            if parent_asin in cache
         )
 
     def contains_product(self, parent_asin: str) -> bool:

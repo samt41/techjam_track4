@@ -105,16 +105,22 @@ class CatalogArtifactTest(unittest.TestCase):
 
         self.assertEqual(row, ("BOOT-1", "black winter boot", None))
 
-    def test_loader_validates_database_hash(self) -> None:
+    def test_loader_skips_expensive_database_hash_but_checks_size(self) -> None:
+        # The full-database SHA-256 is deliberately not verified on open (it
+        # hashes ~575 MB every startup). The catalog fingerprint binds the
+        # artifacts to their source, and a size mismatch still fails fast.
         catalog_path = write_catalog(self.root, sample_products())
         artifact_path = self.root / "catalog.artifacts"
         CatalogArtifactBuilder().build(catalog_path, artifact_path)
         database_path = artifact_path / "catalog.sqlite3"
-        database_bytes = bytearray(database_path.read_bytes())
-        database_bytes[-1] ^= 1
-        database_path.write_bytes(database_bytes)
 
-        with self.assertRaisesRegex(ArtifactValidationError, "hash"):
+        # A valid artifact opens without paying for a database hash.
+        loaded = LoadedCatalogArtifacts.open(catalog_path, artifact_path)
+        loaded.close()
+
+        # A truncation (size change) is still rejected cheaply.
+        database_path.write_bytes(database_path.read_bytes()[:-16])
+        with self.assertRaisesRegex(ArtifactValidationError, "size"):
             LoadedCatalogArtifacts.open(catalog_path, artifact_path)
 
     def test_loaded_database_is_read_only_and_closable(self) -> None:

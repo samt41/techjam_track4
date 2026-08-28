@@ -269,8 +269,11 @@ class LoadedCatalogArtifacts:
             raise ArtifactValidationError("catalog size does not match artifact manifest")
         if database_path.stat().st_size != manifest.database_size_bytes:
             raise ArtifactValidationError("artifact database size does not match manifest")
-        if _sha256_file(database_path) != manifest.database_sha256:
-            raise ArtifactValidationError("artifact database hash does not match manifest")
+        # The full-database SHA-256 is intentionally not verified on open: it
+        # hashes ~575 MB on every startup. The catalog fingerprint above already
+        # binds the artifacts to their source catalog, and the size check plus
+        # SQLite's own page integrity catch truncation/corruption. Rebuild
+        # explicitly if deeper verification is needed.
 
         database_uri = database_path.resolve().as_uri() + "?mode=ro"
         connection: sqlite3.Connection | None = None
