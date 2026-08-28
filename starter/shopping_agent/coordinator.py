@@ -93,6 +93,7 @@ class TurnCoordinator:
         if not self._closed:
             self._sessions.clear()
             self._catalog_index.close()
+            self._trace.close()
             self._closed = True
 
     def reset(self, session_id: str, profile: UserProfile) -> None:

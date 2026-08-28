@@ -223,6 +223,8 @@ TraceEvent = Union[
 class EvaluationTrace(Protocol):
     def record(self, event: TraceEvent) -> None: ...
 
+    def close(self) -> None: ...
+
 
 class NoOpEvaluationTrace:
     __slots__ = ()
@@ -230,12 +232,27 @@ class NoOpEvaluationTrace:
     def record(self, event: TraceEvent) -> None:
         return None
 
+    def close(self) -> None:
+        return None
+
 
 class JsonlEvaluationTrace:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
+        self._handle = None
 
     def record(self, event: TraceEvent) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.as_record(), sort_keys=True) + "\n")
+        # Keep one append handle open for the life of the trace instead of
+        # reopening per event; flush each line so a downstream reader (miss
+        # attribution runs after evaluation) sees a complete file. Opening and
+        # closing a handle for all ~10k events per run dominated traced runtime.
+        if self._handle is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = self._path.open("a", encoding="utf-8")
+        self._handle.write(json.dumps(event.as_record(), sort_keys=True) + "\n")
+        self._handle.flush()
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None

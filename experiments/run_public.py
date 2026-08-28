@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 from time import perf_counter
@@ -126,8 +128,26 @@ def run_experiment(
             _ablation_markdown(summary, failures),
             encoding="utf-8",
         )
-        working.rename(destination)
+        _publish(working, destination)
     return destination
+
+
+def _publish(working: Path, destination: Path) -> None:
+    """Move the completed working directory to its final name.
+
+    `Path.rename` maps to `os.rename`, which on Windows raises WinError 183 when
+    the destination already exists (unlike POSIX rename, which replaces). The
+    run refused to overwrite an existing destination at entry, so a destination
+    present now is a corpse from an earlier crashed run of the same id; clear it
+    and retry rather than losing a completed 200-session evaluation at the final
+    publish step.
+    """
+    try:
+        os.replace(working, destination)
+    except OSError:
+        if destination.exists():
+            shutil.rmtree(destination)
+        os.replace(working, destination)
 
 
 def _load_events(trace_path: Path) -> tuple[dict, ...]:

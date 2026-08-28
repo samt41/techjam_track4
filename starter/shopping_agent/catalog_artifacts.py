@@ -277,6 +277,12 @@ class LoadedCatalogArtifacts:
         try:
             connection = sqlite3.connect(database_uri, uri=True)
             connection.execute("PRAGMA query_only = ON")
+            # Read-path tuning for the large (~575 MB) artifact DB: memory-map the
+            # file so hot pages are served without per-read syscalls, enlarge the
+            # page cache, and keep temporary b-trees in RAM. All read-only and safe.
+            connection.execute("PRAGMA mmap_size = 1073741824")  # 1 GiB
+            connection.execute("PRAGMA cache_size = -131072")     # 128 MiB page cache
+            connection.execute("PRAGMA temp_store = MEMORY")
             product_count = int(connection.execute(
                 "SELECT COUNT(*) FROM products"
             ).fetchone()[0])

@@ -81,6 +81,7 @@ class TraceEventTest(unittest.TestCase):
     def test_retrieval_trace_serializes_fixed_fields(self) -> None:
         trace_path = self.root / "retrieval.jsonl"
         trace = JsonlEvaluationTrace(trace_path)
+        self.addCleanup(trace.close)
 
         trace.record(RetrievalTrace(
             session_id="s1",
