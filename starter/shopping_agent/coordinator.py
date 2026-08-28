@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from starter.shopping_agent.catalog_index import CatalogIndex
+from starter.shopping_agent.clarification import (
+    ClarificationPolicy,
+    QuestionValueEstimator,
+)
 from starter.shopping_agent.constraint_extractor import ConstraintExtractor
 from starter.shopping_agent.models import (
+    Attribute,
     RecommendationHistory,
     TurnResponse,
     UserProfile,
@@ -20,6 +25,7 @@ class _SessionState:
     profile: UserProfile
     ledger: PreferenceLedger
     history: RecommendationHistory
+    last_asked_attribute: Attribute | None
 
 
 class TurnCoordinator:
@@ -30,6 +36,8 @@ class TurnCoordinator:
         self._generator = CandidateGenerator(catalog_index)
         self._ranker = ProductRanker(catalog_index)
         self._validator = ResponseValidator(catalog_index)
+        self._question_estimator = QuestionValueEstimator()
+        self._clarification_policy = ClarificationPolicy()
         self._sessions: dict[str, _SessionState] = {}
         self._closed = False
 
@@ -44,6 +52,7 @@ class TurnCoordinator:
             profile=profile,
             ledger=PreferenceLedger(),
             history=RecommendationHistory(),
+            last_asked_attribute=None,
         )
 
     def respond(
@@ -58,7 +67,12 @@ class TurnCoordinator:
         state = self._sessions.get(session_id)
         if state is None:
             raise RuntimeError("reset must be called before respond")
-        updates = self._extractor.extract(message, turn, asked_attribute=None)
+        updates = self._extractor.extract(
+            message,
+            turn,
+            asked_attribute=state.last_asked_attribute,
+        )
+        state.last_asked_attribute = None
         intent = state.ledger.apply(updates)
         candidates = tuple(
             candidate
@@ -76,8 +90,32 @@ class TurnCoordinator:
             intent.intent_version,
             tuple(item.parent_asin for item in recommendations),
         )
+        products = tuple(
+            self._catalog_index.product_by_id[item.parent_asin]
+            for item in recommendations
+        )
+        question_candidates = self._question_estimator.score_candidates(
+            products,
+            tuple(max(item.score, 1e-12) for item in recommendations),
+            intent,
+        )
+        clarification = self._clarification_policy.choose(
+            question_candidates,
+            intent,
+            turn,
+        )
+        if clarification is not None:
+            state.ledger.record_question(clarification.attribute)
+            state.last_asked_attribute = clarification.attribute
         return TurnResponse(
-            message="Here are the strongest matches for your current preferences.",
-            ask_attribute=None,
+            message=(
+                "Here are the strongest matches for your current preferences. "
+                + clarification.prompt
+                if clarification is not None
+                else "Here are the strongest matches for your current preferences."
+            ),
+            ask_attribute=(
+                clarification.attribute if clarification is not None else None
+            ),
             recommendations=recommendations,
         )

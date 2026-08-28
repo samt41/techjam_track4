@@ -130,6 +130,31 @@ class AgentIntegrationTest(unittest.TestCase):
         self.assertFalse(first_ids & second_ids)
         self.assertTrue(first_ids & override_ids)
 
+    def test_agent_recommends_ten_products_while_asking(self) -> None:
+        agent = Agent(catalog_path=self.catalog_path)
+        self.addCleanup(agent.close)
+        agent.reset("ask", PROFILE)
+
+        response = agent.respond("ask", "I need boots", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertIn(
+            response["ask_attribute"],
+            {"material", "color", "size", "style", "brand", "feature"},
+        )
+        self.assertIn("?", response["message"])
+
+    def test_declined_question_is_not_repeated(self) -> None:
+        agent = Agent(catalog_path=self.catalog_path)
+        self.addCleanup(agent.close)
+        agent.reset("decline", PROFILE)
+        first = agent.respond("decline", "I need boots", 1, 10)
+
+        second = agent.respond("decline", "no preference", 2, 10)
+
+        self.assertIsNotNone(first["ask_attribute"])
+        self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
+
 
 if __name__ == "__main__":
     unittest.main()

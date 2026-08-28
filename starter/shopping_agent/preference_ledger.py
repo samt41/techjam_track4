@@ -134,6 +134,15 @@ class PreferenceLedger:
         )
         return self._intent
 
+    def record_question(self, attribute: Attribute) -> ShoppingIntent:
+        if attribute in self._intent.asked_attributes:
+            return self._intent
+        self._intent = replace(
+            self._intent,
+            asked_attributes=(*self._intent.asked_attributes, attribute),
+        )
+        return self._intent
+
     @staticmethod
     def _constraint_id(update: PreferenceUpdate, ordinal: int) -> str:
         value = (update.value or "none").replace(" ", "-")
