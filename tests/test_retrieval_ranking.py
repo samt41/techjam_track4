@@ -253,6 +253,64 @@ class RetrievalRankingTest(unittest.TestCase):
             ["collapse", "low", "high"],
         )
 
+    def test_ranker_orders_strict_by_posterior_and_records_belief(self) -> None:
+        intent = PreferenceLedger().apply((
+            preference(Attribute.CATEGORY, "boots"),
+            preference(
+                Attribute.COLOR,
+                "black",
+                strength=Strength.SOFT,
+            ),
+        ))
+        candidates = tuple(
+            candidate
+            for plan in RetrievalPlanner().strict(intent)
+            for candidate in execute_search_plan(self.index.backend, plan)
+        )
+
+        ranked = ProductRanker(self.index.backend).rank(
+            candidates,
+            intent,
+            shown_product_ids=frozenset(),
+            top_k=10,
+        )
+
+        self.assertEqual(ranked[0].parent_asin, "BOOT-1")
+        self.assertGreater(ranked[0].posterior, 0.0)
+        self.assertTrue(all(item.belief_contributions for item in ranked))
+        # Posteriors normalize over the full strict population, so the returned
+        # slate (truncated to top_k) sums to at most one and is monotonically
+        # ordered by posterior.
+        self.assertLessEqual(sum(item.posterior for item in ranked), 1.0 + 1e-9)
+        self.assertEqual(
+            [item.posterior for item in ranked],
+            sorted((item.posterior for item in ranked), reverse=True),
+        )
+
+    def test_unseen_strict_products_rank_before_shown_within_version(self) -> None:
+        evidence = RouteEvidence(
+            route=RetrievalRoute.EXACT_FTS,
+            rank=1,
+            score=1.0,
+        )
+        candidates = tuple(
+            ProductCandidate(
+                parent_asin=f"BOOT-{number}",
+                evidence=(evidence,),
+                relaxed_constraint_id=None,
+            )
+            for number in range(1, 4)
+        )
+
+        ranked = ProductRanker(self.index.backend).rank(
+            candidates,
+            PreferenceLedger().intent,
+            shown_product_ids=frozenset({"BOOT-1"}),
+            top_k=3,
+        )
+
+        self.assertEqual(ranked[-1].parent_asin, "BOOT-1")
+
     def test_counterfactual_plan_relaxes_one_constraint_and_keeps_others(self) -> None:
         intent = PreferenceLedger().apply((
             preference(Attribute.CATEGORY, "boots"),

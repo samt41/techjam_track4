@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from starter.shopping_agent.belief import (
+    DEFAULT_BELIEF_CONFIGURATION,
+    BeliefCandidate,
+    BeliefConfiguration,
+    CandidateBeliefModel,
+)
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
@@ -11,6 +17,7 @@ from starter.shopping_agent.models import (
     RouteEvidence,
     ShoppingIntent,
     Strength,
+    UserProfile,
 )
 from starter.shopping_agent.search_backend import ProductSearchBackend
 
@@ -43,9 +50,15 @@ class ProductRanker:
         self,
         backend: ProductSearchBackend,
         eligibility_gate: EligibilityGate | None = None,
+        belief_configuration: BeliefConfiguration | None = None,
+        profile: UserProfile | None = None,
     ) -> None:
         self._backend = backend
         self._eligibility_gate = eligibility_gate or EligibilityGate()
+        self._belief_model = CandidateBeliefModel(
+            belief_configuration or DEFAULT_BELIEF_CONFIGURATION
+        )
+        self._profile = profile or _NEUTRAL_PROFILE
 
     def rank(
         self,
@@ -53,7 +66,9 @@ class ProductRanker:
         intent: ShoppingIntent,
         shown_product_ids: frozenset[str],
         top_k: int,
+        profile: UserProfile | None = None,
     ) -> tuple[RankedRecommendation, ...]:
+        active_profile = profile or self._profile
         evidence_by_id: dict[str, list[RouteEvidence]] = {}
         relaxed_by_id: dict[str, str | None] = {}
         strict_ids: set[str] = set()
@@ -71,7 +86,7 @@ class ProductRanker:
 
         products = self._backend.get_products(tuple(evidence_by_id))
         product_by_id = {product.parent_asin: product for product in products}
-        ranked: list[RankedRecommendation] = []
+        eligible: list[tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]] = []
         for parent_asin, evidence in evidence_by_id.items():
             product = product_by_id.get(parent_asin)
             if product is None:
@@ -98,20 +113,95 @@ class ProductRanker:
                 continue
             score = sum(item.score / (60.0 + item.rank) for item in evidence)
             score += _soft_preference_score(product, intent)
-            ranked.append(RankedRecommendation(
+            eligible.append((
+                parent_asin,
+                relaxed_constraint_id,
+                score,
+                product,
+                tuple(evidence),
+            ))
+
+        strict_entries = [entry for entry in eligible if entry[1] is None]
+        posterior_by_id, contributions_by_id = self._beliefs(
+            strict_entries,
+            intent,
+            active_profile,
+        )
+        ranked = [
+            RankedRecommendation(
                 parent_asin=parent_asin,
                 score=score,
                 exact_match=relaxed_constraint_id is None,
                 relaxed_constraint_id=relaxed_constraint_id,
-            ))
-        ranked.sort(key=lambda item: (
-            item.parent_asin in shown_product_ids,
-            -item.score,
-            item.parent_asin,
-        ))
-        strict = [item for item in ranked if item.exact_match]
-        exploratory = [item for item in ranked if not item.exact_match]
+                posterior=posterior_by_id.get(parent_asin, 0.0),
+                belief_contributions=contributions_by_id.get(parent_asin, ()),
+            )
+            for parent_asin, relaxed_constraint_id, score, _, _ in eligible
+        ]
+        strict = sorted(
+            (item for item in ranked if item.exact_match),
+            key=lambda item: (
+                item.parent_asin in shown_product_ids,
+                -item.posterior,
+                -item.score,
+                item.parent_asin,
+            ),
+        )
+        exploratory = sorted(
+            (item for item in ranked if not item.exact_match),
+            key=lambda item: (
+                item.parent_asin in shown_product_ids,
+                -item.score,
+                item.parent_asin,
+            ),
+        )
         return tuple((*strict, *exploratory)[:max(0, top_k)])
+
+    def _beliefs(
+        self,
+        strict_entries: list[
+            tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]
+        ],
+        intent: ShoppingIntent,
+        profile: UserProfile,
+    ) -> tuple[dict[str, float], dict[str, tuple[tuple[str, float], ...]]]:
+        if not strict_entries:
+            return {}, {}
+        belief_candidates = tuple(
+            BeliefCandidate(
+                parent_asin=parent_asin,
+                product=product,
+                route_evidence=evidence,
+                quality_prior=0.0,
+                strictly_eligible=True,
+            )
+            for parent_asin, _, _, product, evidence in strict_entries
+        )
+        beliefs = self._belief_model.score(
+            belief_candidates,
+            intent,
+            profile,
+        )
+        posterior_by_id = {
+            belief.parent_asin: belief.posterior for belief in beliefs
+        }
+        contributions_by_id = {
+            belief.parent_asin: tuple(
+                (contribution.component, contribution.weighted_log_contribution)
+                for contribution in belief.contributions
+            )
+            for belief in beliefs
+        }
+        return posterior_by_id, contributions_by_id
+
+
+_NEUTRAL_PROFILE = UserProfile(
+    purchase_frequency="unknown",
+    average_prior_rating=None,
+    rating_style="unknown",
+    preference_tags=(),
+    summary="",
+)
 
 
 def _matches(product: ProductRecord, constraint: PreferenceConstraint) -> bool:

@@ -138,6 +138,7 @@ class TurnCoordinator:
             intent,
             shown_product_ids=shown_product_ids,
             top_k=top_k,
+            profile=state.profile,
         )
         if len(recommendations) < top_k:
             recommendations = self._fill_tail(
@@ -148,6 +149,7 @@ class TurnCoordinator:
                 strict_total=len(recommendations),
                 shown_product_ids=shown_product_ids,
                 top_k=top_k,
+                profile=state.profile,
             )
         self._record(
             session_id,
@@ -271,6 +273,7 @@ class TurnCoordinator:
         strict_total: int,
         shown_product_ids,
         top_k: int,
+        profile,
     ):
         ordered = order_relaxations(
             build_reliabilities(intent),
@@ -283,6 +286,7 @@ class TurnCoordinator:
             intent,
             shown_product_ids=shown_product_ids,
             top_k=top_k,
+            profile=profile,
         )
         for plan in self._planner.counterfactuals(intent, ordered, top_k):
             if len(recommendations) >= top_k:
@@ -313,6 +317,7 @@ class TurnCoordinator:
                 intent,
                 shown_product_ids=shown_product_ids,
                 top_k=top_k,
+                profile=profile,
             )
         return recommendations
 

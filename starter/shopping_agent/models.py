@@ -236,6 +236,8 @@ class RankedRecommendation:
     score: float
     exact_match: bool
     relaxed_constraint_id: str | None
+    posterior: float = 0.0
+    belief_contributions: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
