@@ -145,6 +145,70 @@ class LocalProductSearchBackend:
             )
         started_at = time.perf_counter()
         filter_clause = _compile_filter_clause(request.filters)
+        use_fallback = (
+            self._lexical_mode is LexicalMode.FALLBACK
+            or (
+                self._lexical_mode is LexicalMode.AUTO
+                and not self._artifacts.manifest.fts5_built
+            )
+        )
+        if use_fallback:
+            return self._lexical_fallback_search(
+                request, tokens, filter_clause, started_at
+            )
+        # FTS5 path: FTS5 runs its own bounded query, so only a cheap posting
+        # COUNT is needed to honor the work-limit discard contract. Materializing
+        # up to work_limit posting rows here is pure waste on a large catalog.
+        posting_count = self._bounded_posting_count(
+            tokens,
+            filter_clause,
+            request.work_limit,
+        )
+        if posting_count > request.work_limit:
+            return SearchResult(
+                hits=(),
+                total_matches=posting_count - 1,
+                total_relation=TotalRelation.LOWER_BOUND,
+                route=request.route,
+                reason=SearchReason.WORK_LIMIT_EXCEEDED,
+                work_consumed=request.work_limit,
+                elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
+            )
+        try:
+            return self._fts5_result(
+                request,
+                tokens,
+                filter_clause,
+                posting_count,
+                started_at,
+            )
+        except sqlite3.DatabaseError:
+            if self._lexical_mode is LexicalMode.AUTO:
+                return self._lexical_fallback_search(
+                    request,
+                    tokens,
+                    filter_clause,
+                    started_at,
+                    reason=SearchReason.FTS5_UNAVAILABLE,
+                )
+            return SearchResult(
+                hits=(),
+                total_matches=0,
+                total_relation=TotalRelation.LOWER_BOUND,
+                route=request.route,
+                reason=SearchReason.FTS5_UNAVAILABLE,
+                work_consumed=posting_count,
+                elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
+            )
+
+    def _lexical_fallback_search(
+        self,
+        request: SearchRequest,
+        tokens: tuple[str, ...],
+        filter_clause: SqlFilterClause,
+        started_at: float,
+        reason: SearchReason | None = None,
+    ) -> SearchResult:
         posting_rows = self._bounded_posting_rows(
             tokens,
             filter_clause,
@@ -163,48 +227,13 @@ class LocalProductSearchBackend:
                 work_consumed=request.work_limit,
                 elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
             )
-        if self._lexical_mode is LexicalMode.FALLBACK:
-            return self._fallback_result(
-                request,
-                posting_rows,
-                SearchReason.FALLBACK_COMPLETED,
-                started_at,
+        if reason is None:
+            reason = (
+                SearchReason.FALLBACK_COMPLETED
+                if self._lexical_mode is LexicalMode.FALLBACK
+                else SearchReason.FTS5_UNAVAILABLE
             )
-        if (
-            self._lexical_mode is LexicalMode.AUTO
-            and not self._artifacts.manifest.fts5_built
-        ):
-            return self._fallback_result(
-                request,
-                posting_rows,
-                SearchReason.FTS5_UNAVAILABLE,
-                started_at,
-            )
-        try:
-            return self._fts5_result(
-                request,
-                tokens,
-                filter_clause,
-                len(posting_rows),
-                started_at,
-            )
-        except sqlite3.DatabaseError:
-            if self._lexical_mode is LexicalMode.AUTO:
-                return self._fallback_result(
-                    request,
-                    posting_rows,
-                    SearchReason.FTS5_UNAVAILABLE,
-                    started_at,
-                )
-            return SearchResult(
-                hits=(),
-                total_matches=0,
-                total_relation=TotalRelation.LOWER_BOUND,
-                route=request.route,
-                reason=SearchReason.FTS5_UNAVAILABLE,
-                work_consumed=len(posting_rows),
-                elapsed_ms=(time.perf_counter() - started_at) * 1_000.0,
-            )
+        return self._fallback_result(request, posting_rows, reason, started_at)
 
     def _bounded_posting_rows(
         self,
@@ -229,6 +258,31 @@ class LocalProductSearchBackend:
             "ORDER BY posting.term ASC, posting.ordinal ASC LIMIT ?",
             (*filter_clause.parameters, *tokens, work_limit + 1),
         ).fetchall()
+
+    def _bounded_posting_count(
+        self,
+        tokens: tuple[str, ...],
+        filter_clause: SqlFilterClause,
+        work_limit: int,
+    ) -> int:
+        placeholders = ", ".join("?" for _ in tokens)
+        term_filter_sql = (
+            filter_clause.sql + " AND"
+            if filter_clause.sql
+            else " WHERE"
+        )
+        # Bound the scan to work_limit + 1 index rows without materializing them,
+        # so a route that exceeds its budget is still discarded but a completed
+        # route pays only for a cheap COUNT rather than a full posting fetch.
+        row = self._artifacts.connection.execute(
+            "SELECT COUNT(*) FROM (SELECT posting.ordinal "
+            "FROM lexical_postings AS posting "
+            "JOIN products AS p ON p.ordinal = posting.ordinal"
+            + term_filter_sql
+            + f" posting.term IN ({placeholders}) LIMIT ?)",
+            (*filter_clause.parameters, *tokens, work_limit + 1),
+        ).fetchone()
+        return int(row[0])
 
     def _fallback_result(
         self,

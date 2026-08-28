@@ -22,6 +22,13 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.search_backend import ProductSearchBackend
 
 
+# The strict route pool can hold up to the retrieval route limit (~1,000)
+# candidates. Products fetch and belief scoring are linear in this size and the
+# entropy question model is quadratic, so both consume a bounded top-N slice by
+# fused route evidence. This is the plan's bounded strict-ranking population.
+_POPULATION_CAP = 200
+
+
 class EligibilityGate:
     def evaluate(
         self,
@@ -59,6 +66,7 @@ class ProductRanker:
             belief_configuration or DEFAULT_BELIEF_CONFIGURATION
         )
         self._profile = profile or _NEUTRAL_PROFILE
+        self._scored_cache: tuple[object, ...] | None = None
 
     def rank(
         self,
@@ -69,63 +77,8 @@ class ProductRanker:
         profile: UserProfile | None = None,
     ) -> tuple[RankedRecommendation, ...]:
         active_profile = profile or self._profile
-        evidence_by_id: dict[str, list[RouteEvidence]] = {}
-        relaxed_by_id: dict[str, str | None] = {}
-        strict_ids: set[str] = set()
-        for candidate in candidates:
-            evidence_by_id.setdefault(candidate.parent_asin, []).extend(
-                candidate.evidence
-            )
-            if candidate.relaxed_constraint_id is None:
-                strict_ids.add(candidate.parent_asin)
-            else:
-                relaxed_by_id.setdefault(
-                    candidate.parent_asin,
-                    candidate.relaxed_constraint_id,
-                )
-
-        products = self._backend.get_products(tuple(evidence_by_id))
-        product_by_id = {product.parent_asin: product for product in products}
-        eligible: list[tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]] = []
-        for parent_asin, evidence in evidence_by_id.items():
-            product = product_by_id.get(parent_asin)
-            if product is None:
-                continue
-            strict_eligibility = self._eligibility_gate.evaluate(
-                product,
-                intent.active_constraints,
-            )
-            relaxed_constraint_id = None
-            if not (parent_asin in strict_ids and strict_eligibility.eligible):
-                relaxed_constraint_id = relaxed_by_id.get(parent_asin)
-                if relaxed_constraint_id is None:
-                    continue
-            applicable_constraints = tuple(
-                constraint
-                for constraint in intent.active_constraints
-                if constraint.constraint_id != relaxed_constraint_id
-            )
-            eligibility = self._eligibility_gate.evaluate(
-                product,
-                applicable_constraints,
-            )
-            if not eligibility.eligible:
-                continue
-            score = sum(item.score / (60.0 + item.rank) for item in evidence)
-            score += _soft_preference_score(product, intent)
-            eligible.append((
-                parent_asin,
-                relaxed_constraint_id,
-                score,
-                product,
-                tuple(evidence),
-            ))
-
-        strict_entries = [entry for entry in eligible if entry[1] is None]
-        posterior_by_id, contributions_by_id = self._beliefs(
-            strict_entries,
-            intent,
-            active_profile,
+        eligible, posterior_by_id, contributions_by_id = self._scored(
+            candidates, intent, active_profile
         )
         ranked = [
             RankedRecommendation(
@@ -165,79 +118,130 @@ class ProductRanker:
     ) -> tuple[tuple[float, ProductRecord], ...]:
         """Preliminary strict belief population as (posterior, product) pairs.
 
-        Covers every strictly eligible candidate before slate truncation, so
-        question estimation sees the full posterior distribution rather than the
-        final top_k slate.
+        Covers the bounded strictly eligible population (highest evidence score
+        first) so question estimation sees the posterior distribution rather
+        than the final top_k slate.
         """
         active_profile = profile or self._profile
+        eligible, posterior_by_id, _ = self._scored(
+            candidates, intent, active_profile
+        )
+        return tuple(
+            (posterior_by_id.get(parent_asin, 0.0), product)
+            for parent_asin, relaxed_constraint_id, _, product, _ in eligible
+            if relaxed_constraint_id is None
+        )
+
+    def _scored(
+        self,
+        candidates: tuple[ProductCandidate, ...],
+        intent: ShoppingIntent,
+        profile: UserProfile,
+    ) -> tuple[
+        list[tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]],
+        dict[str, float],
+        dict[str, tuple[tuple[str, float], ...]],
+    ]:
+        # Memoize so the coordinator's rank() and strict_population() calls on
+        # the same candidate objects and intent do not fetch or belief-score
+        # twice within one turn.
+        cache_key = (id(candidates), id(intent), id(profile))
+        if self._scored_cache is not None and self._scored_cache[0] == cache_key:
+            return self._scored_cache[1]
+
         evidence_by_id: dict[str, list[RouteEvidence]] = {}
+        relaxed_by_id: dict[str, str | None] = {}
+        strict_ids: set[str] = set()
         for candidate in candidates:
-            if candidate.relaxed_constraint_id is not None:
-                continue
             evidence_by_id.setdefault(candidate.parent_asin, []).extend(
                 candidate.evidence
             )
-        if not evidence_by_id:
-            return ()
-        products = self._backend.get_products(tuple(evidence_by_id))
+            if candidate.relaxed_constraint_id is None:
+                strict_ids.add(candidate.parent_asin)
+            else:
+                relaxed_by_id.setdefault(
+                    candidate.parent_asin,
+                    candidate.relaxed_constraint_id,
+                )
+
+        # Bound the materialized population by cheap evidence-only RRF before
+        # fetching products or scoring beliefs. Route hits are already ordered,
+        # so the tail carries negligible fusion weight.
+        evidence_score = {
+            parent_asin: sum(item.score / (60.0 + item.rank) for item in evidence)
+            for parent_asin, evidence in evidence_by_id.items()
+        }
+        bounded_ids = sorted(
+            evidence_by_id,
+            key=lambda parent_asin: (-evidence_score[parent_asin], parent_asin),
+        )[:_POPULATION_CAP]
+
+        products = self._backend.get_products(tuple(bounded_ids))
         product_by_id = {product.parent_asin: product for product in products}
-        strict_entries: list[
+        eligible: list[
             tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]
         ] = []
-        for parent_asin, evidence in evidence_by_id.items():
+        belief_candidates: list[BeliefCandidate] = []
+        for parent_asin in bounded_ids:
             product = product_by_id.get(parent_asin)
             if product is None:
                 continue
-            if not self._eligibility_gate.evaluate(
+            evidence = tuple(evidence_by_id[parent_asin])
+            strict_eligibility = self._eligibility_gate.evaluate(
                 product,
                 intent.active_constraints,
+            )
+            relaxed_constraint_id = None
+            if not (parent_asin in strict_ids and strict_eligibility.eligible):
+                relaxed_constraint_id = relaxed_by_id.get(parent_asin)
+                if relaxed_constraint_id is None:
+                    continue
+            applicable_constraints = tuple(
+                constraint
+                for constraint in intent.active_constraints
+                if constraint.constraint_id != relaxed_constraint_id
+            )
+            if not self._eligibility_gate.evaluate(
+                product,
+                applicable_constraints,
             ).eligible:
                 continue
-            strict_entries.append(
-                (parent_asin, None, 0.0, product, tuple(evidence))
-            )
-        posterior_by_id, _ = self._beliefs(strict_entries, intent, active_profile)
-        return tuple(
-            (posterior_by_id.get(parent_asin, 0.0), product)
-            for parent_asin, _, _, product, _ in strict_entries
-        )
+            score = evidence_score[parent_asin]
+            score += _soft_preference_score(product, intent)
+            eligible.append((
+                parent_asin,
+                relaxed_constraint_id,
+                score,
+                product,
+                evidence,
+            ))
+            if relaxed_constraint_id is None:
+                belief_candidates.append(BeliefCandidate(
+                    parent_asin=parent_asin,
+                    product=product,
+                    route_evidence=evidence,
+                    quality_prior=0.0,
+                    strictly_eligible=True,
+                ))
 
-    def _beliefs(
-        self,
-        strict_entries: list[
-            tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]
-        ],
-        intent: ShoppingIntent,
-        profile: UserProfile,
-    ) -> tuple[dict[str, float], dict[str, tuple[tuple[str, float], ...]]]:
-        if not strict_entries:
-            return {}, {}
-        belief_candidates = tuple(
-            BeliefCandidate(
-                parent_asin=parent_asin,
-                product=product,
-                route_evidence=evidence,
-                quality_prior=0.0,
-                strictly_eligible=True,
+        posterior_by_id: dict[str, float] = {}
+        contributions_by_id: dict[str, tuple[tuple[str, float], ...]] = {}
+        if belief_candidates:
+            beliefs = self._belief_model.score(
+                tuple(belief_candidates),
+                intent,
+                profile,
             )
-            for parent_asin, _, _, product, evidence in strict_entries
-        )
-        beliefs = self._belief_model.score(
-            belief_candidates,
-            intent,
-            profile,
-        )
-        posterior_by_id = {
-            belief.parent_asin: belief.posterior for belief in beliefs
-        }
-        contributions_by_id = {
-            belief.parent_asin: tuple(
-                (contribution.component, contribution.weighted_log_contribution)
-                for contribution in belief.contributions
-            )
-            for belief in beliefs
-        }
-        return posterior_by_id, contributions_by_id
+            for belief in beliefs:
+                posterior_by_id[belief.parent_asin] = belief.posterior
+                contributions_by_id[belief.parent_asin] = tuple(
+                    (contribution.component, contribution.weighted_log_contribution)
+                    for contribution in belief.contributions
+                )
+
+        result = (eligible, posterior_by_id, contributions_by_id)
+        self._scored_cache = (cache_key, result)
+        return result
 
 
 _NEUTRAL_PROFILE = UserProfile(

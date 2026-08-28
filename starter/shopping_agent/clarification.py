@@ -38,6 +38,10 @@ _PROMPTS = {
 }
 _UNKNOWN = "unknown"
 _NO_PREFERENCE = "no_preference"
+# The belief population can be large (up to the retrieval route limit). Posterior
+# mass concentrates on the top candidates, so entropy estimation scores only a
+# bounded top-N slice by posterior rather than rescanning thousands per answer.
+_POPULATION_CAP = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,11 +82,16 @@ class PosteriorQuestionModel:
         total_mass = sum(mass for mass, _ in population)
         if total_mass <= 0.0:
             return ()
-        normalized = tuple(
-            (mass / total_mass, product) for mass, product in population
-        )
+        # Bound the scored population to the highest-posterior slice, then
+        # renormalize. Entropy estimation is quadratic in population size, and
+        # the tail carries negligible mass.
+        bounded = sorted(population, key=lambda item: -item[0])[:_POPULATION_CAP]
+        bounded_mass = sum(mass for mass, _ in bounded)
+        posteriors = tuple(mass / bounded_mass for mass, _ in bounded)
+        products = tuple(product for _, product in bounded)
+        current_entropy = _entropy(posteriors)
         candidates = tuple(
-            self._score_attribute(attribute, normalized)
+            self._score_attribute(attribute, posteriors, products, current_entropy)
             for attribute in _QUESTION_ATTRIBUTES
         )
         return tuple(sorted(
@@ -93,26 +102,24 @@ class PosteriorQuestionModel:
     def _score_attribute(
         self,
         attribute: Attribute,
-        population: tuple[tuple[float, ProductRecord], ...],
+        posteriors: tuple[float, ...],
+        products: tuple[ProductRecord, ...],
+        current_entropy: float,
     ) -> QuestionCandidate:
         configuration = self._configuration
-        # Bucket posterior mass by canonical attribute value (or unknown).
+        # Resolve each candidate's attribute value once, then reuse it for both
+        # bucketing and conditioning instead of re-deriving it per answer.
+        values = tuple(_attribute_value(product, attribute) for product in products)
         value_mass: dict[str, float] = {}
-        for posterior, product in population:
-            value = _attribute_value(product, attribute) or _UNKNOWN
-            value_mass[value] = value_mass.get(value, 0.0) + posterior
+        for posterior, value in zip(posteriors, values, strict=True):
+            bucket = value or _UNKNOWN
+            value_mass[bucket] = value_mass.get(bucket, 0.0) + posterior
         unknown_mass = value_mass.get(_UNKNOWN, 0.0)
         known_mass = 1.0 - unknown_mass
         coverage = known_mass
         answerability = configuration.answerability.get(attribute, 0.0)
 
-        current_entropy = _entropy(
-            tuple(posterior for posterior, _ in population)
-        )
-
-        known_values = tuple(
-            value for value in value_mass if value != _UNKNOWN
-        )
+        known_values = tuple(value for value in value_mass if value != _UNKNOWN)
         if not known_values or known_mass <= 0.0:
             return QuestionCandidate(
                 attribute=attribute,
@@ -129,23 +136,15 @@ class PosteriorQuestionModel:
 
         # Answer distribution: decline keeps the current posterior; the rest of
         # the mass is split across known values in proportion to their mass.
-        answer_probability: dict[str, float] = {
-            _NO_PREFERENCE: configuration.decline_probability,
-        }
         remaining = 1.0 - configuration.decline_probability
+        conditional_entropy = configuration.decline_probability * current_entropy
         for value in known_values:
-            answer_probability[value] = remaining * (value_mass[value] / known_mass)
-
-        conditional_entropy = 0.0
-        for answer, probability in answer_probability.items():
+            probability = remaining * (value_mass[value] / known_mass)
             if probability <= 0.0:
                 continue
-            conditional_posteriors = self._condition(
-                population,
-                attribute,
-                answer,
+            conditional_entropy += probability * _entropy(
+                self._condition(posteriors, values, value)
             )
-            conditional_entropy += probability * _entropy(conditional_posteriors)
 
         information_gain = max(0.0, current_entropy - conditional_entropy)
         score = (
@@ -171,26 +170,24 @@ class PosteriorQuestionModel:
 
     def _condition(
         self,
-        population: tuple[tuple[float, ProductRecord], ...],
-        attribute: Attribute,
+        posteriors: tuple[float, ...],
+        values: tuple[str | None, ...],
         answer: str,
     ) -> tuple[float, ...]:
-        if answer == _NO_PREFERENCE:
-            return tuple(posterior for posterior, _ in population)
         noise = self._configuration.response_noise
+        match = 1.0 - noise
         weighted: list[float] = []
-        for posterior, product in population:
-            value = _attribute_value(product, attribute)
-            if value is None:
-                likelihood = noise
-            elif value == answer or answer in value or value in answer:
-                likelihood = 1.0 - noise
+        for posterior, value in zip(posteriors, values, strict=True):
+            if value is not None and (
+                value == answer or answer in value or value in answer
+            ):
+                likelihood = match
             else:
                 likelihood = noise
             weighted.append(posterior * likelihood)
         total = sum(weighted)
         if total <= 0.0:
-            return tuple(posterior for posterior, _ in population)
+            return posteriors
         return tuple(value / total for value in weighted)
 
 
