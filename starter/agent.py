@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.coordinator import TurnCoordinator
@@ -27,13 +28,17 @@ class Agent:
             if artifact_path is not None
             else resolved_catalog_path.with_suffix(".artifacts")
         )
+        started = perf_counter()
+        catalog_index = CatalogIndex(LocalProductSearchBackend.open(
+            resolved_catalog_path,
+            resolved_artifact_path,
+            lexical_mode=lexical_mode,
+        ))
+        startup_ms = (perf_counter() - started) * 1000.0
         self._coordinator = TurnCoordinator(
-            CatalogIndex(LocalProductSearchBackend.open(
-                resolved_catalog_path,
-                resolved_artifact_path,
-                lexical_mode=lexical_mode,
-            )),
+            catalog_index,
             trace=trace,
+            startup_ms=startup_ms,
         )
 
     def reset(self, session_id: str, user_profile: dict[str, object]) -> None:

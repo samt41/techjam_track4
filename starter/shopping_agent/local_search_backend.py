@@ -69,6 +69,10 @@ class LocalProductSearchBackend:
     def catalog_fingerprint(self) -> str:
         return self._artifacts.manifest.catalog_sha256
 
+    @property
+    def manifest(self):
+        return self._artifacts.manifest
+
     def search(self, request: SearchRequest) -> SearchResult:
         request.validate()
         if request.route in (

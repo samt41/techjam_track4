@@ -16,6 +16,7 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.search_backend import (
     ProductSearchBackend,
     SearchRequest,
+    SearchResult,
     StructuredFilter,
 )
 
@@ -252,9 +253,17 @@ def execute_search_plan(
     backend: ProductSearchBackend,
     plan: PlannedSearch,
 ) -> tuple[ProductCandidate, ...]:
+    candidates, _ = execute_search_plan_traced(backend, plan)
+    return candidates
+
+
+def execute_search_plan_traced(
+    backend: ProductSearchBackend,
+    plan: PlannedSearch,
+) -> tuple[tuple[ProductCandidate, ...], "SearchResult"]:
     result = backend.search(plan.request)
     route_weight = _ROUTE_WEIGHTS[plan.request.route]
-    return tuple(
+    candidates = tuple(
         ProductCandidate(
             parent_asin=hit.parent_asin,
             evidence=(RouteEvidence(
@@ -266,3 +275,4 @@ def execute_search_plan(
         )
         for hit in result.hits
     )
+    return candidates, result
