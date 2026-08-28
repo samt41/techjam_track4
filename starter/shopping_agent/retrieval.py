@@ -53,7 +53,7 @@ class PlannedSearch:
 class RetrievalPlanner:
     def __init__(
         self,
-        route_limit: int = 200,
+        route_limit: int = 1_000,
         route_work_limit: int = 250_000,
     ) -> None:
         self._route_limit = route_limit

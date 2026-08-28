@@ -22,11 +22,12 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.search_backend import ProductSearchBackend
 
 
-# The strict route pool can hold up to the retrieval route limit (~1,000)
-# candidates. Products fetch and belief scoring are linear in this size and the
-# entropy question model is quadratic, so both consume a bounded top-N slice by
-# fused route evidence. This is the plan's bounded strict-ranking population.
-_POPULATION_CAP = 200
+# Products fetch and belief scoring are linear in the candidate pool, so the
+# whole SQL-shortlisted strict population is scored — the SQLite backend exists
+# precisely so recall is not truncated to a small set. Only the quadratic
+# entropy question model is separately bounded (see clarification._POPULATION_CAP).
+# A generous safety ceiling still guards against a pathological unfiltered route.
+_POPULATION_CAP = 5_000
 
 
 class EligibilityGate:

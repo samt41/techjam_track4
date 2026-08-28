@@ -57,6 +57,33 @@ class ConstraintExtractorTest(unittest.TestCase):
         self.addCleanup(index.close)
         return index
 
+    def test_common_word_metadata_values_do_not_become_constraints(self) -> None:
+        # The catalog contains junk single-word metadata values that collide
+        # with ordinary English ("key" as a brand, "m"/"a" as a color). These
+        # must not be extracted from incidental sentence words, or they pollute
+        # the lexical query and bury the true target.
+        products = sample_products()
+        products[0]["details"] = {"material": "leather", "color": "black"}
+        products[0]["store"] = "key"
+        products[1]["details"] = {"material": "leather", "color": "m"}
+        index = self.open_index(products)
+        extractor = ConstraintExtractor(index)
+
+        updates = extractor.extract(
+            "I need leather wallets. A key requirement is durability.",
+            turn=1,
+            asked_attribute=None,
+        )
+        values = {
+            (update.attribute, update.value)
+            for update in updates
+            if update.value is not None
+        }
+
+        self.assertNotIn((Attribute.BRAND, "key"), values)
+        self.assertNotIn((Attribute.COLOR, "m"), values)
+        self.assertIn((Attribute.MATERIAL, "leather"), values)
+
     def test_negation_and_override_are_distinct_updates(self) -> None:
         updates = self.extractor.extract(
             "Actually ignore leather; I need canvas",

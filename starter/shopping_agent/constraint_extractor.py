@@ -53,9 +53,23 @@ _ATTRIBUTE_PRIORITY = (
     Attribute.FEATURE,
     Attribute.USE_CASE,
 )
+# Single-word values that also appear as junk metadata in the catalog (a brand
+# literally named "key", a color "m", a feature "no"). Matching these from
+# incidental sentence words manufactures false constraints that pollute the
+# lexical query, so they are never extracted as standalone metadata mentions.
+# SIZE is exempted at the call site, so "a"/"m"/"s"/"l"/"xl" still parse as sizes.
 _UNSAFE_METADATA_TOKENS = frozenset({
+    # articles, conjunctions, prepositions, pronouns
     "a", "an", "and", "but", "for", "i", "in", "is", "it", "me", "my",
-    "of", "on", "or", "the", "to",
+    "of", "on", "or", "the", "to", "at", "as", "be", "by", "if", "so",
+    "no", "not", "with", "without", "that", "this", "these", "those",
+    # single letters that are junk catalog values outside SIZE
+    "m", "s", "l", "b", "c", "d", "e", "f", "g", "h", "j", "k", "n",
+    "o", "p", "q", "r", "t", "u", "v", "w", "x", "y", "z",
+    # common request words that collide with junk brand/feature values
+    "key", "new", "set", "one", "two", "need", "want", "looking",
+    "requirement", "prefer", "preference", "additional", "specific",
+    "matters", "quality", "please", "judgment", "something", "options",
 })
 
 
