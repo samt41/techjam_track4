@@ -76,6 +76,8 @@ class LocalProductSearchBackend:
             RetrievalRoute.EXPANDED_FTS,
         ):
             return self._search_lexical(request)
+        if request.route is RetrievalRoute.COUNTERFACTUAL and request.lexical_terms:
+            return self._search_lexical(request)
         return self._search_quality(request)
 
     def _search_quality(self, request: SearchRequest) -> SearchResult:

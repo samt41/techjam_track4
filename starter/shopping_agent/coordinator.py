@@ -27,7 +27,12 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import ProductRanker
 from starter.shopping_agent.response import ResponseValidator, recommendation_message
-from starter.shopping_agent.retrieval import RetrievalPlanner, execute_search_plan
+from starter.shopping_agent.retrieval import (
+    RetrievalPlanner,
+    build_reliabilities,
+    execute_search_plan,
+    order_relaxations,
+)
 
 
 @dataclass(slots=True)
@@ -134,6 +139,16 @@ class TurnCoordinator:
             shown_product_ids=shown_product_ids,
             top_k=top_k,
         )
+        if len(recommendations) < top_k:
+            recommendations = self._fill_tail(
+                session_id,
+                turn,
+                intent,
+                strict_candidates,
+                strict_total=len(recommendations),
+                shown_product_ids=shown_product_ids,
+                top_k=top_k,
+            )
         self._record(
             session_id,
             turn,
@@ -246,6 +261,60 @@ class TurnCoordinator:
             ),
             recommendations=recommendations,
         )
+
+    def _fill_tail(
+        self,
+        session_id: str,
+        turn: int,
+        intent,
+        strict_candidates,
+        strict_total: int,
+        shown_product_ids,
+        top_k: int,
+    ):
+        ordered = order_relaxations(
+            build_reliabilities(intent),
+            strict_total=strict_total,
+            top_k=top_k,
+        )
+        combined = list(strict_candidates)
+        recommendations = self._ranker.rank(
+            tuple(combined),
+            intent,
+            shown_product_ids=shown_product_ids,
+            top_k=top_k,
+        )
+        for plan in self._planner.counterfactuals(intent, ordered, top_k):
+            if len(recommendations) >= top_k:
+                break
+            counterfactual_candidates = execute_search_plan(
+                self._catalog_index.backend,
+                plan,
+            )
+            self._record(
+                session_id,
+                turn,
+                TraceEventType.ROUTE,
+                (
+                    TraceReason.COUNTERFACTUAL_RESULTS
+                    if counterfactual_candidates
+                    else TraceReason.SPARSE_STRICT_POOL
+                ),
+                plan.request.route,
+                None,
+                len(counterfactual_candidates),
+                0,
+                intent.intent_version,
+                0.0,
+            )
+            combined.extend(counterfactual_candidates)
+            recommendations = self._ranker.rank(
+                tuple(combined),
+                intent,
+                shown_product_ids=shown_product_ids,
+                top_k=top_k,
+            )
+        return recommendations
 
     def _record(
         self,

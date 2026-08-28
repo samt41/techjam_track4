@@ -9,6 +9,7 @@ from starter.shopping_agent.local_search_backend import LocalProductSearchBacken
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
+    ConstraintReliability,
     EvidenceKind,
     PreferenceUpdate,
     ProductCandidate,
@@ -20,8 +21,39 @@ from starter.shopping_agent.models import (
 )
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import EligibilityGate, ProductRanker
-from starter.shopping_agent.retrieval import RetrievalPlanner, execute_search_plan
+from starter.shopping_agent.retrieval import (
+    RetrievalPlanner,
+    counterfactual_plan,
+    execute_search_plan,
+    order_relaxations,
+)
 from tests.fixtures import build_test_artifacts, sample_products
+
+
+def reliability(
+    constraint_id: str,
+    *,
+    firm: bool,
+    confidence: float = 0.95,
+    catalog_coverage: int = 100,
+    pool_collapse: bool = False,
+    confirmation_count: int = 1,
+    recovered_count: int = 0,
+) -> ConstraintReliability:
+    return ConstraintReliability(
+        constraint_id=constraint_id,
+        confidence=confidence,
+        evidence_kind=(
+            EvidenceKind.EXPLICIT_REQUIREMENT
+            if firm
+            else EvidenceKind.PROVISIONAL_PREFERENCE
+        ),
+        firm=firm,
+        catalog_coverage=catalog_coverage,
+        pool_collapse=pool_collapse,
+        confirmation_count=confirmation_count,
+        recovered_count=recovered_count,
+    )
 
 
 def preference(
@@ -158,7 +190,7 @@ class RetrievalRankingTest(unittest.TestCase):
         self.assertEqual(history.shown_for(intent_version=1), frozenset({"A", "B"}))
         self.assertEqual(history.shown_for(intent_version=2), frozenset())
 
-    def test_ranker_places_every_strict_product_before_exploration(self) -> None:
+    def test_nine_strict_products_keep_all_nine_positions(self) -> None:
         evidence = RouteEvidence(
             route=RetrievalRoute.EXACT_FTS,
             rank=1,
@@ -183,6 +215,67 @@ class RetrievalRankingTest(unittest.TestCase):
         self.assertEqual(sum(item.exact_match for item in ranked), 9)
         self.assertFalse(ranked[-1].exact_match)
         self.assertTrue(all(item.exact_match for item in ranked[:-1]))
+
+    def test_order_relaxations_gates_firm_on_zero_strict_and_prefers_uncertain(self) -> None:
+        firm = reliability("firm", firm=True)
+        uncertain = reliability("uncertain", firm=False)
+
+        self.assertEqual(
+            order_relaxations((firm, uncertain), strict_total=10, top_k=10),
+            (),
+        )
+        self.assertEqual(
+            [item.constraint_id for item in order_relaxations(
+                (firm, uncertain), strict_total=5, top_k=10,
+            )],
+            ["uncertain"],
+        )
+        self.assertEqual(
+            [item.constraint_id for item in order_relaxations(
+                (firm, uncertain), strict_total=0, top_k=10,
+            )],
+            ["uncertain", "firm"],
+        )
+
+    def test_order_relaxations_breaks_ties_by_pool_collapse_then_confidence(self) -> None:
+        collapsing = reliability("collapse", firm=False, confidence=0.95, pool_collapse=True)
+        low_confidence = reliability("low", firm=False, confidence=0.90, pool_collapse=False)
+        high_confidence = reliability("high", firm=False, confidence=0.99, pool_collapse=False)
+
+        ordered = order_relaxations(
+            (low_confidence, high_confidence, collapsing),
+            strict_total=0,
+            top_k=10,
+        )
+
+        self.assertEqual(
+            [item.constraint_id for item in ordered],
+            ["collapse", "low", "high"],
+        )
+
+    def test_counterfactual_plan_relaxes_one_constraint_and_keeps_others(self) -> None:
+        intent = PreferenceLedger().apply((
+            preference(Attribute.CATEGORY, "boots"),
+            preference(Attribute.MATERIAL, "leather"),
+        ))
+        material = next(
+            constraint
+            for constraint in intent.active_constraints
+            if constraint.attribute is Attribute.MATERIAL
+        )
+
+        plan = counterfactual_plan(intent, material, result_limit=10, work_limit=50_000)
+
+        self.assertEqual(plan.relaxed_constraint_id, material.constraint_id)
+        self.assertIs(plan.request.route, RetrievalRoute.COUNTERFACTUAL)
+        self.assertEqual(
+            {structured_filter.constraint_id for structured_filter in plan.request.filters},
+            {
+                constraint.constraint_id
+                for constraint in intent.active_constraints
+                if constraint.constraint_id != material.constraint_id
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -97,6 +97,24 @@ def generic_override_products() -> list[dict[str, object]]:
     ]
 
 
+def zero_strict_products() -> list[dict[str, object]]:
+    return [
+        {
+            "parent_asin": f"LEATHER-{number:02d}",
+            "title": f"Leather boot {number}",
+            "features": ["durable"],
+            "details": {"material": "leather", "color": "black"},
+            "description": ["Everyday boot"],
+            "categories": ["Clothing", "Boots"],
+            "store": "Example",
+            "average_rating": 4.5,
+            "rating_number": 100 - number,
+            "price": 60.0 + number,
+        }
+        for number in range(1, 13)
+    ]
+
+
 class AgentIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -298,6 +316,43 @@ class AgentIntegrationTest(unittest.TestCase):
             for item in response["recommendations"]
         ))
         self.assertNotIn("near match", response["message"].lower())
+
+    def test_zero_strict_pool_relaxes_hard_requirement_as_last_resort(self) -> None:
+        catalog_path, artifact_path = self.product_set(
+            "zero-strict",
+            zero_strict_products(),
+        )
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
+        self.addCleanup(agent.close)
+        agent.reset("last-resort", PROFILE)
+
+        response = agent.respond(
+            "last-resort",
+            "Boots that must be leather under 20 dollars",
+            1,
+            10,
+        )
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertTrue(all(
+            item["parent_asin"].startswith("LEATHER-")
+            for item in response["recommendations"]
+        ))
+        self.assertIn("near match", response["message"].lower())
+        self.assertIn("budget", response["message"].lower())
+
+    def test_exclusion_is_never_relaxed_even_with_zero_strict(self) -> None:
+        catalog_path, artifact_path = self.product_set(
+            "exclusion-only",
+            zero_strict_products(),
+        )
+        agent = Agent(catalog_path=catalog_path, artifact_path=artifact_path)
+        self.addCleanup(agent.close)
+        agent.reset("exclusion", PROFILE)
+
+        response = agent.respond("exclusion", "Boots, but not leather", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 0)
 
 
 if __name__ == "__main__":

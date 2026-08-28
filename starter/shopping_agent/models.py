@@ -219,6 +219,18 @@ class ClarificationDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class ConstraintReliability:
+    constraint_id: str
+    confidence: float
+    evidence_kind: EvidenceKind
+    firm: bool
+    catalog_coverage: int
+    pool_collapse: bool
+    confirmation_count: int
+    recovered_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class RankedRecommendation:
     parent_asin: str
     score: float
