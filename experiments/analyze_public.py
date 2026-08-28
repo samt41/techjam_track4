@@ -72,8 +72,11 @@ def analyze_session(
     sample_id = str(outcome.get("sample_id", ""))
     scenario_type = str(outcome.get("scenario_type", ""))
 
-    active_constraints = _latest_active_constraints(trace)
-    incompatible = _incompatible_constraint(target, active_constraints)
+    # Only hard filters can reject a target. Soft constraints influence ranking
+    # but never eligibility, so attribution must consider the hard filter set
+    # actually pushed into retrieval — not every active constraint.
+    hard_filter_ids = _applied_hard_filter_ids(trace)
+    incompatible = _incompatible_constraint(target, hard_filter_ids)
     rejected_target = any(
         target.parent_asin in event.get("rejected_product_ids", [])
         for event in trace
@@ -135,6 +138,19 @@ def analyze_session(
             "target is eligible but never entered the bounded pool",
         )
     return build(MissReason.UNKNOWN, None, "no dominant cause identified")
+
+
+def _applied_hard_filter_ids(trace: tuple[dict, ...]) -> tuple[str, ...]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for event in trace:
+        if event.get("event_type") != "retrieval":
+            continue
+        for constraint_id in event.get("filter_constraint_ids", []):
+            if constraint_id not in seen:
+                seen.add(constraint_id)
+                ids.append(constraint_id)
+    return tuple(ids)
 
 
 def _latest_active_constraints(trace: tuple[dict, ...]) -> tuple[str, ...]:

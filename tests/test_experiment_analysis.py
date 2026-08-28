@@ -45,6 +45,7 @@ def retrieval_event(
     reason: str = "completed",
     returned: int = 5,
     total: int = 5,
+    filter_constraint_ids: tuple[str, ...] = (),
 ) -> dict:
     return {
         "event_type": "retrieval",
@@ -53,7 +54,7 @@ def retrieval_event(
         "intent_version": 1,
         "route": route,
         "terms": [],
-        "filter_constraint_ids": [],
+        "filter_constraint_ids": list(filter_constraint_ids),
         "total_matches": total,
         "total_relation": "exact",
         "returned_matches": returned,
@@ -128,6 +129,10 @@ class AnalyzeSessionTest(unittest.TestCase):
             target=target_profile("TARGET", material="canvas"),
             trace=(
                 interpretation_event((constraint_id,)),
+                retrieval_event(
+                    "metadata",
+                    filter_constraint_ids=(constraint_id,),
+                ),
                 constraint_event(("TARGET",)),
                 slate_event(("OTHER-1",)),
             ),
@@ -144,7 +149,12 @@ class AnalyzeSessionTest(unittest.TestCase):
             target=target_profile("TARGET", material="canvas"),
             trace=(
                 interpretation_event((constraint_id,)),
-                retrieval_event("metadata", returned=3, total=3),
+                retrieval_event(
+                    "metadata",
+                    returned=3,
+                    total=3,
+                    filter_constraint_ids=(constraint_id,),
+                ),
                 slate_event(("OTHER-1",)),
             ),
             outcome=miss_outcome(),
@@ -152,6 +162,24 @@ class AnalyzeSessionTest(unittest.TestCase):
 
         self.assertIs(failure.primary_reason, MissReason.TARGET_REJECTED)
         self.assertEqual(failure.constraint_id, constraint_id)
+
+    def test_soft_constraint_does_not_count_as_rejection(self) -> None:
+        # A soft constraint (never a hard filter) must not attribute the miss to
+        # rejection even if the target's metadata differs from its value.
+        soft_id = "t1:brand:equals:not:include:1"
+        failure = analyze_session(
+            target=target_profile("TARGET", material="canvas"),
+            trace=(
+                interpretation_event((soft_id,)),
+                retrieval_event("metadata", returned=3, total=3),
+                belief_event(("TARGET", "OTHER-1")),
+                slate_event(("OTHER-1",)),
+            ),
+            outcome=miss_outcome(),
+        )
+
+        self.assertIsNot(failure.primary_reason, MissReason.TARGET_REJECTED)
+        self.assertIs(failure.primary_reason, MissReason.TARGET_RANKED_BELOW_TEN)
 
     def test_target_in_population_but_below_ten_is_ranked_out(self) -> None:
         failure = analyze_session(
