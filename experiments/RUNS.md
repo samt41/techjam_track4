@@ -49,6 +49,24 @@ only way to return a non-empty slate. This preserves the excluded-prefix
 zero-strict guarantee at negligible cost while never running exploration on the
 common path where it does nothing.
 
+**Forced-fallback (no-FTS) verification.** Running the full public set with FTS5
+disabled (`--lexical-mode fallback`, deterministic TF-IDF postings path) scored
+HitRate@10 `0.75` / TechnicalScore `0.599` — near-parity with the FTS engine —
+with all 200 sessions completing, no network events, and **every one of the 50
+misses attributed to a concrete reason**. This confirms the agent runs fully
+offline without FTS5.
+
+## Performance notes
+
+- Backend open validates the catalog fingerprint and artifact sizes but does not
+  re-hash the ~575 MB database on every startup; measured backend open dropped to
+  ~45 ms.
+- `get_products` caches materialized records for the life of the backend, so
+  rotation-overlapping candidates are not re-fetched or re-parsed across turns.
+- Continuous `tracemalloc` allocation tracking is disabled by default; it was the
+  dominant cost of traced experiment runs and is diagnostic-only.
+- The SQLite read connection is memory-mapped (1 GiB) with a 128 MiB page cache.
+
 ## Catalog artifact builds
 
 | Catalog | Products | Catalog size | Database size | Manifest size | Terms | FTS5 | Build time |
