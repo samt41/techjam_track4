@@ -42,6 +42,7 @@ class TraceEvent:
     recommendation_count: int
     intent_version: int
     elapsed_ms: float
+    product_ids: tuple[str, ...] = ()
 
 
 class EvaluationTrace(Protocol):

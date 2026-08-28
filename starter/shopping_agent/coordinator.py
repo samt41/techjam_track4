@@ -220,6 +220,7 @@ class TurnCoordinator:
             len(recommendations),
             intent.intent_version,
             0.0,
+            tuple(item.parent_asin for item in recommendations),
         )
         elapsed_ms = (perf_counter() - started) * 1000.0
         self._record(
@@ -258,6 +259,7 @@ class TurnCoordinator:
         recommendation_count: int,
         intent_version: int,
         elapsed_ms: float,
+        product_ids: tuple[str, ...] = (),
     ) -> None:
         self._trace.record(TraceEvent(
             session_id=session_id,
@@ -270,4 +272,5 @@ class TurnCoordinator:
             recommendation_count=recommendation_count,
             intent_version=intent_version,
             elapsed_ms=round(elapsed_ms, 3),
+            product_ids=product_ids,
         ))

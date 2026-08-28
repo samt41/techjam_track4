@@ -56,6 +56,7 @@ class EvaluationTraceTest(unittest.TestCase):
         self.assertEqual(payload["reason"], "empty_strict_pool")
         self.assertEqual(payload["event_type"], "route")
         self.assertEqual(payload["route"], "exact_fts")
+        self.assertEqual(payload["product_ids"], [])
         self.assertEqual(
             set(payload),
             {
@@ -69,6 +70,7 @@ class EvaluationTraceTest(unittest.TestCase):
                 "recommendation_count",
                 "intent_version",
                 "elapsed_ms",
+                "product_ids",
             },
         )
 
@@ -122,15 +124,21 @@ class EvaluationTraceTest(unittest.TestCase):
         self.addCleanup(agent.close)
         agent.reset("trace-session", {"summary": "test"})
 
-        agent.respond("trace-session", "I need boots", 1, 10)
+        response = agent.respond("trace-session", "I need boots", 1, 10)
 
-        event_types = {
-            json.loads(line)["event_type"]
+        events = tuple(
+            json.loads(line)
             for line in trace_path.read_text(encoding="utf-8").splitlines()
-        }
+        )
+        event_types = {event["event_type"] for event in events}
         self.assertTrue(
             {"route", "filtering", "question", "slate", "latency"}
             <= event_types
+        )
+        slate = next(event for event in events if event["event_type"] == "slate")
+        self.assertEqual(
+            slate["product_ids"],
+            [item["parent_asin"] for item in response["recommendations"]],
         )
 
 
