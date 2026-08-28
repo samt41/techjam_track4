@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from starter.shopping_agent.models import (
     Attribute,
@@ -35,94 +36,162 @@ _PROMPTS = {
     Attribute.BRAND: "Do you have a preferred brand?",
     Attribute.FEATURE: "Which feature matters most to you?",
 }
+_UNKNOWN = "unknown"
+_NO_PREFERENCE = "no_preference"
 
 
-class QuestionValueEstimator:
-    def score(
+@dataclass(frozen=True, slots=True)
+class QuestionModelConfiguration:
+    answerability: dict[Attribute, float]
+    decline_probability: float
+    response_noise: float
+    turn_cost: float
+    decision_threshold: float
+
+    @classmethod
+    def default(cls) -> "QuestionModelConfiguration":
+        return cls(
+            answerability=dict(_ANSWERABILITY),
+            decline_probability=0.15,
+            response_noise=0.05,
+            turn_cost=0.05,
+            decision_threshold=0.15,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "decline_probability": self.decline_probability,
+            "response_noise": self.response_noise,
+            "turn_cost": self.turn_cost,
+            "decision_threshold": self.decision_threshold,
+        }
+
+
+class PosteriorQuestionModel:
+    def __init__(self, configuration: QuestionModelConfiguration) -> None:
+        self._configuration = configuration
+
+    def score_population(
         self,
-        attribute: Attribute,
-        weighted_values: tuple[tuple[str | None, float], ...],
-    ) -> QuestionCandidate:
-        positive_values = tuple(
-            (value, max(0.0, weight))
-            for value, weight in weighted_values
-            if weight > 0.0
-        )
-        total_weight = sum(weight for _, weight in positive_values)
-        if total_weight <= 0.0:
-            return QuestionCandidate(
-                attribute=attribute,
-                information_gain=0.0,
-                effective_possibilities=1.0,
-                answerability=_ANSWERABILITY.get(attribute, 0.0),
-                coverage=0.0,
-                relevance=0.0,
-                score=-0.05,
-                focus_value=None,
-            )
-
-        bucket_weights: dict[str, float] = {}
-        for value, weight in positive_values:
-            bucket = value or "unknown"
-            bucket_weights[bucket] = bucket_weights.get(bucket, 0.0) + weight
-        probabilities = tuple(
-            weight / total_weight for weight in bucket_weights.values()
-        )
-        entropy = -sum(
-            probability * math.log2(probability)
-            for probability in probabilities
-            if probability > 0.0
-        )
-        unknown_weight = bucket_weights.get("unknown", 0.0)
-        coverage = 1.0 - unknown_weight / total_weight
-        answerability = _ANSWERABILITY.get(attribute, 0.0)
-        relevance = 1.0
-        question_score = (
-            entropy * answerability * coverage * relevance - 0.05
-        )
-        known_buckets = tuple(
-            (value, weight)
-            for value, weight in bucket_weights.items()
-            if value != "unknown"
-        )
-        focus_value = (
-            max(known_buckets, key=lambda item: (item[1], item[0]))[0]
-            if known_buckets
-            else None
-        )
-        return QuestionCandidate(
-            attribute=attribute,
-            information_gain=entropy,
-            effective_possibilities=2.0 ** entropy,
-            answerability=answerability,
-            coverage=coverage,
-            relevance=relevance,
-            score=question_score,
-            focus_value=focus_value,
-        )
-
-    def score_candidates(
-        self,
-        products: tuple[ProductRecord, ...],
-        weights: tuple[float, ...],
-        intent: ShoppingIntent,
+        population: tuple[tuple[float, ProductRecord], ...],
     ) -> tuple[QuestionCandidate, ...]:
-        if len(products) != len(weights):
-            raise ValueError("products and weights must have equal lengths")
+        total_mass = sum(mass for mass, _ in population)
+        if total_mass <= 0.0:
+            return ()
+        normalized = tuple(
+            (mass / total_mass, product) for mass, product in population
+        )
         candidates = tuple(
-            self.score(
-                attribute,
-                tuple(
-                    (_attribute_value(product, attribute), weight)
-                    for product, weight in zip(products, weights, strict=True)
-                ),
-            )
+            self._score_attribute(attribute, normalized)
             for attribute in _QUESTION_ATTRIBUTES
         )
         return tuple(sorted(
             candidates,
             key=lambda candidate: (-candidate.score, candidate.attribute.value),
         ))
+
+    def _score_attribute(
+        self,
+        attribute: Attribute,
+        population: tuple[tuple[float, ProductRecord], ...],
+    ) -> QuestionCandidate:
+        configuration = self._configuration
+        # Bucket posterior mass by canonical attribute value (or unknown).
+        value_mass: dict[str, float] = {}
+        for posterior, product in population:
+            value = _attribute_value(product, attribute) or _UNKNOWN
+            value_mass[value] = value_mass.get(value, 0.0) + posterior
+        unknown_mass = value_mass.get(_UNKNOWN, 0.0)
+        known_mass = 1.0 - unknown_mass
+        coverage = known_mass
+        answerability = configuration.answerability.get(attribute, 0.0)
+
+        current_entropy = _entropy(
+            tuple(posterior for posterior, _ in population)
+        )
+
+        known_values = tuple(
+            value for value in value_mass if value != _UNKNOWN
+        )
+        if not known_values or known_mass <= 0.0:
+            return QuestionCandidate(
+                attribute=attribute,
+                information_gain=0.0,
+                current_entropy=current_entropy,
+                conditional_entropy=current_entropy,
+                effective_possibilities=1.0,
+                answerability=answerability,
+                coverage=coverage,
+                relevance=1.0,
+                score=-configuration.turn_cost,
+                focus_value=None,
+            )
+
+        # Answer distribution: decline keeps the current posterior; the rest of
+        # the mass is split across known values in proportion to their mass.
+        answer_probability: dict[str, float] = {
+            _NO_PREFERENCE: configuration.decline_probability,
+        }
+        remaining = 1.0 - configuration.decline_probability
+        for value in known_values:
+            answer_probability[value] = remaining * (value_mass[value] / known_mass)
+
+        conditional_entropy = 0.0
+        for answer, probability in answer_probability.items():
+            if probability <= 0.0:
+                continue
+            conditional_posteriors = self._condition(
+                population,
+                attribute,
+                answer,
+            )
+            conditional_entropy += probability * _entropy(conditional_posteriors)
+
+        information_gain = max(0.0, current_entropy - conditional_entropy)
+        score = (
+            information_gain * answerability * coverage
+            - configuration.turn_cost
+        )
+        focus_value = max(
+            known_values,
+            key=lambda value: (value_mass[value], value),
+        )
+        return QuestionCandidate(
+            attribute=attribute,
+            information_gain=information_gain,
+            current_entropy=current_entropy,
+            conditional_entropy=conditional_entropy,
+            effective_possibilities=2.0 ** information_gain,
+            answerability=answerability,
+            coverage=coverage,
+            relevance=1.0,
+            score=score,
+            focus_value=focus_value,
+        )
+
+    def _condition(
+        self,
+        population: tuple[tuple[float, ProductRecord], ...],
+        attribute: Attribute,
+        answer: str,
+    ) -> tuple[float, ...]:
+        if answer == _NO_PREFERENCE:
+            return tuple(posterior for posterior, _ in population)
+        noise = self._configuration.response_noise
+        weighted: list[float] = []
+        for posterior, product in population:
+            value = _attribute_value(product, attribute)
+            if value is None:
+                likelihood = noise
+            elif value == answer or answer in value or value in answer:
+                likelihood = 1.0 - noise
+            else:
+                likelihood = noise
+            weighted.append(posterior * likelihood)
+        total = sum(weighted)
+        if total <= 0.0:
+            return tuple(posterior for posterior, _ in population)
+        return tuple(value / total for value in weighted)
 
 
 class ClarificationPolicy:
@@ -161,6 +230,19 @@ class ClarificationPolicy:
             prompt=_PROMPTS[best.attribute],
             expected_information_gain=best.information_gain,
         )
+
+
+def _entropy(distribution: tuple[float, ...]) -> float:
+    total = sum(distribution)
+    if total <= 0.0:
+        return 0.0
+    entropy = 0.0
+    for value in distribution:
+        if value <= 0.0:
+            continue
+        probability = value / total
+        entropy -= probability * math.log2(probability)
+    return entropy
 
 
 def _attribute_value(product: ProductRecord, attribute: Attribute) -> str | None:

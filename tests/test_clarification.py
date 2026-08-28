@@ -4,13 +4,15 @@ import unittest
 
 from starter.shopping_agent.clarification import (
     ClarificationPolicy,
-    QuestionValueEstimator,
+    PosteriorQuestionModel,
+    QuestionModelConfiguration,
 )
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
     EvidenceKind,
     PreferenceUpdate,
+    ProductRecord,
     QuestionCandidate,
     Strength,
     UpdateAction,
@@ -18,10 +20,15 @@ from starter.shopping_agent.models import (
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 
 
-def candidate(attribute: Attribute, score: float = 0.8) -> QuestionCandidate:
+CONFIG = QuestionModelConfiguration.default()
+
+
+def question(attribute: Attribute, score: float = 0.8) -> QuestionCandidate:
     return QuestionCandidate(
         attribute=attribute,
         information_gain=1.0,
+        current_entropy=1.0,
+        conditional_entropy=0.0,
         effective_possibilities=2.0,
         answerability=1.0,
         coverage=1.0,
@@ -47,38 +54,109 @@ def preference(attribute: Attribute, value: str) -> PreferenceUpdate:
     )
 
 
-class QuestionValueEstimatorTest(unittest.TestCase):
-    def test_balanced_attribute_has_more_information_than_skewed_attribute(self) -> None:
-        estimator = QuestionValueEstimator()
-        balanced = estimator.score(
-            Attribute.COLOR,
-            weighted_values=(
-                ("red", 0.25),
-                ("blue", 0.25),
-                ("red", 0.25),
-                ("blue", 0.25),
-            ),
-        )
-        skewed = estimator.score(
-            Attribute.MATERIAL,
-            weighted_values=(
-                ("cotton", 0.25),
-                ("cotton", 0.25),
-                ("cotton", 0.25),
-                ("linen", 0.25),
-            ),
+def _product(parent_asin: str, color: str) -> ProductRecord:
+    return ProductRecord(
+        parent_asin=parent_asin,
+        title=parent_asin,
+        categories=("Boots",),
+        features=("durable",),
+        description="boot",
+        details=(("color", color),),
+        store="Example",
+        price=80.0,
+        average_rating=4.5,
+        rating_number=100,
+        searchable_text=f"{color} boot",
+    )
+
+
+def balanced_twenty_population() -> tuple[tuple[float, ProductRecord], ...]:
+    """Top ten all black, but the full posterior population is balanced."""
+    population: list[tuple[float, ProductRecord]] = []
+    for number in range(10):
+        population.append((0.06, _product(f"BLACK-{number:02d}", "black")))
+    for number in range(10):
+        population.append((0.04, _product(f"BLUE-{number:02d}", "blue")))
+    return tuple(population)
+
+
+def choose_from_beliefs(
+    population: tuple[tuple[float, ProductRecord], ...],
+    final_slate_size: int,
+) -> QuestionCandidate:
+    candidates = PosteriorQuestionModel(CONFIG).score_population(population)
+    return max(
+        candidates,
+        key=lambda candidate: (candidate.score, candidate.attribute.value),
+    )
+
+
+class PosteriorQuestionModelTest(unittest.TestCase):
+    def test_question_uses_preliminary_strict_beliefs_not_final_slate(self) -> None:
+        decision = choose_from_beliefs(
+            balanced_twenty_population(),
+            final_slate_size=10,
         )
 
-        self.assertGreater(balanced.information_gain, skewed.information_gain)
-        self.assertAlmostEqual(balanced.effective_possibilities, 2.0)
+        self.assertIs(decision.attribute, Attribute.COLOR)
+        self.assertGreater(decision.information_gain, 0.0)
 
-    def test_unknown_bucket_reduces_coverage(self) -> None:
-        result = QuestionValueEstimator().score(
-            Attribute.SIZE,
-            weighted_values=(("medium", 0.5), (None, 0.5)),
+    def test_balanced_partition_has_more_gain_than_skewed(self) -> None:
+        model = PosteriorQuestionModel(CONFIG)
+        balanced = model.score_population((
+            (0.25, _product("A", "black")),
+            (0.25, _product("B", "blue")),
+            (0.25, _product("C", "black")),
+            (0.25, _product("D", "blue")),
+        ))
+        skewed = model.score_population((
+            (0.7, _product("A", "black")),
+            (0.1, _product("B", "blue")),
+            (0.1, _product("C", "black")),
+            (0.1, _product("D", "black")),
+        ))
+        balanced_color = next(c for c in balanced if c.attribute is Attribute.COLOR)
+        skewed_color = next(c for c in skewed if c.attribute is Attribute.COLOR)
+
+        self.assertGreater(
+            balanced_color.information_gain,
+            skewed_color.information_gain,
         )
 
-        self.assertEqual(result.coverage, 0.5)
+    def test_unknown_mass_reduces_coverage(self) -> None:
+        model = PosteriorQuestionModel(CONFIG)
+        candidates = model.score_population((
+            (0.5, _product("A", "black")),
+            (0.5, ProductRecord(
+                parent_asin="B",
+                title="B",
+                categories=("Boots",),
+                features=("durable",),
+                description="boot",
+                details=(),
+                store="Example",
+                price=80.0,
+                average_rating=4.5,
+                rating_number=100,
+                searchable_text="boot",
+            )),
+        ))
+        color = next(c for c in candidates if c.attribute is Attribute.COLOR)
+
+        self.assertAlmostEqual(color.coverage, 0.5)
+
+    def test_conditional_entropy_never_exceeds_current_entropy(self) -> None:
+        candidates = PosteriorQuestionModel(CONFIG).score_population(
+            balanced_twenty_population()
+        )
+
+        self.assertTrue(all(
+            candidate.conditional_entropy <= candidate.current_entropy + 1e-9
+            for candidate in candidates
+        ))
+
+    def test_empty_population_yields_no_candidates(self) -> None:
+        self.assertEqual(PosteriorQuestionModel(CONFIG).score_population(()), ())
 
 
 class ClarificationPolicyTest(unittest.TestCase):
@@ -101,7 +179,7 @@ class ClarificationPolicyTest(unittest.TestCase):
         ),))
 
         decision = ClarificationPolicy(threshold=0.1).choose(
-            (candidate(Attribute.COLOR, 0.9),),
+            (question(Attribute.COLOR, 0.9),),
             ledger.intent,
             turn=2,
         )
@@ -131,10 +209,10 @@ class ClarificationPolicyTest(unittest.TestCase):
 
         decision = ClarificationPolicy(threshold=0.1).choose(
             (
-                candidate(Attribute.COLOR, 0.9),
-                candidate(Attribute.MATERIAL, 0.8),
-                candidate(Attribute.SIZE, 0.7),
-                candidate(Attribute.STYLE, 0.6),
+                question(Attribute.COLOR, 0.9),
+                question(Attribute.MATERIAL, 0.8),
+                question(Attribute.SIZE, 0.7),
+                question(Attribute.STYLE, 0.6),
             ),
             ledger.intent,
             turn=2,
@@ -145,7 +223,7 @@ class ClarificationPolicyTest(unittest.TestCase):
 
     def test_policy_does_not_ask_on_final_turn(self) -> None:
         decision = ClarificationPolicy(threshold=0.1).choose(
-            (candidate(Attribute.COLOR),),
+            (question(Attribute.COLOR),),
             PreferenceLedger().intent,
             turn=10,
         )

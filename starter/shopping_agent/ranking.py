@@ -157,6 +157,51 @@ class ProductRanker:
         )
         return tuple((*strict, *exploratory)[:max(0, top_k)])
 
+    def strict_population(
+        self,
+        candidates: tuple[ProductCandidate, ...],
+        intent: ShoppingIntent,
+        profile: UserProfile | None = None,
+    ) -> tuple[tuple[float, ProductRecord], ...]:
+        """Preliminary strict belief population as (posterior, product) pairs.
+
+        Covers every strictly eligible candidate before slate truncation, so
+        question estimation sees the full posterior distribution rather than the
+        final top_k slate.
+        """
+        active_profile = profile or self._profile
+        evidence_by_id: dict[str, list[RouteEvidence]] = {}
+        for candidate in candidates:
+            if candidate.relaxed_constraint_id is not None:
+                continue
+            evidence_by_id.setdefault(candidate.parent_asin, []).extend(
+                candidate.evidence
+            )
+        if not evidence_by_id:
+            return ()
+        products = self._backend.get_products(tuple(evidence_by_id))
+        product_by_id = {product.parent_asin: product for product in products}
+        strict_entries: list[
+            tuple[str, str | None, float, ProductRecord, tuple[RouteEvidence, ...]]
+        ] = []
+        for parent_asin, evidence in evidence_by_id.items():
+            product = product_by_id.get(parent_asin)
+            if product is None:
+                continue
+            if not self._eligibility_gate.evaluate(
+                product,
+                intent.active_constraints,
+            ).eligible:
+                continue
+            strict_entries.append(
+                (parent_asin, None, 0.0, product, tuple(evidence))
+            )
+        posterior_by_id, _ = self._beliefs(strict_entries, intent, active_profile)
+        return tuple(
+            (posterior_by_id.get(parent_asin, 0.0), product)
+            for parent_asin, _, _, product, _ in strict_entries
+        )
+
     def _beliefs(
         self,
         strict_entries: list[

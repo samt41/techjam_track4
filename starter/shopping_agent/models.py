@@ -203,6 +203,8 @@ class EligibilityDecision:
 class QuestionCandidate:
     attribute: Attribute
     information_gain: float
+    current_entropy: float
+    conditional_entropy: float
     effective_possibilities: float
     answerability: float
     coverage: float

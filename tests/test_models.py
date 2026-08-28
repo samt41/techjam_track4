@@ -144,6 +144,8 @@ class PreferenceConstraintTest(unittest.TestCase):
         question = QuestionCandidate(
             attribute=Attribute.COLOR,
             information_gain=1.0,
+            current_entropy=1.0,
+            conditional_entropy=0.0,
             effective_possibilities=2.0,
             answerability=1.0,
             coverage=0.9,

@@ -6,7 +6,8 @@ from time import perf_counter
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.clarification import (
     ClarificationPolicy,
-    QuestionValueEstimator,
+    PosteriorQuestionModel,
+    QuestionModelConfiguration,
 )
 from starter.shopping_agent.constraint_extractor import ConstraintExtractor
 from starter.shopping_agent.diagnostics import (
@@ -55,7 +56,9 @@ class TurnCoordinator:
         self._planner = RetrievalPlanner()
         self._ranker = ProductRanker(catalog_index.backend)
         self._validator = ResponseValidator(catalog_index.backend)
-        self._question_estimator = QuestionValueEstimator()
+        self._question_model = PosteriorQuestionModel(
+            QuestionModelConfiguration.default()
+        )
         self._clarification_policy = ClarificationPolicy()
         self._sessions: dict[str, _SessionState] = {}
         self._closed = False
@@ -140,6 +143,22 @@ class TurnCoordinator:
             top_k=top_k,
             profile=state.profile,
         )
+        # Estimate the clarifying question from the full preliminary strict
+        # belief population before any counterfactual tail fill runs, so the
+        # question sees the true posterior spread rather than the final slate.
+        strict_population = self._ranker.strict_population(
+            strict_candidates,
+            intent,
+            profile=state.profile,
+        )
+        question_candidates = self._question_model.score_population(
+            strict_population
+        )
+        clarification = self._clarification_policy.choose(
+            question_candidates,
+            intent,
+            turn,
+        )
         if len(recommendations) < top_k:
             recommendations = self._fill_tail(
                 session_id,
@@ -167,21 +186,6 @@ class TurnCoordinator:
         state.history.record(
             intent.intent_version,
             tuple(item.parent_asin for item in recommendations),
-        )
-        products = tuple(
-            self._catalog_index.get_products(tuple(
-                item.parent_asin for item in recommendations
-            ))
-        )
-        question_candidates = self._question_estimator.score_candidates(
-            products,
-            tuple(max(item.score, 1e-12) for item in recommendations),
-            intent,
-        )
-        clarification = self._clarification_policy.choose(
-            question_candidates,
-            intent,
-            turn,
         )
         if clarification is not None:
             state.ledger.record_question(clarification.attribute)
