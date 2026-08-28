@@ -223,7 +223,7 @@ class TraceEventTest(unittest.TestCase):
         self.assertTrue(summary["code_revision"])
         self.assertIn("belief_configuration", summary)
         self.assertIn("question_configuration", summary)
-        self.assertEqual(summary["exploration"], "tail-only")
+        self.assertEqual(summary["exploration"], "disabled")
 
         failure_lines = (
             (run_directory / "failures.jsonl")

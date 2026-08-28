@@ -2,14 +2,52 @@
 
 Only the best run for each meaningful implementation class is retained. Generated run directories are local artifacts and are not committed.
 
+### Historical (pre-SQLite, in-memory catalog)
+
+These numbers were measured on the original in-memory catalog. The Task 5 SQLite
+artifact migration replaced that engine and its retrieval/ranking code, so these
+are **not comparable** to the artifact-backed runs below and are retained only as
+history. The `0.785` "accuracy reference" in particular is **not reproducible** on
+the current engine and must not be treated as an acceptance gate.
+
 | Class | HitRate@10 | MRR | MTTC | TechnicalScore | Runtime | Decision |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | Organizer BM25 baseline | 0.125 | 0.068034 | 9.81 | 0.10671 | not recorded | Frozen reference |
-| Strict multi-route | 0.315 | 0.149054 | 7.98 | 0.262616 | 106.275 s | Superseded by rotation |
-| Slate rotation | 0.71 | 0.259663 | 5.71 | 0.538699 | 156.745 s | Superseded by clarification |
-| Information-gain clarification | 0.785 | 0.38656 | 4.43 | 0.639868 | 185.261 s | Accuracy reference |
-| Unconditional counterfactual | 0.77 | 0.452417 | 4.875 | 0.643225 | 323.590 s | Rejected: small score gain, slower, lower hit rate |
-| Gated sparse-pool counterfactual | 0.785 | 0.38656 | 4.43 | 0.639868 | 185.492 s | Retained: sparse-pool safety with no metric regression |
+| Strict multi-route (in-memory) | 0.315 | 0.149054 | 7.98 | 0.262616 | 106.275 s | Superseded |
+| Slate rotation (in-memory) | 0.71 | 0.259663 | 5.71 | 0.538699 | 156.745 s | Superseded |
+| Information-gain clarification (in-memory) | 0.785 | 0.38656 | 4.43 | 0.639868 | 185.261 s | Not reproducible post-SQLite |
+
+### Artifact-backed (current SQLite engine, HEAD `e76b3ab`, all 200 public sessions)
+
+Measured after the scalable-retrieval work plus the ranking-recall repair
+(restored structured-attribute retrieval, unbounded strict recall, junk-token
+gating). Counterfactual exploration on/off is **metric-identical** on the public
+set, so the configuration optimizes the happy path: assume the strict pool fills
+all ten slots, and fall back to counterfactual relaxation only when it cannot.
+
+| Class | HitRate@10 | MRR | MTTC | TechnicalScore | Runtime | Decision |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Retained: strict + empty-pool fallback | 0.76 | 0.360109 | 4.94 | 0.609233 | 747.99 s | **Retained** |
+| Always tail-explore when slate short | 0.76 | 0.360109 | 4.935 | 0.60933 | ~800 s | Rejected: no metric change |
+
+Scenario HitRate@10 (retained run): boundary `0.90`, browsing `0.9375`,
+buying `0.775`, intent_override `0.20`.
+
+**Determinism:** two independent full runs of the same configuration produced
+identical results after canonicalizing run id, evaluator session UUIDs, and
+timing — all 200 session outcomes, the canonical summary, and all 10,419 typed
+trace events matched exactly. (Wall-clock runtime varies widely with machine
+load — two identical-output runs measured 796 s and 1690 s — so runtime is not a
+comparison axis.)
+
+**Exploration ablation.** Counterfactual tail-fill fired on exactly **7 of ~1,500
+public turns, every one an empty (zero-strict) pool**; it never fired on a
+partial (1–9 strict) pool and changed **zero** hits. So exploration is scoped to
+the empty-pool case only: whenever the strict pool holds ≥1 product it already
+holds ≥10 on this catalog, and when it is empty the last-resort relaxation is the
+only way to return a non-empty slate. This preserves the excluded-prefix
+zero-strict guarantee at negligible cost while never running exploration on the
+common path where it does nothing.
 
 ## Catalog artifact builds
 

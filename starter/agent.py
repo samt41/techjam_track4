@@ -21,7 +21,7 @@ class Agent:
         artifact_path: str | Path | None = None,
         lexical_mode: LexicalMode = LexicalMode.AUTO,
         trace: EvaluationTrace | None = None,
-        exploration: str = "tail-only",
+        exploration: str = "disabled",
     ) -> None:
         resolved_catalog_path = Path(catalog_path)
         resolved_artifact_path = (

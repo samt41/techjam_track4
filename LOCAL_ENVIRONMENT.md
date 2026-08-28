@@ -94,23 +94,31 @@ The experiment command refuses overwrite. A successful run contains only `summar
 
 ## Retained result
 
-The retained 200-session run reports:
+The retained 200-session run (current SQLite artifact engine, `--exploration
+disabled`) reports:
 
 | Metric | Value |
 | --- | ---: |
-| Hit Rate@10 | 0.785 |
-| MRR | 0.38656 |
-| MTTC | 4.43 |
-| TechnicalScore | 0.639868 |
+| Hit Rate@10 | 0.76 |
+| MRR | 0.360109 |
+| MTTC | 4.94 |
+| TechnicalScore | 0.609233 |
 | Reported prompt/completion tokens | 0 / 0 |
 
 Scenario Hit Rate@10:
 
 | Boundary | Browsing | Buying | Intent Override |
 | ---: | ---: | ---: | ---: |
-| 0.90 | 0.9625 | 0.8125 | 0.20 |
+| 0.90 | 0.9375 | 0.775 | 0.20 |
 
-The retained instrumented evaluator duration is 185.492 seconds, excluding one-time catalog construction. A second run took 126.485 seconds. Canonical metrics, all session outcomes, and all 843 ordered slates matched exactly; only timing and run/session identifiers differed.
+The retained evaluator duration is ~748 seconds, excluding one-time catalog
+construction. Two independent runs matched exactly on all 200 session outcomes,
+the canonical summary, and all 10,419 typed trace events; only timing and
+run/session identifiers differed.
+
+An earlier `0.785` figure was measured on the pre-SQLite in-memory engine and is
+not reproducible on the current backend; it is not an acceptance target. See
+`experiments/RUNS.md` for the historical-vs-current split.
 
 ## Runtime characteristics
 

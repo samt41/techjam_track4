@@ -59,7 +59,7 @@ def run_experiment(
     catalog_path: str | Path,
     dataset_path: str | Path,
     output_root: str | Path = "experiments",
-    exploration: str = "tail-only",
+    exploration: str = "disabled",
     lexical_mode: str = "auto",
 ) -> Path:
     if not _RUN_ID_RE.fullmatch(run_id):
@@ -313,7 +313,7 @@ def main() -> None:
     parser.add_argument(
         "--exploration",
         choices=("disabled", "tail-only"),
-        default="tail-only",
+        default="disabled",
     )
     parser.add_argument(
         "--lexical-mode",

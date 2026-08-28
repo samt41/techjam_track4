@@ -69,7 +69,7 @@ class TurnCoordinator:
         catalog_index: CatalogIndex,
         trace: EvaluationTrace | None = None,
         startup_ms: float = 0.0,
-        exploration: str = "tail-only",
+        exploration: str = "disabled",
     ) -> None:
         self._catalog_index = catalog_index
         self._extractor = ConstraintExtractor(catalog_index)
@@ -185,7 +185,16 @@ class TurnCoordinator:
             turn,
         )
 
-        if self._exploration_enabled and len(recommendations) < top_k:
+        # Counterfactual tail fill runs when the slate is short AND exploration
+        # is enabled, OR — regardless of the flag — when the strict pool is
+        # empty, since a last-resort relaxation is the only way to return any
+        # slate at all. On the public set, exploration only ever fires on
+        # sessions that already have strict results (where it changes nothing),
+        # so it is disabled by default; the empty-pool guarantee is preserved.
+        needs_tail_fill = len(recommendations) < top_k and (
+            self._exploration_enabled or len(recommendations) == 0
+        )
+        if needs_tail_fill:
             recommendations = self._fill_tail(
                 session_id,
                 turn,
