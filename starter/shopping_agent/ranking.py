@@ -56,21 +56,41 @@ class ProductRanker:
     ) -> tuple[RankedRecommendation, ...]:
         evidence_by_id: dict[str, list[RouteEvidence]] = {}
         relaxed_by_id: dict[str, str | None] = {}
+        strict_ids: set[str] = set()
         for candidate in candidates:
             if candidate.parent_asin not in self._catalog_index.product_by_id:
                 continue
             evidence_by_id.setdefault(candidate.parent_asin, []).extend(
                 candidate.evidence
             )
-            if candidate.relaxed_constraint_id is not None:
-                relaxed_by_id[candidate.parent_asin] = candidate.relaxed_constraint_id
+            if candidate.relaxed_constraint_id is None:
+                strict_ids.add(candidate.parent_asin)
+            else:
+                relaxed_by_id.setdefault(
+                    candidate.parent_asin,
+                    candidate.relaxed_constraint_id,
+                )
 
         ranked: list[RankedRecommendation] = []
         for parent_asin, evidence in evidence_by_id.items():
             product = self._catalog_index.product_by_id[parent_asin]
-            eligibility = self._eligibility_gate.evaluate(
+            strict_eligibility = self._eligibility_gate.evaluate(
                 product,
                 intent.active_constraints,
+            )
+            relaxed_constraint_id = None
+            if not (parent_asin in strict_ids and strict_eligibility.eligible):
+                relaxed_constraint_id = relaxed_by_id.get(parent_asin)
+                if relaxed_constraint_id is None:
+                    continue
+            applicable_constraints = tuple(
+                constraint
+                for constraint in intent.active_constraints
+                if constraint.constraint_id != relaxed_constraint_id
+            )
+            eligibility = self._eligibility_gate.evaluate(
+                product,
+                applicable_constraints,
             )
             if not eligibility.eligible:
                 continue
@@ -79,15 +99,32 @@ class ProductRanker:
             ranked.append(RankedRecommendation(
                 parent_asin=parent_asin,
                 score=score,
-                exact_match=True,
-                relaxed_constraint_id=relaxed_by_id.get(parent_asin),
+                exact_match=relaxed_constraint_id is None,
+                relaxed_constraint_id=relaxed_constraint_id,
             ))
         ranked.sort(key=lambda item: (
             item.parent_asin in shown_product_ids,
             -item.score,
             item.parent_asin,
         ))
-        return tuple(ranked[:max(0, top_k)])
+        strict = [item for item in ranked if item.exact_match]
+        exploratory = [item for item in ranked if not item.exact_match]
+        if not exploratory or top_k <= 0:
+            return tuple(strict[:max(0, top_k)])
+
+        exploratory_target = min(3, max(1, round(top_k * 0.30)))
+        strict_target = max(0, top_k - exploratory_target)
+        selected = strict[:strict_target]
+        selected.extend(exploratory[:exploratory_target])
+        if len(selected) < top_k:
+            selected_ids = {item.parent_asin for item in selected}
+            remaining = (
+                item
+                for item in (*strict[strict_target:], *exploratory[exploratory_target:])
+                if item.parent_asin not in selected_ids
+            )
+            selected.extend(tuple(remaining)[:top_k - len(selected)])
+        return tuple(selected[:top_k])
 
 
 def _matches(product: ProductRecord, constraint: PreferenceConstraint) -> bool:

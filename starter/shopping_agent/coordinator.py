@@ -16,7 +16,7 @@ from starter.shopping_agent.models import (
 )
 from starter.shopping_agent.preference_ledger import PreferenceLedger
 from starter.shopping_agent.ranking import ProductRanker
-from starter.shopping_agent.response import ResponseValidator
+from starter.shopping_agent.response import ResponseValidator, recommendation_message
 from starter.shopping_agent.retrieval import CandidateGenerator, RetrievalPlanner
 
 
@@ -74,17 +74,30 @@ class TurnCoordinator:
         )
         state.last_asked_attribute = None
         intent = state.ledger.apply(updates)
-        candidates = tuple(
+        strict_candidates = tuple(
             candidate
             for plan in self._planner.strict(intent)
             for candidate in self._generator.execute(plan)
         )
+        shown_product_ids = state.history.shown_for(intent.intent_version)
         recommendations = self._ranker.rank(
-            candidates,
+            strict_candidates,
             intent,
-            shown_product_ids=state.history.shown_for(intent.intent_version),
+            shown_product_ids=shown_product_ids,
             top_k=top_k,
         )
+        if len(recommendations) < top_k:
+            exploratory_candidates = tuple(
+                candidate
+                for plan in self._planner.counterfactuals(intent)
+                for candidate in self._generator.execute(plan)
+            )
+            recommendations = self._ranker.rank(
+                (*strict_candidates, *exploratory_candidates),
+                intent,
+                shown_product_ids=shown_product_ids,
+                top_k=top_k,
+            )
         recommendations = self._validator.validate(recommendations, top_k)
         state.history.record(
             intent.intent_version,
@@ -108,11 +121,10 @@ class TurnCoordinator:
             state.ledger.record_question(clarification.attribute)
             state.last_asked_attribute = clarification.attribute
         return TurnResponse(
-            message=(
-                "Here are the strongest matches for your current preferences. "
-                + clarification.prompt
-                if clarification is not None
-                else "Here are the strongest matches for your current preferences."
+            message=recommendation_message(
+                recommendations,
+                intent.active_constraints,
+                clarification.prompt if clarification is not None else None,
             ),
             ask_attribute=(
                 clarification.attribute if clarification is not None else None

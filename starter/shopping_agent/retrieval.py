@@ -107,7 +107,45 @@ class RetrievalPlanner:
         return tuple(plans)
 
     def counterfactuals(self, intent: ShoppingIntent) -> tuple[RetrievalPlan, ...]:
-        return ()
+        eligible = tuple(
+            constraint
+            for constraint in intent.active_constraints
+            if not constraint.excluded
+        )
+        ordered = tuple(sorted(
+            enumerate(eligible),
+            key=lambda item: (
+                item[1].confidence,
+                item[1].strength.value,
+                item[1].source_turn,
+                item[0],
+            ),
+        ))
+        plans: list[RetrievalPlan] = []
+        for _, relaxed in ordered:
+            retained = tuple(
+                constraint
+                for constraint in intent.active_constraints
+                if constraint.constraint_id != relaxed.constraint_id
+            )
+            query_terms = tuple(dict.fromkeys(
+                constraint.value
+                for constraint in retained
+                if not constraint.excluded
+                and constraint.attribute is not Attribute.BUDGET
+            ))
+            plans.append(RetrievalPlan(
+                route=RetrievalRoute.COUNTERFACTUAL,
+                query_terms=query_terms,
+                attribute=None,
+                attribute_value=None,
+                required_constraint_ids=tuple(
+                    constraint.constraint_id for constraint in retained
+                ),
+                relaxed_constraint_ids=(relaxed.constraint_id,),
+                limit=self._route_limit,
+            ))
+        return tuple(plans)
 
 
 class CandidateGenerator:
@@ -125,6 +163,8 @@ class CandidateGenerator:
                 plan.attribute_value,
             )[:plan.limit]
         elif plan.route in (RetrievalRoute.EXACT_FTS, RetrievalRoute.EXPANDED_FTS):
+            products = self._catalog_index.search_fts(plan.query_terms, plan.limit)
+        elif plan.route is RetrievalRoute.COUNTERFACTUAL and plan.query_terms:
             products = self._catalog_index.search_fts(plan.query_terms, plan.limit)
         else:
             products = self._catalog_index.quality_fallback(

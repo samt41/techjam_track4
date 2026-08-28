@@ -53,6 +53,25 @@ def rotation_products() -> list[dict[str, object]]:
     ]
 
 
+def abundant_strict_products() -> list[dict[str, object]]:
+    products: list[dict[str, object]] = []
+    for number in range(1, 25):
+        material = "leather" if number <= 12 else "synthetic"
+        products.append({
+            "parent_asin": f"ABUNDANT-{number:02d}",
+            "title": f"{material.title()} boot {number}",
+            "features": ["durable"],
+            "details": {"material": material, "color": "black"},
+            "description": ["Everyday boot"],
+            "categories": ["Clothing", "Boots"],
+            "store": "Example",
+            "average_rating": 4.5,
+            "rating_number": 100 - number,
+            "price": 60.0 + number,
+        })
+    return products
+
+
 class AgentIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -154,6 +173,39 @@ class AgentIntegrationTest(unittest.TestCase):
 
         self.assertIsNotNone(first["ask_attribute"])
         self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
+
+    def test_near_matches_are_tail_ranked_and_disclosed(self) -> None:
+        agent = Agent(catalog_path=self.catalog_path)
+        self.addCleanup(agent.close)
+        agent.reset("near", PROFILE)
+
+        response = agent.respond("near", "Boots that must be leather", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertTrue(all(
+            item["parent_asin"].startswith("MATCH-")
+            for item in response["recommendations"][:6]
+        ))
+        self.assertIn("material", response["message"].lower())
+        self.assertIn("near match", response["message"].lower())
+
+    def test_abundant_strict_pool_does_not_execute_relaxations(self) -> None:
+        catalog_path = write_catalog(
+            Path(self.temporary_directory.name),
+            abundant_strict_products(),
+        )
+        agent = Agent(catalog_path=catalog_path)
+        self.addCleanup(agent.close)
+        agent.reset("strict", PROFILE)
+
+        response = agent.respond("strict", "Boots that must be leather", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertTrue(all(
+            int(item["parent_asin"].rsplit("-", 1)[1]) <= 12
+            for item in response["recommendations"]
+        ))
+        self.assertNotIn("near match", response["message"].lower())
 
 
 if __name__ == "__main__":

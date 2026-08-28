@@ -8,6 +8,8 @@ from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.models import (
     Attribute,
     ComparisonOperator,
+    ProductCandidate,
+    RouteEvidence,
     PreferenceUpdate,
     RetrievalRoute,
     Strength,
@@ -139,6 +141,78 @@ class RetrievalRankingTest(unittest.TestCase):
 
         self.assertEqual(history.shown_for(intent_version=1), frozenset({"A", "B"}))
         self.assertEqual(history.shown_for(intent_version=2), frozenset())
+
+    def test_counterfactual_plan_relaxes_exactly_one_nonexcluded_constraint(self) -> None:
+        ledger = PreferenceLedger()
+        intent = ledger.apply((
+            preference(Attribute.MATERIAL, "leather"),
+            preference(Attribute.COLOR, "black"),
+            preference(Attribute.FEATURE, "slippery", excluded=True),
+        ))
+        excluded_id = next(
+            constraint.constraint_id
+            for constraint in intent.active_constraints
+            if constraint.excluded
+        )
+
+        plans = RetrievalPlanner().counterfactuals(intent)
+
+        self.assertTrue(plans)
+        self.assertTrue(all(len(plan.relaxed_constraint_ids) == 1 for plan in plans))
+        self.assertNotIn(
+            excluded_id,
+            [plan.relaxed_constraint_ids[0] for plan in plans],
+        )
+        self.assertTrue(all(
+            plan.relaxed_constraint_ids[0] not in plan.required_constraint_ids
+            for plan in plans
+        ))
+
+    def test_ranker_allocates_seven_strict_and_three_exploratory_slots(self) -> None:
+        evidence = RouteEvidence(
+            route=RetrievalRoute.EXACT_FTS,
+            rank=1,
+            score=1.0,
+        )
+        candidates = tuple(
+            ProductCandidate(
+                parent_asin=f"BOOT-{number}",
+                evidence=(evidence,),
+                relaxed_constraint_id=None if number <= 9 else "relaxed-material",
+            )
+            for number in range(1, 13)
+        )
+
+        ranked = ProductRanker(self.index).rank(
+            candidates,
+            PreferenceLedger().intent,
+            shown_product_ids=frozenset(),
+            top_k=10,
+        )
+
+        self.assertEqual(sum(item.exact_match for item in ranked), 7)
+        self.assertEqual(sum(not item.exact_match for item in ranked), 3)
+        self.assertTrue(all(item.exact_match for item in ranked[:7]))
+
+    def test_counterfactual_candidate_crosses_only_its_named_constraint(self) -> None:
+        ledger = PreferenceLedger()
+        intent = ledger.apply((preference(Attribute.MATERIAL, "leather"),))
+        plan = RetrievalPlanner().counterfactuals(intent)[0]
+        candidates = CandidateGenerator(self.index).execute(plan)
+
+        ranked = ProductRanker(self.index).rank(
+            candidates,
+            intent,
+            shown_product_ids=frozenset(),
+            top_k=10,
+        )
+
+        self.assertTrue(ranked)
+        self.assertTrue(all(not item.exact_match for item in ranked))
+        self.assertTrue(all(
+            item.relaxed_constraint_id == plan.relaxed_constraint_ids[0]
+            for item in ranked
+        ))
 
 
 if __name__ == "__main__":
