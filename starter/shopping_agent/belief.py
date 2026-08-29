@@ -12,6 +12,7 @@ from starter.shopping_agent.models import (
     Strength,
     UserProfile,
 )
+from starter.shopping_agent.text_normalization import match_key
 
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -251,12 +252,14 @@ def _attribute_values(
 
 
 def _value_matches(value: str, product_values: tuple[str, ...]) -> bool:
+    key = match_key(value)
     return any(
-        value == product_value
-        or value in product_value
-        or product_value in value
+        key == product_key
+        or key in product_key
+        or product_key in key
         for product_value in product_values
         if product_value
+        for product_key in (match_key(product_value),)
     )
 
 

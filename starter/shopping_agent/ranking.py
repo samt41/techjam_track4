@@ -20,6 +20,7 @@ from starter.shopping_agent.models import (
     UserProfile,
 )
 from starter.shopping_agent.search_backend import ProductSearchBackend
+from starter.shopping_agent.text_normalization import match_key
 
 
 # Products fetch and belief scoring are linear in the candidate pool, so the
@@ -272,12 +273,14 @@ def _matches(product: ProductRecord, constraint: PreferenceConstraint) -> bool:
         return product.price == boundary
 
     values = _product_values(product, constraint.attribute)
+    key = match_key(constraint.value)
     return any(
-        constraint.value == value
-        or constraint.value in value
-        or value in constraint.value
+        key == value_key
+        or key in value_key
+        or value_key in key
         for value in values
         if value
+        for value_key in (match_key(value),)
     )
 
 
