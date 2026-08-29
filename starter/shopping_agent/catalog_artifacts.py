@@ -476,12 +476,14 @@ def _build_database(
         fts5_built = fts5_enabled and _create_fts5_table(connection)
         document_frequencies: Counter[str] = Counter()
         material_vocabulary = _material_vocabulary(products)
+        keyed_feature_vocabulary = _keyed_feature_vocabulary(products)
         product_rows: list[tuple[object, ...]] = []
         attribute_rows: list[tuple[int, str, str]] = []
         posting_rows: list[tuple[str, int, float]] = []
         fts_rows: list[tuple[object, ...]] = []
         for ordinal, product in enumerate(products):
             product = _with_recovered_materials(product, material_vocabulary)
+            product = _with_recovered_keyed_features(product, keyed_feature_vocabulary)
             product_rows.append((
                 ordinal,
                 product.parent_asin,
@@ -667,6 +669,88 @@ def _with_recovered_materials(
     if not recovered:
         return product
     added = tuple((Attribute.MATERIAL.value, token) for token in recovered)
+    return replace(product, details=(*product.details, *added))
+
+
+# Free-text features frequently carry a mis-filed structured value as
+# "key: value", such as "color: black" or "size: medium". These attributes are
+# read from details at query time, so recovering the value into details lets a
+# structured constraint reach it. The key must name one of these attributes and
+# the value must be a short, recurring value (see _keyed_feature_vocabulary),
+# never a marketing sentence. Material is handled separately above; brand is not
+# recovered because it is read from the store field, not details.
+_KEYED_FEATURE_ATTRIBUTES = {
+    "color": Attribute.COLOR,
+    "colour": Attribute.COLOR,
+    "size": Attribute.SIZE,
+    "style": Attribute.STYLE,
+}
+_KEYED_FEATURE_RE = re.compile(r"^([a-z][a-z ]+?)\s*:\s*(.+)$")
+_KEYED_VALUE_SPLIT_RE = re.compile(r";|\b[a-z ]+\s*:")
+_KEYED_VALUE_FLOOR = 2
+_KEYED_VALUE_MAX_TOKENS = 4
+_KEYED_VALUE_MAX_LENGTH = 25
+
+
+def _keyed_feature_value(feature: str) -> tuple[Attribute, str] | None:
+    match = _KEYED_FEATURE_RE.match(feature)
+    if match is None:
+        return None
+    attribute = _KEYED_FEATURE_ATTRIBUTES.get(match.group(1).strip())
+    if attribute is None:
+        return None
+    # Keep only the first clause, dropping a trailing second key/value such as
+    # "black; material: polyester" or "gucci model: gg0163sk".
+    value = _KEYED_VALUE_SPLIT_RE.split(match.group(2))[0].strip().strip(".-\"' ")
+    tokens = _MATERIAL_TOKEN_RE.findall(value)
+    if not (0 < len(tokens) <= _KEYED_VALUE_MAX_TOKENS):
+        return None
+    if not (1 < len(value) <= _KEYED_VALUE_MAX_LENGTH):
+        return None
+    return attribute, value
+
+
+def _keyed_feature_vocabulary(
+    products: tuple[ProductRecord, ...],
+) -> frozenset[tuple[Attribute, str]]:
+    """Recurring (attribute, value) pairs implied by "key: value" features.
+
+    A value is kept only if it appears on at least ``_KEYED_VALUE_FLOOR``
+    products, which drops one-off typos and per-product noise while keeping real
+    values like "black" or "rose gold" that were only ever written into a
+    feature string.
+    """
+    counts: Counter[tuple[Attribute, str]] = Counter()
+    for product in products:
+        seen: set[tuple[Attribute, str]] = set()
+        for feature in product.features:
+            keyed = _keyed_feature_value(feature)
+            if keyed is not None and keyed not in seen:
+                seen.add(keyed)
+                counts[keyed] += 1
+    return frozenset(
+        pair for pair, count in counts.items() if count >= _KEYED_VALUE_FLOOR
+    )
+
+
+def _with_recovered_keyed_features(
+    product: ProductRecord,
+    vocabulary: frozenset[tuple[Attribute, str]],
+) -> ProductRecord:
+    """Fold recurring "key: value" features into structured details."""
+    existing = {(key, value) for key, value in product.details}
+    added: list[tuple[str, str]] = []
+    for feature in product.features:
+        keyed = _keyed_feature_value(feature)
+        if keyed is None or keyed not in vocabulary:
+            continue
+        attribute, value = keyed
+        row = (attribute.value, value)
+        if row not in existing:
+            existing.add(row)
+            added.append(row)
+    if not added:
+        return product
     return replace(product, details=(*product.details, *added))
 
 

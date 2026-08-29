@@ -12,7 +12,10 @@ from starter.shopping_agent.catalog_artifacts import (
     CatalogArtifactBuilder,
     LoadedCatalogArtifacts,
     _feature_material_tokens,
+    _keyed_feature_value,
+    _keyed_feature_vocabulary,
     _material_vocabulary,
+    _with_recovered_keyed_features,
     _with_recovered_materials,
 )
 from starter.shopping_agent.build_catalog_artifacts import main
@@ -137,6 +140,55 @@ class MaterialCanonicalizationTest(unittest.TestCase):
 
         self.assertEqual(material_rows, 5)
         self.assertIn("leather", belt_details)
+
+
+class KeyedFeatureRecoveryTest(unittest.TestCase):
+    def test_parses_a_short_keyed_value(self) -> None:
+        self.assertEqual(
+            _keyed_feature_value("color: black"),
+            (Attribute.COLOR, "black"),
+        )
+        self.assertEqual(
+            _keyed_feature_value("size : medium"),
+            (Attribute.SIZE, "medium"),
+        )
+
+    def test_drops_a_trailing_second_key(self) -> None:
+        # "gucci model: gg0163sk" must reduce to the brand-style head, and a
+        # semicolon-joined second attribute must not leak in.
+        self.assertEqual(
+            _keyed_feature_value("style: pumps; material: leather"),
+            (Attribute.STYLE, "pumps"),
+        )
+
+    def test_rejects_marketing_sentences_and_unknown_keys(self) -> None:
+        self.assertIsNone(
+            _keyed_feature_value("material: 100% quality controlled before packaging"),
+        )
+        self.assertIsNone(_keyed_feature_value("care: hand wash only"))
+        self.assertIsNone(_keyed_feature_value("a plain feature phrase"))
+
+    def test_vocabulary_requires_a_recurring_value(self) -> None:
+        products = (
+            _product(("color: black",)),
+            _product(("color: black",)),
+            _product(("color: chartreuse",)),  # single occurrence, below floor
+        )
+        vocabulary = _keyed_feature_vocabulary(products)
+        self.assertIn((Attribute.COLOR, "black"), vocabulary)
+        self.assertNotIn((Attribute.COLOR, "chartreuse"), vocabulary)
+
+    def test_recovered_value_is_added_to_details(self) -> None:
+        product = _product(("color: black", "some other feature"))
+        vocabulary = frozenset({(Attribute.COLOR, "black")})
+        augmented = _with_recovered_keyed_features(product, vocabulary)
+        colors = [v for k, v in augmented.details if k == Attribute.COLOR.value]
+        self.assertEqual(colors, ["black"])
+
+    def test_value_outside_vocabulary_is_not_added(self) -> None:
+        product = _product(("color: chartreuse",))
+        augmented = _with_recovered_keyed_features(product, frozenset())
+        self.assertEqual(augmented.details, product.details)
 
 
 class CatalogArtifactTest(unittest.TestCase):
