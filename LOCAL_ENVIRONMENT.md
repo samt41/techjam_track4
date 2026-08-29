@@ -170,6 +170,7 @@ The runtime dependency list is empty, and the agent imports only Python standard
 ## Design references
 
 - [Project status: hardcoded values and plan states](docs/STATUS.md)
+- [Organizer briefing notes](docs/organizer_briefing.md)
 - [Approved offline hybrid agent design](docs/superpowers/specs/2026-08-28-offline-hybrid-shopping-agent-design.md)
 - [Scalable retrieval and oversight design](docs/superpowers/specs/2026-08-28-scalable-retrieval-and-oversight-design.md)
 - [Deterministic offline agent implementation plan](docs/superpowers/plans/2026-08-28-deterministic-offline-agent-implementation.md)

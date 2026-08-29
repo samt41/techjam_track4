@@ -161,4 +161,8 @@ Every tuned constant and hardcoded choice in the code, with how principled each 
 
 Only exact `parent_asin` equality counts as a hit. The evaluator scores the first ten valid unique identifiers, ends a session after a hit or after turn ten, and assigns turn eleven to misses for MTTC. The evaluator and public labels are not modified when reporting results.
 
+Final aggregation happens over the 800 private sessions, which share no users and no targets with the public 200. Public results are a development signal, not the score.
+
 The organizer allows optional external models, with teams supplying their own credentials and cost. This implementation deliberately avoids that dependency and reports zero prompt and completion tokens.
+
+Organizer briefing material, including the benchmark's data lineage, the verified public/private disjointness, the suggested build path, and the named innovation directions, is transcribed in [docs/organizer_briefing.md](docs/organizer_briefing.md).
