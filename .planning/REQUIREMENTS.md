@@ -192,18 +192,80 @@ Acknowledged, deferred, not in this roadmap.
 
 ## Traceability
 
-Populated during roadmap creation.
+Mapped during roadmap creation (`.planning/ROADMAP.md`). Every v1 requirement
+maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(pending roadmap)_ | | |
+| MEAS-01 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-02 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-03 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-04 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-05 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-06 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-07 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-08 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-09 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-14 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-15 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-16 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-10 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
+| MEAS-11 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
+| MEAS-12 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
+| MEAS-13 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
+| RANK-01 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| RANK-02 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| RANK-03 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| RANK-04 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| RANK-05 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| CONV-01 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| CONV-02 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| CONV-03 | Phase 3: Ranking Precision & Conversational Efficiency | Pending |
+| SEM-01 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SEM-02 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SEM-03 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SEM-04 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SPIKE-01 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SPIKE-02 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| SPIKE-03 | Phase 4: Semantic Asset & Candidate Spikes | Pending |
+| POS-04 | Phase 5: Go/No-Go Checkpoint | Pending |
+| HARD-01 | Phase 6: Submission Hardening | Pending |
+| HARD-02 | Phase 6: Submission Hardening | Pending |
+| HARD-03 | Phase 6: Submission Hardening | Pending |
+| HARD-04 | Phase 6: Submission Hardening | Pending |
+| HARD-05 | Phase 6: Submission Hardening | Pending |
+| HARD-06 | Phase 6: Submission Hardening | Pending |
+| DELIV-01 | Phase 7: Narrative Draft — Innovation & Impact Positioning | Pending |
+| POS-01 | Phase 7: Narrative Draft — Innovation & Impact Positioning | Pending |
+| POS-02 | Phase 7: Narrative Draft — Innovation & Impact Positioning | Pending |
+| DELIV-02 | Phase 8: Deliverables Finalization & Submission | Pending |
+| DELIV-03 | Phase 8: Deliverables Finalization & Submission | Pending |
+| DELIV-04 | Phase 8: Deliverables Finalization & Submission | Pending |
+| DELIV-05 | Phase 8: Deliverables Finalization & Submission | Pending |
+| DELIV-06 | Phase 8: Deliverables Finalization & Submission | Pending |
+| DELIV-07 | Phase 8: Deliverables Finalization & Submission | Pending |
+| POS-03 | Phase 8: Deliverables Finalization & Submission | Pending |
 
 **Coverage:**
 - v1 requirements: 48 total (MEAS 16, RANK 5, CONV 3, SEM 4, SPIKE 3, HARD 6,
   DELIV 7, POS 4)
-- Mapped to phases: 0
-- Unmapped: 48 ⚠️
+- Mapped to phases: 48
+- Unmapped: 0 ✓
+
+**Per-phase counts:**
+
+| Phase | Requirement count |
+|-------|-------------------|
+| 1. Measurement Rig Core | 12 |
+| 2. Expanded Dataset & Paraphrase Probe | 4 |
+| 3. Ranking Precision & Conversational Efficiency | 8 |
+| 4. Semantic Asset & Candidate Spikes | 7 |
+| 5. Go/No-Go Checkpoint | 1 |
+| 6. Submission Hardening | 6 |
+| 7. Narrative Draft — Innovation & Impact Positioning | 3 |
+| 8. Deliverables Finalization & Submission | 7 |
+| **Total** | **48** |
 
 ---
 *Requirements defined: 2026-08-29*
-*Last updated: 2026-08-29 after initial definition*
+*Last updated: 2026-08-29 after roadmap creation — traceability populated, 48/48 requirements mapped*
