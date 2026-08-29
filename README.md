@@ -88,12 +88,12 @@ The retained deterministic run on all 200 public sessions, current artifact engi
 
 | Metric | Deterministic agent | Organizer BM25 baseline |
 | --- | ---: | ---: |
-| Hit Rate@10 | 0.915 | 0.125 |
-| MRR | 0.5205 | 0.068034 |
-| MTTC | 3.47 | 9.81 |
-| TechnicalScore | 0.7642 | 0.10671 |
+| Hit Rate@10 | 0.920 | 0.125 |
+| MRR | 0.5221 | 0.068034 |
+| MTTC | 3.425 | 9.81 |
+| TechnicalScore | 0.7681 | 0.10671 |
 
-Per-scenario Hit Rate@10 is 0.90 for Boundary, 0.95 for Browsing, 0.888 for Buying, and 0.90 for Intent Override.
+Per-scenario Hit Rate@10 is 0.90 for Boundary, 0.95 for Browsing, 0.90 for Buying, and 0.90 for Intent Override.
 
 Determinism is byte-verified. Two independent full evaluations produced identical aggregate metrics, all 200 per-session outcomes including first-hit turn, and all typed trace events, after excluding run identifiers, random internal session IDs, and measured timing.
 

@@ -2,7 +2,7 @@
 
 This document records two things an outside reader needs before trusting or extending the agent. First, every tuned or hardcoded value currently in the code, with why it exists and how principled it is. Second, the state of each design document, including what unbuilt work is gated on.
 
-Current best config: Hit Rate@10 0.915, TechnicalScore 0.7642, on all 200 public sessions, deterministic. See the README for the full table.
+Current best config: Hit Rate@10 0.920, TechnicalScore 0.7681, on all 200 public sessions, deterministic. See the README for the full table.
 
 ## Hardcoded and tuned values
 
@@ -57,10 +57,16 @@ All documents live under `docs/superpowers/`. Status is one of: done, superseded
 
 - `specs/2026-08-29-offline-semantic-concept-retrieval-design.md`. An offline ONNX embedding route for open-vocabulary synonym retrieval, with contrast sets to keep polarity symbolic. The invariants in this spec are sound. It is not started, and it is gated on evidence that a vocabulary gap actually exists.
 
-  The gating evidence so far points the other way. Two independent miss classifications, one on the earlier 48 misses and one on the current 17 misses, found zero vocabulary gaps. Every missed target contained the extracted constraint words in its own catalog text. The public simulator constructs the customer's words verbatim from the target product's own catalog strings, so there is no paraphrase to bridge on the public set.
+  The gating evidence so far points the other way. Two independent miss classifications, one on the earlier 48 misses and one on the later 17 misses, found zero vocabulary gaps. Every missed target contained the extracted constraint words in its own catalog text. The public simulator constructs the customer's words verbatim from the target product's own catalog strings, so there is no paraphrase to bridge on the public set.
 
   The remaining justification is the private 800-session set. If its customer language is genuinely out of vocabulary relative to the catalog, this route, or a cheaper offline synonym-augmentation of the catalog, would help. That is a hedge against an unknown, not a measured need. The decision to build is gated on a held-out paraphrase probe, or on private-set feedback, showing a real gap. Until then the effort is not justified, and it would trade away the byte-level determinism the agent currently guarantees.
 
 ### Current bottleneck, next work
 
-The current public misses are not vocabulary gaps. They are ranking-discrimination cases. Of the 17 misses, 13 have the target retrieved into the pool but ranked below the slate among near-identical products, and 4 are not retrieved for mechanical reasons such as overlong feature strings or category dilution. The next investigation targets those ranking cases, which are cheaper and stay fully deterministic.
+The current public misses are not vocabulary gaps. They are ranking-discrimination cases, investigated down to the belief-contribution level.
+
+One systematic bug was found and fixed here: the catalog records the same colon-prefixed feature two ways, such as "material: alloy" and "material:alloy", and the soft matcher treated them as different values. A target carrying one spelling was penalized the full soft-mismatch cost (about -1.70 log-odds) against a constraint carrying the other, despite being an exact concept match. This split 131 feature concepts across 705 products. The fix normalizes colon spacing at match time (`match_key`), lifting one buying target from rank 154 to rank 1 and raising Hit Rate@10 from 0.915 to 0.920.
+
+After that fix, the remaining misses were checked one contribution at a time. Zero of them are false penalties: no missed target is scored as mismatching a concept it actually satisfies. In the representative case, a rubber-sole fashion sneaker, the target and the top three products have identical soft contributions and differ only in the `route` component, that is, where each product happened to land in the raw SQL ordering among about 3,000 equally-matching sneakers. This is genuine under-specification. The customer stated a category and one common feature, then declined everything, and the target is one ordinary product among thousands that match those two things equally. No signal available to the agent distinguishes it, so a ranking change cannot recover it without inventing information the customer never gave. A popularity tie-break was tried and measured no effect, because `route` already varies continuously and leaves no exact ties to break.
+
+The honest conclusion is that the public ceiling is close. The recoverable defects have been found and fixed; what remains is under-specification that better ranking cannot solve.
