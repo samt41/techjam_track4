@@ -79,13 +79,23 @@ Hypotheses until shipped and measured.
       only per-scenario HR@10 is recorded)
 - [ ] HR@1 / @3 / @5 / @10 curve reported as technical evidence
 - [ ] Expanded dev session volume beyond the 200 public sessions, using the
-      unmodified official evaluator, to get below the noise floor (at n=200 one
-      session is ±0.005 HR@10)
+      unmodified official evaluator. At n=200 the binomial standard error is
+      **σ ≈ 0.019 HR@10**, so 0.920 and 0.940 are statistically
+      indistinguishable on the public set
 - [ ] Paraphrase probe: sessions carrying authored `intent_card` + `behavior`
       that describe targets in customer language rather than quoting catalog
       text — the only way to measure vocabulary generalization
-- [ ] Candidate comparison is statistically honest — a win must exceed the noise
-      floor, and must not regress any scenario
+- [ ] Candidate comparison is statistically honest: paired tests joined on
+      `sample_id`, Holm-Bonferroni across competing candidates, a practical
+      floor of ≥0.01 TechnicalScore, and a minimum-detectable-difference
+      reported beside every leaderboard row so "no significant difference" is
+      visibly distinct from "we could not have seen one"
+- [ ] Winner's-curse correction applied before any candidate is declared the
+      champion — selecting the best of k=5-10 candidates inflates apparent
+      HR@10 by 0.022-0.030 through selection bias alone
+- [ ] Scenario non-inferiority gates stated with their bucket-size caveat —
+      Boundary is n=10 (σ ≈ 0.086) and Intent Override n=30 (σ ≈ 0.050), so a
+      uniform "no regression" rule would reject good candidates on noise
 
 **Score improvement — aimed at the terms with headroom**
 
@@ -160,6 +170,14 @@ Hypotheses until shipped and measured.
   reported; no longer the objective.
 - **Widening the overfit phrase matchers** — the risk they were logged against
   is largely disproven (see Context). Effort here is misallocated.
+- **Slate diversification / MMR-style reranking** — there is exactly one hidden
+  target per session scored on exact match, so trading rank-1 concentration for
+  slate variety is strictly negative for MRR.
+- **Naive "rejected item = negative sample" propagated to attribute weights** —
+  CRS literature (EAR, NFCR) reports this backfires. Negative evidence must stay
+  bounded, decaying, and scoped to the specific `parent_asin`.
+- **Cross-session or bandit personalization** — public and private sessions have
+  verified zero user overlap, so nothing learned across sessions transfers.
 
 ## Context
 
@@ -206,6 +224,30 @@ turn 1.
 concludes "the public ceiling is close." Both are true of recall and misleading
 about the score. The miss audit that closed off further ranking work examined
 *misses*; it says nothing about the 184 hits sitting below rank 1.
+
+**Statistical reality of measuring any of this** (from `.planning/research/`,
+which corrects an earlier claim in this document):
+
+- The binomial standard error at n=200 is **σ ≈ 0.019 HR@10**, not the ±0.005
+  single-session quantization step. A 95% interval on 0.920 spans roughly
+  ±0.038 — so 0.920 and 0.940 are indistinguishable on the public set.
+- Detecting a true 0.01 TechnicalScore difference needs roughly **3,900-15,700
+  paired sessions**. Effect sizes of 0.02-0.03+ are the realistic
+  detectable-and-decision-worthy range.
+- Selecting the best of k=5-10 candidates inflates the winner's apparent HR@10
+  by **0.022-0.030 through selection bias alone** — comparable to the entire
+  remaining recall headroom. A naive bake-off manufactures its own winner.
+
+Consequence: expanded session volume is not an optimization, it is a
+precondition for the bake-off meaning anything.
+
+**Metric exchange rates**, derived from the scoring weights:
+
+- Any change that adds turns must clear **ΔMRR > 0.0667 × ΔMTTC** to break even
+- HR@10 is **25× more sensitive per point than MTTC**, and 1.67× more than MRR
+
+So a recall regression is the most expensive currency in this metric, and every
+candidate must be judged on all three terms jointly, never one at a time.
 
 **Correction to `.planning/codebase/CONCERNS.md`.** That document's headline risk
 — that `evaluator/local_evaluator.py` is "a locally reimplemented simulator" and
@@ -293,6 +335,9 @@ only in docs, and `master`/`cervon` carry the current engine.
 | Treat deliverables and rubric positioning as scoring work, not cleanup | Impact (20%) and Innovation (20%) are near-unaddressed while Feasibility (15%) is won but unclaimed | — Pending |
 | Retire the "overfit phrase matcher" risk | Verified: the evaluator is unmodified organizer code, so its boilerplate is byte-identical on the private run | ✓ Good |
 | Ship the best measured candidate, whatever it is | User directive: "if it wins, it ships" — subject to the network-fallback constraint above | — Pending |
+| A hard go/no-go checkpoint gates score-improvement work | Stop once winner's-curse-corrected marginal gain falls below ~0.005 TechnicalScore and reallocate to the untouched 40%; this transition is where solo-dev time silently misallocates | — Pending |
+| Paraphrase probe must be built anti-circularly | An LLM shown the target's catalog text reproduces its phrasing, measuring self-preference rather than generalization — the same defect class as the public-set blind spot, one level up. Never show catalog text in-prompt, gate on lexical overlap, freeze before iterating, cross-check with a second model family | — Pending |
+| Generated semantic assets ship with an antonym/negation audit and checksum pinning | A synonym table that flips polarity on a negated attribute recreates the two silent-mismatch bugs already fixed, at a volume that defeats manual review | — Pending |
 
 ## Evolution
 
