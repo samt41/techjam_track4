@@ -1,6 +1,6 @@
 # Track 4 Local Environment
 
-Last verified: 28 August 2026, Singapore time
+Last verified: 29 August 2026, Singapore time
 
 ## Purpose
 
@@ -22,9 +22,11 @@ Python 3.10 or later is supported by the project metadata. If JavaScript or Type
 | --- | --- |
 | `starter/agent.py` | Organizer-compatible adapter |
 | `starter/shopping_agent/` | Typed parsing, ledger, retrieval, ranking, clarification, response, coordination, and diagnostics |
+| `starter/shopping_agent/build_catalog_artifacts.py` | One-off offline artifact builder |
 | `evaluator/local_evaluator.py` | Unchanged deterministic public evaluator |
 | `data/public_set.jsonl` | 200 labeled development sessions |
 | `data/catalog.jsonl` | Ignored decompressed 50,000-product catalog |
+| `data/catalog.artifacts/` | Ignored prebuilt SQLite artifact and manifest, what the agent actually reads |
 | `experiments/run_public.py` | Atomic reproducible experiment command |
 | `experiments/RUNS.md` | Retained metrics, failures, constraints, and decisions |
 | `experiments/<run-id>/` | Ignored five-file run artifact set |
@@ -70,6 +72,20 @@ Verify it in PowerShell:
 (Get-FileHash -Algorithm SHA256 .\data\catalog.jsonl).Hash.ToLowerInvariant()
 ```
 
+## Build the catalog artifact
+
+The agent reads a prebuilt SQLite artifact, not the raw catalog. Build it once
+before any evaluation:
+
+```powershell
+uv run python -m starter.shopping_agent.build_catalog_artifacts --catalog data/catalog.jsonl --output data/catalog.artifacts
+```
+
+This writes `data/catalog.artifacts/catalog.sqlite3` plus a manifest, takes
+roughly 60 to 90 seconds, and produces an approximately 580 MB database. The
+builder refuses to overwrite an existing artifact, so delete the directory first
+when rebuilding.
+
 ## Verification commands
 
 Run the warning-strict unit suite:
@@ -99,22 +115,24 @@ disabled`) reports:
 
 | Metric | Value |
 | --- | ---: |
-| Hit Rate@10 | 0.76 |
-| MRR | 0.360109 |
-| MTTC | 4.94 |
-| TechnicalScore | 0.609233 |
+| Hit Rate@10 | 0.920 |
+| MRR | 0.5245 |
+| MTTC | 3.425 |
+| TechnicalScore | 0.7688 |
 | Reported prompt/completion tokens | 0 / 0 |
 
 Scenario Hit Rate@10:
 
 | Boundary | Browsing | Buying | Intent Override |
 | ---: | ---: | ---: | ---: |
-| 0.90 | 0.9375 | 0.775 | 0.20 |
+| 0.90 | 0.95 | 0.90 | 0.90 |
 
-The retained evaluator duration is ~748 seconds, excluding one-time catalog
-construction. Two independent runs matched exactly on all 200 session outcomes,
-the canonical summary, and all 10,419 typed trace events; only timing and
-run/session identifiers differed.
+The retained evaluator duration is ~190 seconds on the reference machine,
+excluding the one-time artifact build. Determinism is byte-verified: two
+independent full runs matched exactly on the canonical summary, all 200
+per-session outcomes including first-hit turn, and all typed trace events; only
+timing and run/session identifiers differed. Wall-clock varies widely with
+machine load, so runtime is not a comparison axis.
 
 An earlier `0.785` figure was measured on the pre-SQLite in-memory engine and is
 not reproducible on the current backend; it is not an acceptance target. See
@@ -122,21 +140,24 @@ not reproducible on the current backend; it is not an acceptance target. See
 
 ## Runtime characteristics
 
-- Catalog normalization, metadata indexes, cached quality order, and the in-memory FTS table are built once when `Agent` is constructed.
-- Catalog startup is CPU and RAM work; no artifact or network lookup occurs.
+- All catalog parsing, normalization, structured-attribute projection, material and keyed-feature recovery, quality priors, and the FTS5 index are built once by the offline artifact builder, not at process start.
+- Backend open memory-maps the prebuilt SQLite artifact and validates the catalog fingerprint and file sizes. It deliberately does not re-hash the ~580 MB database, so measured startup is ~45 ms.
+- The read connection uses a 1 GiB memory map and a 128 MiB page cache. Materialized product records are cached for the life of the backend, so rotation-overlapping candidates are not re-fetched across turns.
+- Per turn: one bounded SQL shortlist per route (route limit 1,000), candidate materialization capped at 5,000, and belief scoring linear in that bounded pool. No per-turn allocation grows with conversation length.
 - Phrase lookup is precomputed. The discarded per-value regex implementation exceeded a practical evaluator runtime.
-- Quality fallback order is cached because repeated sorting of 50,000 products materially increased multi-run time.
-- Leave-one-out counterfactual FTS routes run only when strict eligibility yields fewer than `top_k` products.
+- Leave-one-out counterfactual FTS routes run only when strict eligibility yields fewer than `top_k` products, and by default only when that pool is empty.
+- Continuous `tracemalloc` tracking is off by default; it dominated traced-run time and is diagnostic-only.
 - JSONL tracing opens an append handle per event for simple failure isolation. It adds filesystem overhead only when the JSONL sink is explicitly enabled; the organizer adapter defaults to a no-op sink.
 
 ## Constraints and known failures
 
 - Exact `parent_asin` equality is the only hit condition; only the first ten valid unique IDs are scored.
 - Sessions end on a hit or after turn ten; misses use turn eleven for MTTC.
-- Intent Override is the weakest retained scenario at 0.20 Hit Rate@10.
+- Scenario Hit Rate@10 is now level at 0.90 for Boundary, Buying, and Intent Override, with Browsing at 0.95. Intent Override was the weakest scenario at 0.20 until a retrieve-then-reject bug was fixed, where a canonicalized material reached retrieval SQL but not the eligibility gate.
+- The remaining 16 public misses are ranking-discrimination cases, not vocabulary gaps. Two independent miss classifications found zero vocabulary gaps, because the simulator builds the customer's words from the target product's own catalog strings. See `docs/STATUS.md` for the contribution-level diagnosis.
 - Display-only prices (`—` and `from N`) normalize to unknown and cannot satisfy hard price constraints.
 - Explicit exclusions are protected from counterfactual relaxation.
-- The agent is lexical and metadata-based; semantic embeddings and feature clustering are not present.
+- The agent is lexical and metadata-based; semantic embeddings and feature clustering are not present. The offline embedding route is specified but deliberately not built, gated on evidence of a real vocabulary gap.
 - The public set has 200 sessions and the private set has 800, so public overfitting is a material risk.
 - The catalog is ignored by Git and must be supplied before tests or evaluation that construct a full agent.
 - Generated experiment directories are ignored. Retain only the best run for a meaningful change class and summarize it in `experiments/RUNS.md`.
@@ -148,6 +169,8 @@ The runtime dependency list is empty, and the agent imports only Python standard
 
 ## Design references
 
+- [Project status: hardcoded values and plan states](docs/STATUS.md)
 - [Approved offline hybrid agent design](docs/superpowers/specs/2026-08-28-offline-hybrid-shopping-agent-design.md)
+- [Scalable retrieval and oversight design](docs/superpowers/specs/2026-08-28-scalable-retrieval-and-oversight-design.md)
 - [Deterministic offline agent implementation plan](docs/superpowers/plans/2026-08-28-deterministic-offline-agent-implementation.md)
 - [Retained experiment history](experiments/RUNS.md)

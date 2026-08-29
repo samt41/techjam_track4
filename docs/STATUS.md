@@ -2,7 +2,7 @@
 
 This document records two things an outside reader needs before trusting or extending the agent. First, every tuned or hardcoded value currently in the code, with why it exists and how principled it is. Second, the state of each design document, including what unbuilt work is gated on.
 
-Current best config: Hit Rate@10 0.920, TechnicalScore 0.7681, on all 200 public sessions, deterministic. See the README for the full table.
+Current best config: Hit Rate@10 0.920, TechnicalScore 0.7688, on all 200 public sessions, deterministic. See the README for the full table.
 
 ## Hardcoded and tuned values
 

@@ -20,7 +20,7 @@ uv sync
 uv run python -m unittest -v
 ```
 
-The suite is 157 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
+The suite is 167 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
 
 ### Get the catalog
 
@@ -89,9 +89,9 @@ The retained deterministic run on all 200 public sessions, current artifact engi
 | Metric | Deterministic agent | Organizer BM25 baseline |
 | --- | ---: | ---: |
 | Hit Rate@10 | 0.920 | 0.125 |
-| MRR | 0.5221 | 0.068034 |
+| MRR | 0.5245 | 0.068034 |
 | MTTC | 3.425 | 9.81 |
-| TechnicalScore | 0.7681 | 0.10671 |
+| TechnicalScore | 0.7688 | 0.10671 |
 
 Per-scenario Hit Rate@10 is 0.90 for Boundary, 0.95 for Browsing, 0.90 for Buying, and 0.90 for Intent Override.
 
