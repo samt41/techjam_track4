@@ -59,7 +59,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Evidence retention (`.gitignore` D-04) and the rescued 200-session run-A anchor record
+- [x] 01-01-PLAN.md — Evidence retention (`.gitignore` D-04) and the rescued 200-session run-A anchor record
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 0/9 | Not started | - |
+| 1. Measurement Rig Core | 1/9 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
