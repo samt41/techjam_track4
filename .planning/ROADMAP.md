@@ -69,7 +69,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-05-PLAN.md — Resampling statistics engine and the Layer-1 known-answer fixtures (MEAS-04/05/06/08)
+- [x] 01-05-PLAN.md — Resampling statistics engine and the Layer-1 known-answer fixtures (MEAS-04/05/06/08)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 4/9 | In Progress|  |
+| 1. Measurement Rig Core | 5/9 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
