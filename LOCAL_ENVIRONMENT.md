@@ -14,7 +14,7 @@ This is the operational reference for preparing the Track 4 repository, verifyin
 - no third-party runtime packages
 - no Node.js, frontend, middleware service, GPU, Docker, LLM, API key, or network service required
 
-Python 3.10 or later is supported by the project metadata. If JavaScript or TypeScript is introduced for a later visualization, use `pnpm`; there is no current JS/TS component.
+Python 3.11 or later is supported by the project metadata. If JavaScript or TypeScript is introduced for a later visualization, use `pnpm`; there is no current JS/TS component.
 
 ## Directory and artifact map
 
