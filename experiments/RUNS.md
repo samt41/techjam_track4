@@ -2,6 +2,60 @@
 
 Only the best run for each meaningful implementation class is retained. Generated run directories are local artifacts and are not committed.
 
+### Superseded as the system of record by the arena leaderboard
+
+From Phase 1 onward the generated report is `experiments/LEADERBOARD.md`, and
+`experiments/baselines/leaderboard.json` is its source of truth. The Markdown is a
+rendered view — regenerate both with `python -m arena.run_arena adjudicate` rather
+than editing either by hand.
+
+**A "retained historical row" now means a committed file, not a number in prose.**
+Every row below this section was a figure typed into this document. From Phase 1 a
+retained result is a provenance-carrying record under `experiments/baselines/`,
+carrying its own fingerprint, code revision, catalog and dataset digests, and its
+full 200 session outcomes. This file is retained for the prose evidence it holds —
+the exploration ablation, the two-run byte-determinism verification, the
+forced-fallback verification, and the public-ceiling miss audit — none of which
+exists anywhere else.
+
+**Precision.** The aggregates in this file are recorded to four decimal places while
+the leaderboard prints six, so the two agree only after rounding. The retained row
+below reads `0.5245` / `0.7688`; the committed record reads `0.524466` / `0.76884`.
+Do not compare them as exact equals — recomputing TechnicalScore from the four-place
+figures gives `0.76885`, which displays as `0.7689`.
+
+**Cross-validation.** The `0.920` / `0.524466` / `3.425` / `0.7575` / `0.76884`
+anchor was reproduced by `arena/` independently of `experiments/run_public.py`, and
+agrees with the rescued `anchor-legacy` record on all six aggregates and all four
+scenario summaries.
+
+**Two measured findings.** Both are reported as measured. Neither was predicted by
+this rig, which holds no expectation about either outcome.
+
+- **`ΔTS(A, B)`, the lexical-mode ablation** (`auto` vs forced TF-IDF `fallback`,
+  exploration disabled in both): `+0.006110`, 95% CI `[-0.018926, 0.031082]`,
+  permutation p `0.650235`, Holm-adjusted p `1.000000`, MDD `0.036305`, sigma-hat
+  `0.012959`, corrected `ΔTS` `-0.001201`. Verdict **`not detectable`** — the
+  observed delta sits below the minimum detectable difference, so this null is
+  uninformative and must **not** be read as evidence that the two engines are
+  equivalent. Run B's own aggregates were HitRate@10 `0.925` and TechnicalScore
+  `0.774950`, both above run A; the comparison still does not resolve them apart at
+  n=200. This differs in direction from the superseded-HEAD forced-fallback figure
+  recorded further down this file (`0.75` / `0.599` against an FTS baseline of
+  `0.76` / `0.609233`); those were measured at HEAD `e76b3ab` and are not
+  same-HEAD-comparable to these.
+- **`ΔTS(A, C)`, the exploration ablation** (`disabled` vs `tail-only`):
+  `0.000000` exactly, 95% CI `[0.000000, 0.000000]`, permutation p `1.000000`,
+  Holm-adjusted p `1.000000`, MDD `0.000000`, corrected `ΔTS` `0.000000`. Verdict
+  **`no difference`**. Run C's 200 session outcomes are byte-identical to run A's,
+  so the two arms are degenerate and the rig reports them through its zero-variance
+  guard rather than as a detectable difference. This reproduces, on committed
+  records and at current HEAD, the metric-identical exploration result the
+  superseded section below describes in prose.
+
+A permutation p reported by this rig can never be `0`: its Phipson-Smyth floor is
+`1 / (R + 1)`, which at `R = 10,000` is `9.999e-05`.
+
 ### Historical (pre-SQLite, in-memory catalog)
 
 These numbers were measured on the original in-memory catalog. The Task 5 SQLite
