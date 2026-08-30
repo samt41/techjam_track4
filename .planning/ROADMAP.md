@@ -73,7 +73,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 01-06-PLAN.md — Adjudication policy: D-20 ordering, D-23 win rule, practical floor (MEAS-07)
+- [x] 01-06-PLAN.md — Adjudication policy: D-20 ordering, D-23 win rule, practical floor (MEAS-07)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 5/9 | In Progress|  |
+| 1. Measurement Rig Core | 6/9 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
