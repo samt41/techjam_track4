@@ -1,0 +1,46 @@
+{
+  "catalog_sha256": "unknown",
+  "code_revision": "unknown_revision",
+  "dataset_sha256": "unknown",
+  "efficiency": 0.7575,
+  "hit_rate_at_10": 0.92,
+  "mrr": 0.524466,
+  "mttc": 3.425,
+  "provenance": "rescued from untracked repo-root results.json; producing HEAD not recorded (RESEARCH assumption A2); superseded by experiments/baselines/run-a once plan 01-08 completes",
+  "provenance_complete": false,
+  "recommended_technical_score": 0.76884,
+  "reported_token_usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  },
+  "run_id": "anchor-legacy",
+  "sample_count": 200,
+  "scenario_metrics": {
+    "boundary": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.404444,
+      "mttc": 3.6,
+      "sample_count": 10
+    },
+    "browsing": {
+      "hit_rate_at_10": 0.95,
+      "mrr": 0.527862,
+      "mttc": 3.125,
+      "sample_count": 80
+    },
+    "buying": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.464296,
+      "mttc": 3.2875,
+      "sample_count": 80
+    },
+    "intent_override": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.715873,
+      "mttc": 4.533333,
+      "sample_count": 30
+    }
+  },
+  "source_sha256": "2b157db1b244cb7023e51c3b7e62a8a1be0b0620c8fd0ff0f3a90b127bb2236c"
+}

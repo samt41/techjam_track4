@@ -8,6 +8,11 @@ __pycache__/
 results.json
 experiments/*/
 experiments/.*-/
+# Retained measurement evidence. Scoped to this one directory on purpose: a
+# broader negation would re-include the ~10,400-event route traces and the
+# 580 MB artifact. Must stay AFTER the excludes -- git will not descend into an
+# excluded directory, so a negation placed before them is silently ignored.
+!experiments/baselines/
 data/catalog.jsonl
 data/*.artifacts/
 data/releases/
