@@ -157,6 +157,12 @@ None. No network endpoint, auth path, file-access pattern, or schema at a trust 
 - Caution for a future contributor: a bare string constant whose first dotted component is exactly `"evaluator"` will trip the scan even in a comment-like docstring context. Prose such as `"see evaluator/local_evaluator.py"` does not trip it (the first dotted component is the whole phrase). This is intended strictness.
 - No blockers.
 
+## Self-Check: PASSED
+
+Both claimed files (`arena/evaluator_bridge.py`, `tests/test_arena_boundary.py`) exist and
+are tracked by `git ls-files`. All three claimed commits (`4feb517`, `323f04c`, `bd91750`)
+are present in `git log`, sitting directly on the intended base `46a93be`. Working tree clean.
+
 ---
 *Phase: 01-measurement-rig-core*
 *Completed: 2026-08-30*
