@@ -33,9 +33,9 @@ scenario summaries.
 this rig, which holds no expectation about either outcome.
 
 - **`ΔTS(A, B)`, the lexical-mode ablation** (`auto` vs forced TF-IDF `fallback`,
-  exploration disabled in both): `+0.006110`, 95% CI `[-0.018926, 0.031082]`,
-  permutation p `0.650235`, Holm-adjusted p `1.000000`, MDD `0.036305`, sigma-hat
-  `0.012959`, corrected `ΔTS` `-0.001201`. Verdict **`not detectable`** — the
+  exploration disabled in both): `+0.006110`, 95% CI `[-0.018886, 0.031239]`,
+  permutation p `0.645335`, Holm-adjusted p `1.000000`, MDD `0.035987`, sigma-hat
+  `0.012845`, corrected `ΔTS` `-0.001137`. Verdict **`not detectable`** — the
   observed delta sits below the minimum detectable difference, so this null is
   uninformative and must **not** be read as evidence that the two engines are
   equivalent. Run B's own aggregates were HitRate@10 `0.925` and TechnicalScore
@@ -55,6 +55,16 @@ this rig, which holds no expectation about either outcome.
 
 A permutation p reported by this rig can never be `0`: its Phipson-Smyth floor is
 `1 / (R + 1)`, which at `R = 10,000` is `9.999e-05`.
+
+**Which numbers are current.** The three records were regenerated after a defect was
+fixed in which a record's stored fingerprint differed from the one the report derived
+for it. Fingerprints seed the bootstrap and permutation streams, so the CI, p, MDD and
+sigma-hat above are the post-fix values. The session outcomes were byte-identical
+across the regeneration and both deltas are unchanged, which is the expected
+consequence of an identity-only fix: `ΔTS` depends on the data, not on the seed. The
+leaderboard also carries `anchor-legacy` and the `synthetic-promote-10` validation
+fixture as report-only entries; neither is adjudicated, so neither joins the Holm
+family nor changes `correction_k`, which remains `2`.
 
 ### Historical (pre-SQLite, in-memory catalog)
 
