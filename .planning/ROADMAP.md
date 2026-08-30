@@ -63,9 +63,9 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — The sole evaluator seam and the machine-checked import boundary (MEAS-15)
-- [ ] 01-03-PLAN.md — Metric chain, baselines store, HR@K curve, per-scenario σ, and the MEAS-16 anchor
-- [ ] 01-04-PLAN.md — `CandidateSpec` fingerprinting and allow-list validation (MEAS-14)
+- [x] 01-02-PLAN.md — The sole evaluator seam and the machine-checked import boundary (MEAS-15)
+- [x] 01-03-PLAN.md — Metric chain, baselines store, HR@K curve, per-scenario σ, and the MEAS-16 anchor
+- [x] 01-04-PLAN.md — `CandidateSpec` fingerprinting and allow-list validation (MEAS-14)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 1/9 | In Progress|  |
+| 1. Measurement Rig Core | 4/9 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
