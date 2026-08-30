@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 import arena.statistics
 from arena.adjudication import (
@@ -14,8 +20,14 @@ from arena.adjudication import (
     classify_verdict,
 )
 from arena.candidate import CandidateSpec
-from arena.statistics import expected_max_of_k, holm_bonferroni
-from tests.arena_fixtures import sessions_from_ranks
+from arena.statistics import expected_max_of_k, holm_bonferroni, pair_seed
+from tests.arena_fixtures import (
+    load_anchor_sessions,
+    promote_hits_to_rank_one,
+    sessions_from_ranks,
+)
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 # Resample budget for this module. FAST_RESAMPLES covers every structural and win-rule
@@ -380,6 +392,163 @@ class DegenerateTest(unittest.TestCase):
         self.assertGreater(row.standard_error, 0.0)
         self.assertLess(abs(row.delta), row.minimum_detectable_difference)
         self.assertIs(row.verdict, Verdict.NOT_DETECTABLE)
+
+
+class Layer3ControlTest(unittest.TestCase):
+    """D-01 Layer 3 adjudication controls, on synthetic arms with known answers.
+
+    Every arm here is derived from the committed anchor record, so the class needs no
+    evaluation run. Comparison discipline for the two synthetic-control deltas: the
+    delta subtracts two independently 6-dp-rounded TechnicalScores, so residual binary
+    float error is guaranteed -- the computed values are 0.011931000000000025 (m=10) and
+    0.08521400000000001 (m=77). An exact equality assertion on either is a guaranteed
+    false failure. The literals are correct; only the comparison operator is at issue.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.anchor = load_anchor_sessions()
+
+    def test_guaranteed_true_positive(self) -> None:
+        # Adjudicated as a SINGLE candidate, so k=1 and no winner's-curse subtraction
+        # applies. This synthetic control replaces a real evaluation run as the
+        # true-positive check: its answer is analytically known, whereas a real run's
+        # true effect is not, which makes it a strictly stronger control.
+        row = adjudicate(
+            arm("baseline", self.anchor),
+            (arm("promote-10", promote_hits_to_rank_one(self.anchor, 10)),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertAlmostEqual(row.delta, 0.011931, places=9)
+        self.assertLess(row.holm_p, 0.05)
+        self.assertEqual(row.corrected_delta, row.delta)
+        self.assertIs(row.clears_practical_floor, True)
+        self.assertIs(row.exchange_rate_ok, True)
+        self.assertEqual(row.failed_criteria, ())
+        self.assertIs(row.verdict, Verdict.WIN)
+        self.assertGreater(row.delta, row.minimum_detectable_difference)
+
+    def test_true_positive_at_larger_effect(self) -> None:
+        row = adjudicate(
+            arm("baseline", self.anchor),
+            (arm("promote-77", promote_hits_to_rank_one(self.anchor, 77)),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertAlmostEqual(row.delta, 0.085214, places=9)
+        self.assertIs(row.verdict, Verdict.WIN)
+
+    def test_guaranteed_true_negative(self) -> None:
+        # A rig that has only ever been shown a real effect cannot be trusted to say
+        # "no", and saying that honestly is the entire point of MEAS-06.
+        row = adjudicate(
+            arm("baseline", self.anchor),
+            (arm("clone", self.anchor),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertIs(row.verdict, Verdict.NO_DIFFERENCE)
+        self.assertEqual(row.permutation_p, 1.0)
+        self.assertEqual(row.minimum_detectable_difference, 0.0)
+
+    def test_near_null_reports_a_legible_mdd(self) -> None:
+        # Exactly one session moved from rank 4 to rank 3: delta 0.000125 at n=200.
+        moved = tuple(
+            dataclasses.replace(item, best_rank=3, reciprocal_rank=1.0 / 3.0)
+            if index == self._first_rank_four_index()
+            else item
+            for index, item in enumerate(self.anchor)
+        )
+        row = adjudicate(
+            arm("baseline", self.anchor),
+            (arm("near-null", moved),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertIsNot(row.verdict, Verdict.WIN)
+        self.assertGreater(row.minimum_detectable_difference, 0.0)
+        # The null is correctly reported as uninformative rather than as evidence of
+        # equivalence.
+        self.assertGreater(row.minimum_detectable_difference, abs(row.delta))
+
+    def _first_rank_four_index(self) -> int:
+        for index, item in enumerate(self.anchor):
+            if item.best_rank == 4:
+                return index
+        raise AssertionError("the anchor record has no rank-4 session to move")
+
+
+# The child prints one serialized adjudication of a small fixed fixture. The resample
+# count is interpolated EXPLICITLY so the child cannot fall back to the 10,000 default
+# and blow this module's time budget.
+_ADJUDICATION_PROGRAM = (
+    "import json;"
+    "from arena.adjudication import CandidateArm, adjudicate;"
+    "from arena.candidate import CandidateSpec;"
+    "from tests.arena_fixtures import sessions_from_ranks;"
+    "spec=lambda name: CandidateSpec(name=name, code_revision='0'*40,"
+    " code_revision_dirty=False, overrides=(), catalog_sha256='a'*64,"
+    " dataset_sha256='b'*64);"
+    "baseline=CandidateArm(spec=spec('baseline'), sessions=sessions_from_ranks((2,)*12));"
+    "candidate=CandidateArm(spec=spec('promoted'),"
+    " sessions=sessions_from_ranks((1,)+(2,)*11));"
+    f"rows=adjudicate(baseline, (candidate,), resamples={FAST_RESAMPLES});"
+    "print(json.dumps([row.as_record() for row in rows], sort_keys=True))"
+)
+
+
+def _adjudication_in_child(hash_seed: str) -> str:
+    environment = dict(os.environ)
+    environment["PYTHONHASHSEED"] = hash_seed
+    result = subprocess.run(
+        (sys.executable, "-c", _ADJUDICATION_PROGRAM),
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=str(_REPOSITORY_ROOT),
+        env=environment,
+    )
+    return result.stdout.strip()
+
+
+class ReproducibilityTest(unittest.TestCase):
+    """D-24: the same inputs must adjudicate byte-identically, in two processes."""
+
+    def _serialized(self, rows: tuple[AdjudicationRow, ...]) -> str:
+        return json.dumps([row.as_record() for row in rows], sort_keys=True)
+
+    def test_two_adjudications_serialize_identically(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = arm("promoted", _FLOOR_CANDIDATE)
+        first = adjudicate(baseline, (candidate,), resamples=FAST_RESAMPLES)
+        second = adjudicate(baseline, (candidate,), resamples=FAST_RESAMPLES)
+        self.assertEqual(self._serialized(first), self._serialized(second))
+
+    def test_reproducible_across_processes(self) -> None:
+        # Seeds derive from the candidate fingerprints, never from the clock, so two
+        # interpreters started with different hash seeds must still agree byte for byte.
+        first = _adjudication_in_child("0")
+        second = _adjudication_in_child("1")
+        # Guard against a vacuous pass: two empty stdouts are also byte-identical.
+        self.assertIn('"verdict"', first)
+        self.assertEqual(first, second)
+
+    def test_argument_order_is_fixed_not_symmetric(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = arm("promoted", _FLOOR_CANDIDATE)
+        self.assertNotEqual(
+            pair_seed(
+                baseline.spec.fingerprint, candidate.spec.fingerprint, "bootstrap"
+            ),
+            pair_seed(
+                candidate.spec.fingerprint, baseline.spec.fingerprint, "bootstrap"
+            ),
+        )
+        forward = adjudicate(baseline, (candidate,), resamples=FAST_RESAMPLES)[0]
+        reverse = adjudicate(candidate, (baseline,), resamples=FAST_RESAMPLES)[0]
+        # The statistic itself is order-antisymmetric...
+        self.assertEqual(reverse.delta, -forward.delta)
+        # ...but the replicate stream is not a mirror of the forward one, because the
+        # seed is not symmetric in its two arguments. The property under test is
+        # reproducibility, never order invariance.
+        self.assertNotEqual(reverse.standard_error, forward.standard_error)
 
 
 if __name__ == "__main__":
