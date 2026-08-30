@@ -51,7 +51,18 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running the paired bootstrap/permutation test, Holm-Bonferroni correction, the ≥0.01 TechnicalScore practical-significance floor, and the winner's-curse order-statistic correction against two retained historical rows in `experiments/RUNS.md` produces a reproducible verdict and a minimum-detectable-difference value, using no new candidates.
   4. Every per-scenario non-inferiority verdict in the report states its bucket size and binomial standard error (e.g., Boundary n=10, σ≈0.086, explicitly flagged as not decision-grade in isolation).
   5. `CandidateSpec` construction from identical inputs produces an identical fingerprint hash twice, and the arena module contains no import of `evaluator.local_evaluator` internals beyond calling `evaluate()` as an opaque function.
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Evidence retention (`.gitignore` D-04) and the rescued 200-session run-A anchor record
+- [ ] 01-02-PLAN.md — The sole evaluator seam and the machine-checked import boundary (MEAS-15)
+- [ ] 01-03-PLAN.md — Metric chain, baselines store, HR@K curve, per-scenario σ, and the MEAS-16 anchor
+- [ ] 01-04-PLAN.md — `CandidateSpec` fingerprinting and allow-list validation (MEAS-14)
+- [ ] 01-05-PLAN.md — Resampling statistics engine and the Layer-1 known-answer fixtures (MEAS-04/05/06/08)
+- [ ] 01-06-PLAN.md — Adjudication policy: D-20 ordering, D-23 win rule, practical floor (MEAS-07)
+- [ ] 01-07-PLAN.md — `leaderboard.json` source of truth and the generated `LEADERBOARD.md` report
+- [ ] 01-08-PLAN.md — Arena runner and CLI, proven with fakes so the suite stays catalog-free
+- [ ] 01-09-PLAN.md — The three D-02 evaluation runs, adjudication, and the `RUNS.md` pointer (operator-gated)
 
 ### Phase 2: Expanded Dataset & Paraphrase Probe
 **Goal**: An expanded evaluation corpus and a matched, anti-circular paraphrase probe exist and are frozen, giving the project its first real evidence of vocabulary generalization — and the headline finding for the Innovation narrative.
@@ -141,7 +152,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 0/TBD | Not started | - |
+| 1. Measurement Rig Core | 0/9 | Not started | - |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
