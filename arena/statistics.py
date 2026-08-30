@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import math
 import random
 import statistics
 from dataclasses import dataclass
@@ -215,3 +216,112 @@ def exact_paired_sign_flip_p_value(differences: tuple[float, ...]) -> float:
     # two-sided tail convention that paired_permutation applies at Monte-Carlo scale,
     # against a hand-checkable answer.
     return count / 2**total
+
+
+# Computed at import from NormalDist rather than hard-coded; the expected literal sits
+# in the trailing comment so a reader can check each by eye.
+Z_ALPHA_TWO_SIDED = statistics.NormalDist().inv_cdf(0.975)  # 1.9599639845400536
+Z_POWER_80 = statistics.NormalDist().inv_cdf(0.80)  # 0.8416212335729144
+MDD_MULTIPLIER = Z_ALPHA_TWO_SIDED + Z_POWER_80  # 2.801585218112968
+
+_SIMPSON_PANELS = 2000
+_SIMPSON_BOUND = 9.0
+
+
+def holm_bonferroni(p_values: tuple[float, ...]) -> tuple[float, ...]:
+    # The Holm family is the k-1 comparisons of candidates against a COMMON BASELINE in
+    # one adjudication event, never candidates crossed with scenarios (D-19). Folding
+    # four scenarios in would inflate the family fourfold, destroy power on the one
+    # comparison that decides anything, and add power to a Boundary bucket of n=10 that
+    # can detect nothing regardless. The caller in plan 01-06 must not get this wrong.
+    total = len(p_values)
+    if total == 0:
+        raise ValueError("holm-bonferroni requires at least one p-value")
+    for value in p_values:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("p-values must be between 0 and 1")
+    # Stable final tie-break on the input index, matching the ordering discipline in
+    # ranking.py:96-113 -- ties must never resolve on iteration order.
+    order = sorted(range(total), key=lambda index: (p_values[index], index))
+    adjusted = [0.0] * total
+    running = 0.0
+    for rank, index in enumerate(order):
+        # The RUNNING MAXIMUM is the monotonicity enforcement and is the step most
+        # commonly omitted. Without it an adjusted p can DECREASE as the raw p
+        # increases, which is incoherent and can make a weaker result look stronger than
+        # a stronger one: the textbook (0.01, 0.04, 0.03) case would return
+        # (0.03, 0.04, 0.06) instead of the correct (0.03, 0.06, 0.06).
+        running = max(running, min(1.0, (total - rank) * p_values[index]))
+        adjusted[index] = running
+    return tuple(adjusted)
+
+
+def minimum_detectable_difference(standard_error: float) -> float:
+    """Smallest true delta detectable at 80% power, alpha=0.05 two-sided, given this SE."""
+    if standard_error < 0.0:
+        raise ValueError("standard error must be non-negative")
+    # The input is the BOOTSTRAP SE of the delta, not sd_d / sqrt(n). TechnicalScore is
+    # not a mean of per-session values (D-17), so there is no per-session difference
+    # whose standard deviation could be taken; the bootstrap SE is the SE of the
+    # statistic actually being tested, is already computed by paired_bootstrap at zero
+    # extra cost, and inherits the pairing benefit automatically.
+    #
+    # This value must be reported beside EVERY adjudication row including null ones
+    # (D-22, MEAS-06). Reporting it is the entire mechanism that makes "no significant
+    # difference" visibly distinct from "we could not have detected one".
+    #
+    # One further consequence of the 2.801585218112968 multiplier, which plan 01-06
+    # depends on: the multiplier bundles the two-sided alpha with 80% power, so
+    # abs(delta) >= MDD is roughly a 2.8-sigma effect, whose two-sided permutation p is
+    # around 0.005. A non-degenerate result that is simultaneously at-or-above its MDD
+    # and Holm-non-significant is therefore rare by construction -- it needs a Holm
+    # family large enough to inflate 0.005 past 0.05. That is why 01-06 exposes its
+    # verdict decision as an injectable pure helper instead of trying to construct such
+    # a fixture from session data.
+    return MDD_MULTIPLIER * standard_error
+
+
+def expected_max_of_k(
+    k: int,
+    *,
+    panels: int = _SIMPSON_PANELS,
+    bound: float = _SIMPSON_BOUND,
+) -> float:
+    """E[max of k iid standard normals], by composite Simpson integration on NormalDist."""
+    # No RNG anywhere in here: the winner's-curse correction has to be byte-reproducible.
+    # Blom's approximation inv_cdf((k - 0.375) / (k + 0.25)) errs by 2.5e-2 at k=2
+    # against Simpson's 3.8e-15, so it is kept only as an independent cross-check in a
+    # test and is never the implementation.
+    if k < 1:
+        raise ValueError("k must be at least 1")
+    if k == 1:
+        return 0.0
+    if panels % 2:
+        raise ValueError("simpson's rule requires an even panel count")
+    normal = statistics.NormalDist()
+    width = (2.0 * bound) / panels
+
+    def integrand(x: float) -> float:
+        return x * k * (normal.cdf(x) ** (k - 1)) * normal.pdf(x)
+
+    terms = [integrand(-bound), integrand(bound)]
+    for step in range(1, panels):
+        weight = 4.0 if step % 2 else 2.0
+        terms.append(weight * integrand(-bound + step * width))
+    # math.fsum, not sum: 2,001 terms spanning nine orders of magnitude accumulate
+    # visible drift under naive addition, and the closed-form anchors are asserted to
+    # twelve places.
+    return math.fsum(terms) * width / 3.0
+
+
+def winners_curse_correction(standard_error: float, k: int) -> float:
+    """Expected upward selection bias from taking the best of k candidates."""
+    # The sigma fed here is the PAIRED-DIFFERENCE bootstrap SE of the delta (D-21),
+    # typically 0.002 to 0.008 on this data -- NOT the 0.019 absolute binomial SE of
+    # HR@10 quoted in PROJECT.md and PITFALLS.md. Those are different quantities and the
+    # distinction changes the printed number by roughly an order of magnitude, which is
+    # why plan 01-07 prints sigma-hat, k and E[max of k] as separate audited columns.
+    # At SE = 0.003 the correction is 0.0035 at k=5 and 0.0046 at k=10, both the same
+    # order as Phase 5's ~0.005 stopping threshold (POS-04), so this decides a go/no-go
+    # rather than being cosmetic.
+    return standard_error * expected_max_of_k(k)
