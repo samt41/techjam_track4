@@ -81,7 +81,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 01-08-PLAN.md — Arena runner and CLI, proven with fakes so the suite stays catalog-free
+- [x] 01-08-PLAN.md — Arena runner and CLI, proven with fakes so the suite stays catalog-free
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 7/9 | In Progress|  |
+| 1. Measurement Rig Core | 8/9 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
