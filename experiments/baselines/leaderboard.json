@@ -1,0 +1,174 @@
+{
+  "adjudication": [
+    {
+      "baseline_fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "candidate_count": 1,
+      "candidate_fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "candidate_name": "synthetic-promote-10",
+      "ci_lower": 0.005018999999999996,
+      "ci_upper": 0.019768000000000008,
+      "clears_practical_floor": true,
+      "corrected_delta": 0.011931000000000025,
+      "correction_k": 1,
+      "delta": 0.011931000000000025,
+      "exchange_rate_ok": true,
+      "expected_max_of_k": 0.0,
+      "failed_criteria": [],
+      "hit_rate_delta": 0.0,
+      "holm_p": 0.0026997300269973002,
+      "is_champion": true,
+      "minimum_detectable_difference": 0.010435182318398023,
+      "mrr_delta": 0.03977200000000003,
+      "mttc_delta": 0.0,
+      "permutation_p": 0.0026997300269973002,
+      "resamples": 10000,
+      "standard_error": 0.0037247420677878683,
+      "verdict": "win"
+    }
+  ],
+  "assumptions": {
+    "efficiency_rounding": "6 dp at output, matching evaluator/local_evaluator.py:286",
+    "holm_family": "non-baseline candidates against a common baseline (D-19)",
+    "per_bucket_sigma_source": "bucket-observed p and n (D-15)",
+    "per_scenario_holm_corrected": false,
+    "practical_floor": 0.01,
+    "resample_count": 10000,
+    "winners_curse_sigma_source": "paired-difference bootstrap SE of TechnicalScore (D-21)"
+  },
+  "baseline_fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+  "candidates": [
+    {
+      "code_revision": "unknown_revision",
+      "code_revision_dirty": true,
+      "efficiency": 0.7575,
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "hit_rate_at_10": 0.92,
+      "mrr": 0.564238,
+      "mttc": 3.425,
+      "name": "synthetic-promote-10",
+      "overrides": {},
+      "provenance": "deterministic fixture derived from experiments/baselines/anchor-legacy by promote_hits_to_rank_one(sessions, 10); a validation control that proves the adjudication machinery is exercised, never an evaluation run",
+      "run_id": "synthetic-promote-10",
+      "sample_count": 200,
+      "technical_score": 0.780771
+    },
+    {
+      "code_revision": "unknown_revision",
+      "code_revision_dirty": true,
+      "efficiency": 0.7575,
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "hit_rate_at_10": 0.92,
+      "mrr": 0.524466,
+      "mttc": 3.425,
+      "name": "anchor-legacy",
+      "overrides": {},
+      "provenance": "rescued from untracked repo-root results.json; producing HEAD not recorded (RESEARCH assumption A2); superseded by experiments/baselines/run-a once plan 01-08 completes",
+      "run_id": "anchor-legacy",
+      "sample_count": 200,
+      "technical_score": 0.76884
+    }
+  ],
+  "hit_rate_curve": [
+    {
+      "curve": {
+        "1": 0.435,
+        "10": 0.92,
+        "3": 0.63,
+        "5": 0.735
+      },
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3"
+    },
+    {
+      "curve": {
+        "1": 0.385,
+        "10": 0.92,
+        "3": 0.59,
+        "5": 0.715
+      },
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e"
+    }
+  ],
+  "scenario_breakout": [
+    {
+      "binomial_standard_error": 0.09486832980505137,
+      "decision_grade": false,
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.404444,
+      "mttc": 3.6,
+      "sample_count": 10,
+      "scenario_type": "boundary"
+    },
+    {
+      "binomial_standard_error": 0.02436698586202242,
+      "decision_grade": true,
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "hit_rate_at_10": 0.95,
+      "mrr": 0.570764,
+      "mttc": 3.125,
+      "sample_count": 80,
+      "scenario_type": "browsing"
+    },
+    {
+      "binomial_standard_error": 0.03354101966249684,
+      "decision_grade": true,
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.51249,
+      "mttc": 3.2875,
+      "sample_count": 80,
+      "scenario_type": "buying"
+    },
+    {
+      "binomial_standard_error": 0.054772255750516606,
+      "decision_grade": false,
+      "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.738095,
+      "mttc": 4.533333,
+      "sample_count": 30,
+      "scenario_type": "intent_override"
+    },
+    {
+      "binomial_standard_error": 0.09486832980505137,
+      "decision_grade": false,
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.404444,
+      "mttc": 3.6,
+      "sample_count": 10,
+      "scenario_type": "boundary"
+    },
+    {
+      "binomial_standard_error": 0.02436698586202242,
+      "decision_grade": true,
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "hit_rate_at_10": 0.95,
+      "mrr": 0.527862,
+      "mttc": 3.125,
+      "sample_count": 80,
+      "scenario_type": "browsing"
+    },
+    {
+      "binomial_standard_error": 0.03354101966249684,
+      "decision_grade": true,
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.464296,
+      "mttc": 3.2875,
+      "sample_count": 80,
+      "scenario_type": "buying"
+    },
+    {
+      "binomial_standard_error": 0.054772255750516606,
+      "decision_grade": false,
+      "fingerprint": "b8ce126916a045dab0598fb27b4dd3638a3d9d9b61b2025855a8760c6323dc2e",
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.715873,
+      "mttc": 4.533333,
+      "sample_count": 30,
+      "scenario_type": "intent_override"
+    }
+  ],
+  "schema_version": 1
+}
