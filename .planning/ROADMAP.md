@@ -31,7 +31,7 @@ numbers are known.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists.
+- [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (completed 2026-08-30)
 - [ ] **Phase 2: Expanded Dataset & Paraphrase Probe** - Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative.
 - [ ] **Phase 3: Ranking Precision & Conversational Efficiency** - Build and jointly measure MRR/MTTC candidates through the arena, gated by the breakeven rule and re-validated against the paraphrase probe.
 - [ ] **Phase 4: Semantic Asset & Candidate Spikes** - Ship the audited offline semantic asset and measure the two disclosed-cost spike candidates without adopting either by default.
@@ -85,7 +85,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 01-09-PLAN.md — The three D-02 evaluation runs, adjudication, and the `RUNS.md` pointer (operator-gated)
+- [x] 01-09-PLAN.md — The three D-02 evaluation runs, adjudication, and the `RUNS.md` pointer (operator-gated)
 
 ### Phase 2: Expanded Dataset & Paraphrase Probe
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 8/9 | In Progress|  |
+| 1. Measurement Rig Core | 9/9 | Complete   | 2026-08-30 |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
