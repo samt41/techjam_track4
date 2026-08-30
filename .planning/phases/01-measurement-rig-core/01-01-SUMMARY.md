@@ -161,6 +161,11 @@ None — no external service configuration required. Note for the operator: the 
 - Plan 01-08 should write `experiments/baselines/run-a` with complete provenance and mark this record superseded — the `provenance` string already names that successor.
 - No blockers.
 
+## Self-Check: PASSED
+
+All five claimed files exist and are tracked by `git ls-files`; all four claimed commits
+(`133e14e`, `2ab0360`, `2c04420`, `1fee019`) are present in `git log`.
+
 ---
 *Phase: 01-measurement-rig-core*
 *Completed: 2026-08-30*
