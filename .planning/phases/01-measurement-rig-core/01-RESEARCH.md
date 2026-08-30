@@ -121,6 +121,11 @@ The three corrections, in descending order of consequence:
    MEAS-07 floor and the achievable MDD are well matched, not hopeless. This is
    the number that makes MEAS-06 meaningful, and it should be stated in
    `LEADERBOARD.md`.
+   *(Superseded — see Q1 RESOLVED. The planner replaced the seeded-random
+   selection with a deterministic file-order promotion rule, giving
+   ΔTS = `+0.011931` at m=10. The conclusion — detectable at n = 200 — is
+   unchanged. `01-VALIDATION.md`'s fixture table is authoritative for the
+   exact values.)*
 
 Beyond the corrections, the two open discretionary questions are settled by
 evidence rather than preference. **BCa is disqualified**: the ΔTS bootstrap
@@ -1358,9 +1363,25 @@ repository's own files and data.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All four were adjudicated by the plan-phase orchestrator on 2026-08-30 and the
+resolutions are implemented by the Phase 1 plans. They are recorded here with
+their `**RESOLVED:**` verdicts so a later phase re-reading this file does not
+re-open them.
 
 ### Q1: D-01 Layer 3 has no guaranteed large-effect control (consequence of Pitfall 7)
+
+**RESOLVED — recommendation adopted in full.** Runs A, B and C all still happen
+exactly as D-02 specifies, but D-03's measure-don't-assume rule is extended to
+run B: **no plan asserts a significance *outcome* for A-vs-B or A-vs-C**, only
+internal consistency (verdict, CI and MDD mutually coherent) and byte
+reproducibility. The guaranteed true-positive control is **synthetic**, derived
+deterministically from run A's own `sessions.jsonl`. Note the planner replaced
+this section's seeded-random selection with a **deterministic file-order
+promotion rule**, which changes the exact answers: **ΔTS = `0.011931` at m=10 and
+`0.085214` at m=77**, not the `0.0123` / `0.0871` quoted below. The plans and
+`01-VALIDATION.md` carry the corrected values; the figures below are superseded.
 
 - **What we know:** D-01 Layer 3 requires *both* a known-large-effect pair and a
   known-near-null pair, because "a rig only validated on a real effect cannot be
@@ -1391,6 +1412,15 @@ repository's own files and data.
 
 ### Q2: Should `results.json` seed the Layer-2 anchor, or must run A precede everything?
 
+**RESOLVED — recommendation adopted.** `results.json` is the development and
+unit-test data source, so the whole leaderboard and statistics engine is built
+and proven before any 190-second run; the three evaluation runs sit alone in the
+final wave. The first task that touches `results.json` **backs it up before
+anything else runs**, since a bare `uv run python -m evaluator.local_evaluator`
+overwrites it. The anchor test asserts the 6 dp values
+(`0.92 / 0.524466 / 3.425 / 0.7575 / 0.76884`); `RUNS.md`'s 4 dp figures are
+asserted only after explicit rounding, never as exact equality.
+
 - **What we know:** `results.json` contains the complete run-A record and
   reproduces the evaluator's aggregates exactly. It is gitignored, carries no
   `run_id`, `code_revision`, `catalog_sha256` or `dataset_sha256`, and could be
@@ -1408,6 +1438,11 @@ repository's own files and data.
 
 ### Q3: Should the winner's-curse `k` count candidates or comparisons?
 
+**RESOLVED — recommendation adopted.** The correction receives `k` = the number
+of **non-baseline** candidates whose Δ was compared when choosing the champion,
+and the report prints **both** the candidate count and the `k` actually fed to
+the correction, so the choice is auditable and Phase 5 can re-derive it.
+
 - **What we know:** D-21 says "k is the number of candidates actually compared"
   and requires k to be printed. D-19 says the Holm family is the k−1 comparisons
   against a common baseline.
@@ -1424,6 +1459,11 @@ repository's own files and data.
   be stated once rather than left implicit.
 
 ### Q4: Does `LEADERBOARD.md` need a stated-assumptions block?
+
+**RESOLVED — recommendation adopted.** `LEADERBOARD.md` carries a "How to read
+this report" block covering per-bucket σ derived from the bucket's own `p`, the
+winner's-curse σ̂, the achievable MDD, and the D-19 statement that per-scenario
+numbers are deliberately not Holm-corrected.
 
 - **What we know:** three numbers in the report will differ from figures quoted
   in `.planning/` documents, each for a good reason: per-bucket σ (Pitfall/MEAS-09
@@ -1516,7 +1556,12 @@ plus the D-03 caveat encode:
 | MEAS-16 | Anchor: `0.92 / 0.524466 / 3.425 / 0.7575 / 0.76884` at 6 dp **and** `RUNS.md`'s 4 dp values; scenario HR@10 `0.90/0.95/0.90/0.90` | unit | `uv run python -m unittest -v tests.test_arena_metrics` | ❌ Wave 0 |
 | D-24 | Two adjudication runs on identical inputs → byte-identical `leaderboard.json` | unit | `uv run python -m unittest -v tests.test_arena_adjudication` | ❌ Wave 0 |
 | D-04 | `git check-ignore` confirms `experiments/baselines/` tracked, other run dirs ignored | manual/script | `git check-ignore -v experiments/baselines/run-a/sessions.jsonl` (must exit 1) | ❌ Wave 0 |
-| SC-3 | Full adjudication over two retained rows produces a reproducible verdict + MDD | integration | `uv run python -m arena.run_arena --adjudicate` | ❌ Wave 0 |
+| SC-3 | Full adjudication over two retained rows produces a reproducible verdict + MDD | integration | `uv run python -m arena.run_arena adjudicate --baseline <dir> --candidate <dir>` | ❌ Wave 0 |
+
+> **This table is superseded by `01-VALIDATION.md`.** The illustrative
+> `--adjudicate` flag string was replaced by the real `adjudicate` subcommand
+> form during planning; `01-VALIDATION.md` carries the authoritative per-task
+> map, the assigned plan·task IDs, and the corrected fixture values.
 
 ### Sampling Rate
 
