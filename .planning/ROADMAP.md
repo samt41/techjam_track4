@@ -31,7 +31,7 @@ numbers are known.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (completed 2026-08-30)
+- [ ] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (all 9 plans executed 2026-08-30; verification `gaps_found` 7/10 — 2 blockers open in `arena/adjudication.py`, see 01-VERIFICATION.md)
 - [ ] **Phase 2: Expanded Dataset & Paraphrase Probe** - Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative.
 - [ ] **Phase 3: Ranking Precision & Conversational Efficiency** - Build and jointly measure MRR/MTTC candidates through the arena, gated by the breakeven rule and re-validated against the paraphrase probe.
 - [ ] **Phase 4: Semantic Asset & Candidate Spikes** - Ship the audited offline semantic asset and measure the two disclosed-cost spike candidates without adopting either by default.
