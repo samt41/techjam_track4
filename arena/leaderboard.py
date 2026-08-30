@@ -73,8 +73,11 @@ re-derived by hand rather than trusted.
 weakly-correlated regime. Measured on this repository's 200 real sessions, a
 realistic ranking candidate that promotes ten sessions to rank 1 yields dTS
 `+0.011931` against an MDD of roughly `0.0104` -- detectable at n=200. Pairing does
-all of the work: the paired bootstrap SE is `0.003715` where an effectively unpaired
-one is `0.025922`.
+all of the work: the paired bootstrap SE is roughly `0.0037` where an effectively
+unpaired one is `0.025922`, a sevenfold difference. `01-RESEARCH.md` records
+`0.003715` for that measurement at its own resample count; the adjudication table
+below prints the SE actually observed for each pair, so the two agree to three
+significant figures rather than digit for digit.
 
 **4. Per-scenario numbers are deliberately not Holm-corrected.** The Holm family is
 the non-baseline candidates against a common baseline within one adjudication event
