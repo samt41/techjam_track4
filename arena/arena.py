@@ -4,7 +4,12 @@ import tempfile
 from pathlib import Path
 from time import perf_counter
 
-from arena.candidate import CandidateSpec, candidate_overrides, current_revision
+from arena.candidate import (
+    SPEC_NAME_FIELD,
+    CandidateSpec,
+    candidate_overrides,
+    current_revision,
+)
 from arena.evaluator_bridge import catalog_index, evaluate, load_jsonl
 from arena.metrics import SessionOutcome
 from arena.store import (
@@ -146,7 +151,10 @@ def run_candidate(
         summary: dict[str, object] = {
             "run_id": run_id,
             "fingerprint": spec.fingerprint,
-            "candidate_name": spec.name,
+            # Keyed through the shared constant so the reader that rebuilds a spec
+            # from this record cannot drift onto a different field and mint a second
+            # fingerprint for it.
+            SPEC_NAME_FIELD: spec.name,
             "code_revision": spec.code_revision,
             "code_revision_dirty": spec.code_revision_dirty,
             "overrides": dict(spec.overrides),

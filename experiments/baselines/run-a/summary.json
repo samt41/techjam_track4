@@ -1,0 +1,53 @@
+{
+  "candidate_name": "baseline-auto-disabled",
+  "catalog_sha256": "da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67",
+  "code_revision": "5a978e7f54ee7ed00bee32721bc7dba85ea5fe57",
+  "code_revision_dirty": false,
+  "dataset_sha256": "571359a8a69014c43fc30d39c996c4a28e875dccc249dffc707358757beb16c0",
+  "efficiency": 0.7575,
+  "elapsed_seconds": 337.078,
+  "fingerprint": "c23c99876ee05214961a8ee9d5e80ee31f6e7fabd9e51548e8741194adb24920",
+  "hit_rate_at_10": 0.92,
+  "mrr": 0.524466,
+  "mttc": 3.425,
+  "overrides": {
+    "exploration": "disabled",
+    "lexical_mode": "auto"
+  },
+  "provenance": "arena.arena.run_candidate via `python -m arena.run_arena run`",
+  "provenance_complete": true,
+  "recommended_technical_score": 0.76884,
+  "reported_token_usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  },
+  "run_id": "run-a",
+  "sample_count": 200,
+  "scenario_metrics": {
+    "boundary": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.404444,
+      "mttc": 3.6,
+      "sample_count": 10
+    },
+    "browsing": {
+      "hit_rate_at_10": 0.95,
+      "mrr": 0.527862,
+      "mttc": 3.125,
+      "sample_count": 80
+    },
+    "buying": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.464296,
+      "mttc": 3.2875,
+      "sample_count": 80
+    },
+    "intent_override": {
+      "hit_rate_at_10": 0.9,
+      "mrr": 0.715873,
+      "mttc": 4.533333,
+      "sample_count": 30
+    }
+  }
+}

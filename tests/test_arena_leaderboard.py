@@ -13,6 +13,7 @@ from arena.leaderboard import (
     build_leaderboard,
     entry_from_record,
     render_markdown,
+    spec_from_record,
 )
 from arena.metrics import SessionOutcome, metric_summary, technical_score
 from tests.arena_fixtures import ANCHOR_RECORD_DIR, session, sessions_from_ranks
@@ -530,6 +531,36 @@ class CommittedLeaderboardTest(unittest.TestCase):
             COMMITTED_MARKDOWN.read_text(encoding="utf-8"),
             render_markdown(self.payload),
         )
+
+    def test_every_record_derives_the_fingerprint_it_stores(self) -> None:
+        # The regression this pins: arena/arena.py hashed the --name value into the
+        # stored fingerprint while arena/leaderboard.py rebuilt the spec from run_id,
+        # so a record carried TWO identities and the digest in its own summary.json
+        # appeared nowhere in the report. Asserted over the committed records rather
+        # than a fixture, because the divergence was only visible on a record whose
+        # candidate_name and run_id actually differ -- which no fixture had.
+        roots = sorted(
+            path
+            for path in (REPOSITORY_ROOT / "experiments" / "baselines").iterdir()
+            if path.is_dir()
+        )
+        self.assertGreaterEqual(len(roots), 1)
+        checked = 0
+        for directory in roots:
+            record = json.loads(
+                (directory / "summary.json").read_text(encoding="utf-8")
+            )
+            stored = record.get("fingerprint")
+            if stored is None:
+                continue  # the rescued anchor stores none, so nothing can diverge
+            self.assertEqual(
+                stored,
+                spec_from_record(directory).fingerprint,
+                f"{directory.name} stores a fingerprint it does not derive",
+            )
+            checked += 1
+        # Guards the guard: a loop that silently checked nothing would pass.
+        self.assertGreaterEqual(checked, 3)
 
     def test_the_synthetic_control_is_labelled_as_a_fixture(self) -> None:
         # T-01-16b: a validation control must never be mistaken for a measured result.

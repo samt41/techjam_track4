@@ -14,6 +14,15 @@ from experiments.analyze_public import code_revision
 # invalidates every comparison built on it, and no downstream test would catch it.
 ALLOWED_OVERRIDES = frozenset({"lexical_mode", "exploration", "artifact_path"})
 
+# The one record field that carries CandidateSpec.name, named here so the writer and
+# every reader agree on it. `fingerprint` hashes `name`, so a reader reconstructing a
+# spec MUST take the name from this field and from no other. Taking it from `run_id`
+# instead mints a SECOND fingerprint for a single record: the digest stored in
+# summary.json then appears nowhere in the leaderboard, and a record's identity depends
+# on which code path looked at it. That divergence was live between plans 01-08 and
+# 01-09 and is what this constant plus spec_name_from_record() exist to prevent.
+SPEC_NAME_FIELD = "candidate_name"
+
 _HEX_DIGITS = frozenset("0123456789abcdef")
 _DIGEST_LENGTH = 64
 _UNKNOWN_DIGEST = "unknown"
@@ -103,6 +112,17 @@ class CandidateSpec:
             "dataset_sha256": self.dataset_sha256,
             "fingerprint": self.fingerprint,
         }
+
+
+def spec_name_from_record(record: dict[str, object], default: str) -> str:
+    """The single authority for which recorded field supplies CandidateSpec.name.
+
+    `default` is the caller's fallback for a record written before this field
+    existed -- the rescued anchor-legacy record carries no candidate_name, so it
+    resolves to its run id and keeps the fingerprint it already had.
+    """
+    value = record.get(SPEC_NAME_FIELD)
+    return str(value) if value else default
 
 
 def candidate_overrides(mapping: dict[str, str]) -> tuple[tuple[str, str], ...]:

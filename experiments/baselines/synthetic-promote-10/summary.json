@@ -1,0 +1,18 @@
+{
+  "candidate_name": "synthetic-promote-10",
+  "catalog_sha256": "unknown",
+  "code_revision": "unknown_revision",
+  "code_revision_dirty": true,
+  "dataset_sha256": "unknown",
+  "efficiency": 0.7575,
+  "fingerprint": "6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3",
+  "hit_rate_at_10": 0.92,
+  "mrr": 0.564238,
+  "mttc": 3.425,
+  "overrides": {},
+  "provenance": "deterministic fixture derived from experiments/baselines/anchor-legacy by promote_hits_to_rank_one(sessions, 10); a validation control that proves the adjudication machinery is exercised, never an evaluation run",
+  "provenance_complete": false,
+  "recommended_technical_score": 0.780771,
+  "run_id": "synthetic-promote-10",
+  "sample_count": 200
+}

@@ -10,7 +10,7 @@
 > never be read as a real result.
 
 - Schema version: `1`
-- Baseline for every delta below: `b8ce126916a0`
+- Baseline for every delta below: `c23c99876ee0`
 - Resamples per adjudication: `10000`
 - Practical floor: `0.01` TechnicalScore
 - Per-scenario rows Holm-corrected: `False`
@@ -103,7 +103,10 @@ Ordered by TechnicalScore descending, tie-broken by ascending fingerprint.
 | Candidate | Fingerprint | HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | `synthetic-promote-10` | `6eec1db14d0c` | `0.920000` | `0.564238` | `3.425000` | `0.757500` | `0.780771` |
+| `fallback-lexical` | `e0d73537d58b` | `0.925000` | `0.522167` | `3.210000` | `0.779000` | `0.774950` |
+| `exploration-tail-only` | `8c95a79adbf4` | `0.920000` | `0.524466` | `3.425000` | `0.757500` | `0.768840` |
 | `anchor-legacy` | `b8ce126916a0` | `0.920000` | `0.524466` | `3.425000` | `0.757500` | `0.768840` |
+| `baseline-auto-disabled` | `c23c99876ee0` | `0.920000` | `0.524466` | `3.425000` | `0.757500` | `0.768840` |
 
 ## HitRate@K curve
 
@@ -112,7 +115,10 @@ Computed from retained session outcomes alone; no agent was invoked.
 | Candidate | HR@1 | HR@3 | HR@5 | HR@10 |
 | --- | ---: | ---: | ---: | ---: |
 | `synthetic-promote-10` | `0.435000` | `0.630000` | `0.735000` | `0.920000` |
+| `fallback-lexical` | `0.375000` | `0.570000` | `0.725000` | `0.925000` |
+| `exploration-tail-only` | `0.385000` | `0.590000` | `0.715000` | `0.920000` |
 | `anchor-legacy` | `0.385000` | `0.590000` | `0.715000` | `0.920000` |
+| `baseline-auto-disabled` | `0.385000` | `0.590000` | `0.715000` | `0.920000` |
 
 ## Per-scenario breakout
 
@@ -125,10 +131,22 @@ is not decision-grade cannot resolve a one-session swing from noise on its own.
 | `synthetic-promote-10` | `browsing` | 80 | `0.950000` | `0.570764` | `3.125000` | `0.024367` | yes |
 | `synthetic-promote-10` | `buying` | 80 | `0.900000` | `0.512490` | `3.287500` | `0.033541` | yes |
 | `synthetic-promote-10` | `intent_override` | 30 | `0.900000` | `0.738095` | `4.533333` | `0.054772` | no |
+| `fallback-lexical` | `boundary` | 10 | `0.900000` | `0.428175` | `3.100000` | `0.094868` | no |
+| `fallback-lexical` | `browsing` | 80 | `0.975000` | `0.488844` | `2.675000` | `0.017455` | yes |
+| `fallback-lexical` | `buying` | 80 | `0.900000` | `0.497376` | `3.162500` | `0.033541` | yes |
+| `fallback-lexical` | `intent_override` | 30 | `0.866667` | `0.708466` | `4.800000` | `0.062063` | no |
+| `exploration-tail-only` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
+| `exploration-tail-only` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
+| `exploration-tail-only` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
+| `exploration-tail-only` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
 | `anchor-legacy` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
 | `anchor-legacy` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
 | `anchor-legacy` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
 | `anchor-legacy` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
+| `baseline-auto-disabled` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
+| `baseline-auto-disabled` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
+| `baseline-auto-disabled` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
+| `baseline-auto-disabled` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
 
 ## Pairwise adjudication
 
@@ -137,6 +155,7 @@ baseline it was measured against.
 
 | Candidate | Baseline | dTS | 95% CI | perm p | Holm p | MDD | sigma-hat | k | E[max k] | corrected dTS | clears floor | verdict | failed criteria |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| `synthetic-promote-10` | `b8ce126916a0` | `0.011931` | `[0.005019, 0.019768]` | `0.002700` | `0.002700` | `0.010435` | `0.003725` | 1 | `0.0` | `0.011931` | yes | win | _none_ |
+| `fallback-lexical` | `c23c99876ee0` | `0.006110` | `[-0.018886, 0.031239]` | `0.645335` | `1.000000` | `0.035987` | `0.012845` | 2 | `0.564190` | `-0.001137` | no | not detectable | `holm_significance, practical_floor` |
+| `exploration-tail-only` | `c23c99876ee0` | `0.0` | `[0.0, 0.0]` | `1.000000` | `1.000000` | `0.0` | `0.0` | 2 | `0.564190` | `0.0` | no | no difference | `holm_significance, practical_floor` |
 
 Compare this report with retained rows in `experiments/RUNS.md`.
