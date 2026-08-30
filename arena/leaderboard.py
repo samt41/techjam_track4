@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from arena.adjudication import AdjudicationRow
-from arena.candidate import CandidateSpec, candidate_overrides
+from arena.candidate import (
+    CandidateSpec,
+    candidate_overrides,
+    spec_name_from_record,
+)
 from arena.metrics import (
     SessionOutcome,
     efficiency,
@@ -157,7 +161,10 @@ def _spec_from_payload(record: dict[str, object], run_directory: Path) -> Candid
     # provenance_complete false; CandidateSpec.validate() admits both literals by
     # design, so the anchor fingerprints through the same path as any other record.
     spec = CandidateSpec(
-        name=run_id,
+        # Resolved through the one authority rather than from run_id: `name` is inside
+        # the hashed payload, so reading the wrong field here recomputes a fingerprint
+        # that disagrees with the one the record stores.
+        name=spec_name_from_record(record, run_id),
         code_revision=str(record.get("code_revision", "unknown_revision")),
         code_revision_dirty=bool(record.get("code_revision_dirty", True)),
         overrides=candidate_overrides(dict(record.get("overrides", {}))),

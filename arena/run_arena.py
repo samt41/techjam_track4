@@ -99,6 +99,9 @@ def _adjudicate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
         candidate_directories = tuple(
             _record_directory(value) for value in args.candidate
         )
+        included_directories = tuple(
+            _record_directory(value) for value in (args.include or ())
+        )
         baseline_entry = entry_from_record(baseline_directory)
         baseline_arm = CandidateArm(
             spec=spec_from_record(baseline_directory),
@@ -114,9 +117,17 @@ def _adjudicate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
             )
             for directory, entry in zip(candidate_directories, candidate_entries)
         )
+        # Report-only entries are loaded the same way but are NEVER built into a
+        # CandidateArm, so they reach the candidate, curve and scenario tables without
+        # entering adjudicate() -- and therefore without joining the Holm family or
+        # changing correction_k. That separation is why the two real rows below are
+        # numerically identical whether or not these are present.
+        included_entries = tuple(
+            entry_from_record(directory) for directory in included_directories
+        )
         rows = adjudicate(baseline_arm, candidate_arms)
         payload = build_leaderboard(
-            (baseline_entry, *candidate_entries),
+            (baseline_entry, *candidate_entries, *included_entries),
             rows,
             baseline_fingerprint=baseline_entry.fingerprint,
         )
@@ -172,6 +183,12 @@ def main() -> None:
     )
     adjudicate_parser.add_argument("--baseline", required=True)
     adjudicate_parser.add_argument("--candidate", action="append", required=True)
+    # Retained records that belong in the report but must NOT be tested. Two kinds
+    # qualify: a rescued record whose provenance is incomplete (anchor-legacy), and a
+    # deterministic validation fixture (synthetic-*). Adjudicating either would inflate
+    # the Holm family, weaken the real comparisons, and -- for the fixture -- drive the
+    # winner's-curse correction with a control built to win.
+    adjudicate_parser.add_argument("--include", action="append", default=None)
     adjudicate_parser.add_argument("--output-root", default=str(BASELINES_ROOT))
 
     args = parser.parse_args()
