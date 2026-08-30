@@ -148,11 +148,7 @@ class CandidateEntry:
     provenance: str = ""
 
 
-def entry_from_record(run_directory: Path) -> CandidateEntry:
-    record = json.loads(
-        (run_directory / SUMMARY_FILENAME).read_text(encoding="utf-8")
-    )
-    sessions = load_sessions(run_directory / SESSIONS_FILENAME)
+def _spec_from_payload(record: dict[str, object], run_directory: Path) -> CandidateSpec:
     run_id = str(record.get("run_id", run_directory.name))
     # Fail closed on an unrecorded tree state, exactly as arena.candidate's
     # code_revision_dirty() does: a clean flag that could not be established would let a
@@ -169,6 +165,32 @@ def entry_from_record(run_directory: Path) -> CandidateEntry:
         dataset_sha256=str(record.get("dataset_sha256", "unknown")),
     )
     spec.validate()
+    return spec
+
+
+def spec_from_record(run_directory: Path) -> CandidateSpec:
+    """The spec a retained record describes, for callers that need the arm as well.
+
+    CandidateEntry keeps the fingerprint but not the two digests it was computed
+    from, so a caller building an adjudication arm cannot reconstruct a matching
+    spec from the entry alone. Routing both that caller and entry_from_record
+    through one mapping is what keeps an arm's fingerprint identical to the
+    leaderboard row it is reported beside; two hand-rolled reconstructions would
+    silently mint two fingerprints for one record.
+    """
+    record = json.loads(
+        (run_directory / SUMMARY_FILENAME).read_text(encoding="utf-8")
+    )
+    return _spec_from_payload(record, run_directory)
+
+
+def entry_from_record(run_directory: Path) -> CandidateEntry:
+    record = json.loads(
+        (run_directory / SUMMARY_FILENAME).read_text(encoding="utf-8")
+    )
+    sessions = load_sessions(run_directory / SESSIONS_FILENAME)
+    run_id = str(record.get("run_id", run_directory.name))
+    spec = _spec_from_payload(record, run_directory)
     return CandidateEntry(
         name=spec.name,
         fingerprint=spec.fingerprint,
