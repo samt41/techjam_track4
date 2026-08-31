@@ -66,6 +66,22 @@ locked; changing them requires explicit discussion.
 - ✓ Reproducible experiment harness publishing five files per run — existing
 - ✓ HR@10 `0.920`, MRR `0.5245`, MTTC `3.425`, TechnicalScore `0.7688` on all
   200 public sessions — existing
+- ✓ Statistically honest measurement rig (`arena/`): paired bootstrap with an
+  Efron-Tibshirani `(R+1)` percentile interval, paired permutation test,
+  Holm-Bonferroni correction, a `>=0.01` TechnicalScore practical floor, and a
+  winner's-curse order-statistic correction — validated in Phase 1
+  (MEAS-01..09, MEAS-14..16)
+- ✓ Committed leaderboard as source of truth (`experiments/baselines/leaderboard.json`
+  plus the rendered `experiments/LEADERBOARD.md`), carrying TechnicalScore, HR@10,
+  MRR and MTTC overall and per scenario, an HR@1/@3/@5/@10 curve from retained
+  traces alone, and per-bucket binomial sigma with a decision-grade flag —
+  validated in Phase 1, regenerates byte-identically
+- ✓ Fingerprinted `CandidateSpec` provenance: one configuration mints one digest
+  across CLI and programmatic paths, and a record's stored fingerprint is checked
+  against the reader's derivation, failing closed — validated in Phase 1 (MEAS-14)
+- ✓ Single evaluator seam: `arena/` calls `evaluate()` as an opaque function and
+  imports no `evaluator.local_evaluator` internals, machine-checked — validated in
+  Phase 1 (MEAS-15)
 
 ### Active
 
@@ -357,4 +373,10 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-29 after initialization*
+*Last updated: 2026-08-31 — Phase 1 complete (measurement rig core, verification
+`passed` 10/10 after a six-plan gap-closure round). Three code-review blockers
+remain open against `arena/` write/report layers (`01-REVIEW.md`: CR-01 per-record
+metric collapse, CR-02 candidate-vs-candidate fingerprint collision inflating the
+Holm family, CR-03 permissive `SessionOutcome.validate()`), plus the non-existent
+T-01-19 staging gitignore. None violates a Phase 1 success criterion; CR-01 and
+CR-02 should close before Phase 2 runs real candidates through `adjudicate`.*
