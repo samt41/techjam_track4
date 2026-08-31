@@ -702,6 +702,52 @@ class DegenerateTest(unittest.TestCase):
         self.assertIs(row.verdict, Verdict.NOT_DETECTABLE)
 
 
+class CrossCorpusRefusalTest(unittest.TestCase):
+    """D-45: adjudicate refuses two arms measured against different corpora.
+
+    This refusal path was UNREACHABLE in Phase 1, because only one corpus existed and
+    every retained record therefore carried the same `dataset_sha256`. Phase 2 mints four
+    distinct corpus digests (D-58: `public`, `expanded_dev.v1`, `expanded_confirm.v1` and
+    `probe.v1`), so the branch becomes reachable for the first time and gets its first
+    test here. The pre-existing digest test above sweeps both digest fields structurally;
+    this one is the D-45 case specifically, and it asserts on the MESSAGE, because a
+    refusal a reader cannot attribute to the corpus is a refusal they will work around.
+
+    Note the deliberate asymmetry with arena/paired_contrast.py, which faces the mirror
+    problem: `adjudicate` compares candidates and so requires ONE corpus, while
+    `paired_contrast` compares corpus ARMS and so permits -- indeed expects -- a shared
+    digest across its two arms while refusing a differing one.
+    """
+
+    def test_a_differing_dataset_digest_is_refused(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = CandidateArm(
+            dataclasses.replace(
+                arm("candidate", _FLOOR_CANDIDATE).spec,
+                dataset_sha256="d" * 64,
+            ),
+            _FLOOR_CANDIDATE,
+        )
+        with self.assertRaises(ValueError) as raised:
+            adjudicate(baseline, (candidate,), resamples=FAST_RESAMPLES)
+        message = str(raised.exception)
+        self.assertIn("dataset_sha256", message)
+        self.assertIn("candidate", message)
+
+    def test_a_shared_dataset_digest_proceeds(self) -> None:
+        # The positive companion, so the guard is proven in BOTH directions: a refusal
+        # test alone would still pass against a function that refused everything.
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = arm("candidate", _FLOOR_CANDIDATE)
+        self.assertEqual(
+            baseline.spec.dataset_sha256,
+            candidate.spec.dataset_sha256,
+        )
+        rows = adjudicate(baseline, (candidate,), resamples=FAST_RESAMPLES)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].candidate_name, "candidate")
+
+
 class Layer3ControlTest(unittest.TestCase):
     """D-01 Layer 3 adjudication controls, on synthetic arms with known answers.
 
