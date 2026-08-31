@@ -65,11 +65,11 @@
       "house_label"
     ],
     "buckle closure": [
-      "fastening",
+      "entry_method",
       "prong_strap"
     ],
     "button closure": [
-      "fastening",
+      "entry_method",
       "disc_fastener"
     ],
     "canvas": [
@@ -89,7 +89,7 @@
       "whitener_restricted"
     ],
     "drawstring closure": [
-      "fastening",
+      "entry_method",
       "cinch_tie"
     ],
     "dry clean only": [
@@ -101,11 +101,11 @@
       "wipe_only"
     ],
     "elastic closure": [
-      "fastening",
+      "entry_method",
       "stretch_entry"
     ],
     "ethylene vinyl acetate sole": [
-      "underfoot",
+      "ground_contact",
       "foam_tread"
     ],
     "fleece": [
@@ -113,7 +113,7 @@
       "napped_knit"
     ],
     "flexible sole": [
-      "underfoot",
+      "ground_contact",
       "pliant_tread"
     ],
     "hand wash": [
@@ -125,39 +125,39 @@
       "delicate_care"
     ],
     "heel measures approximately 0.75\"": [
-      "elevation",
+      "heel_geometry",
       "low_lift"
     ],
     "heel measures approximately 1 inches\"": [
-      "elevation",
+      "heel_geometry",
       "low_lift"
     ],
     "heel measures approximately 1\"": [
-      "elevation",
+      "heel_geometry",
       "low_lift"
     ],
     "heel measures approximately 1.25\"": [
-      "elevation",
+      "heel_geometry",
       "low_lift"
     ],
     "heel measures approximately 1.5\"": [
-      "elevation",
+      "heel_geometry",
       "mid_lift"
     ],
     "heel measures approximately 2\"": [
-      "elevation",
+      "heel_geometry",
       "mid_lift"
     ],
     "heel measures approximately 3\"": [
-      "elevation",
+      "heel_geometry",
       "high_lift"
     ],
     "hook and eye closure": [
-      "fastening",
+      "entry_method",
       "metal_catch"
     ],
     "hook and loop closure": [
-      "fastening",
+      "entry_method",
       "gripping_tape"
     ],
     "imported": [
@@ -165,7 +165,7 @@
       "overseas_origin"
     ],
     "lace up closure": [
-      "fastening",
+      "entry_method",
       "eyelet_threading"
     ],
     "leather": [
@@ -177,7 +177,7 @@
       "hide_facing"
     ],
     "leather sole": [
-      "underfoot",
+      "ground_contact",
       "hide_tread"
     ],
     "leather upper": [
@@ -185,7 +185,7 @@
       "hide_shell"
     ],
     "lightweight, classic fit, double-needle sleeve and bottom hem": [
-      "construction",
+      "garment_build",
       "staple_tee_build"
     ],
     "line dry": [
@@ -229,11 +229,11 @@
       "mixed_origin"
     ],
     "man made sole": [
-      "underfoot",
+      "ground_contact",
       "engineered_tread"
     ],
     "manmade sole": [
-      "underfoot",
+      "ground_contact",
       "engineered_tread"
     ],
     "mesh": [
@@ -245,12 +245,12 @@
       "alloy_body"
     ],
     "no closure closure": [
-      "fastening",
+      "entry_method",
       "open_front"
     ],
     "non-polarized": [
-      "optics",
-      "unfiltered_glare"
+      "lens_treatment",
+      "glare_permitting"
     ],
     "nylon": [
       "fibre_content",
@@ -273,8 +273,8 @@
       "slight_forepart"
     ],
     "polarized": [
-      "optics",
-      "glare_filtering"
+      "lens_treatment",
+      "glare_reducing"
     ],
     "polyester": [
       "fibre_content",
@@ -293,15 +293,15 @@
       "stretch_blend"
     ],
     "polyurethane sole": [
-      "underfoot",
+      "ground_contact",
       "elastomer_tread"
     ],
     "pull on closure": [
-      "fastening",
+      "entry_method",
       "slip_entry"
     ],
     "pull-on closure": [
-      "fastening",
+      "entry_method",
       "slip_entry"
     ],
     "quartz movement": [
@@ -309,15 +309,15 @@
       "battery_regulated"
     ],
     "rubber": [
-      "substance",
+      "composition_class",
       "elastomer_material"
     ],
     "rubber outsole": [
-      "underfoot",
+      "ground_contact",
       "vulcanised_tread"
     ],
     "rubber sole": [
-      "underfoot",
+      "ground_contact",
       "vulcanised_tread"
     ],
     "shaft measures approximately low-top from arch": [
@@ -325,7 +325,7 @@
       "ankle_exposed"
     ],
     "snap closure": [
-      "fastening",
+      "entry_method",
       "press_stud"
     ],
     "solid colors: 100% cotton; heather grey: 90% cotton, 10% polyester; all other heathers: 50% cotton, 50% polyester": [
@@ -333,23 +333,23 @@
       "colourway_dependent_mix"
     ],
     "suede sole": [
-      "underfoot",
+      "ground_contact",
       "napped_tread"
     ],
     "synthetic sole": [
-      "underfoot",
+      "ground_contact",
       "engineered_tread"
     ],
     "tie closure": [
-      "fastening",
+      "entry_method",
       "knot_entry"
     ],
     "uv protection coating coating": [
-      "optics",
+      "lens_treatment",
       "ray_shielding"
     ],
     "zipper closure": [
-      "fastening",
+      "entry_method",
       "toothed_fastener"
     ],
     "\u8fdb\u53e3": [
@@ -403,7 +403,8 @@
       "engineered_tread",
       "eyelet_threading",
       "foam_tread",
-      "glare_filtering",
+      "glare_permitting",
+      "glare_reducing",
       "gripping_tape",
       "hide_facing",
       "hide_shell",
@@ -439,7 +440,6 @@
       "stretch_entry",
       "synthetic_facing",
       "toothed_fastener",
-      "unfiltered_glare",
       "unspecified_fibre",
       "vulcanised_tread",
       "whitener_restricted",

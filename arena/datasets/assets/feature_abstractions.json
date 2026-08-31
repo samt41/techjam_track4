@@ -97,13 +97,13 @@
       "value": "an amazon brand"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 332,
       "token": "prong_strap",
       "value": "buckle closure"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 2195,
       "token": "disc_fastener",
       "value": "button closure"
@@ -133,7 +133,7 @@
       "value": "do not bleach"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 1172,
       "token": "cinch_tie",
       "value": "drawstring closure"
@@ -151,13 +151,13 @@
       "value": "dry cloth clean"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 587,
       "token": "stretch_entry",
       "value": "elastic closure"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 270,
       "token": "foam_tread",
       "value": "ethylene vinyl acetate sole"
@@ -169,7 +169,7 @@
       "value": "fleece"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 185,
       "token": "pliant_tread",
       "value": "flexible sole"
@@ -187,55 +187,55 @@
       "value": "hand wash only"
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 134,
       "token": "low_lift",
       "value": "heel measures approximately 0.75\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 144,
       "token": "low_lift",
       "value": "heel measures approximately 1 inches\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 324,
       "token": "low_lift",
       "value": "heel measures approximately 1\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 179,
       "token": "low_lift",
       "value": "heel measures approximately 1.25\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 191,
       "token": "mid_lift",
       "value": "heel measures approximately 1.5\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 140,
       "token": "mid_lift",
       "value": "heel measures approximately 2\""
     },
     {
-      "attribute": "elevation",
+      "attribute": "heel_geometry",
       "document_frequency": 101,
       "token": "high_lift",
       "value": "heel measures approximately 3\""
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 157,
       "token": "metal_catch",
       "value": "hook and eye closure"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 125,
       "token": "gripping_tape",
       "value": "hook and loop closure"
@@ -247,7 +247,7 @@
       "value": "imported"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 136,
       "token": "eyelet_threading",
       "value": "lace up closure"
@@ -265,7 +265,7 @@
       "value": "leather lining"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 616,
       "token": "hide_tread",
       "value": "leather sole"
@@ -277,7 +277,7 @@
       "value": "leather upper"
     },
     {
-      "attribute": "construction",
+      "attribute": "garment_build",
       "document_frequency": 468,
       "token": "staple_tee_build",
       "value": "lightweight, classic fit, double-needle sleeve and bottom hem"
@@ -343,13 +343,13 @@
       "value": "made in usa or imported"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 267,
       "token": "engineered_tread",
       "value": "man made sole"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 951,
       "token": "engineered_tread",
       "value": "manmade sole"
@@ -367,15 +367,15 @@
       "value": "metal frame"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 236,
       "token": "open_front",
       "value": "no closure closure"
     },
     {
-      "attribute": "optics",
+      "attribute": "lens_treatment",
       "document_frequency": 312,
-      "token": "unfiltered_glare",
+      "token": "glare_permitting",
       "value": "non-polarized"
     },
     {
@@ -409,9 +409,9 @@
       "value": "platform measures approximately 0.75\""
     },
     {
-      "attribute": "optics",
+      "attribute": "lens_treatment",
       "document_frequency": 203,
-      "token": "glare_filtering",
+      "token": "glare_reducing",
       "value": "polarized"
     },
     {
@@ -439,19 +439,19 @@
       "value": "polyester,spandex"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 144,
       "token": "elastomer_tread",
       "value": "polyurethane sole"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 7126,
       "token": "slip_entry",
       "value": "pull on closure"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 216,
       "token": "slip_entry",
       "value": "pull-on closure"
@@ -463,19 +463,19 @@
       "value": "quartz movement"
     },
     {
-      "attribute": "substance",
+      "attribute": "composition_class",
       "document_frequency": 127,
       "token": "elastomer_material",
       "value": "rubber"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 134,
       "token": "vulcanised_tread",
       "value": "rubber outsole"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 5616,
       "token": "vulcanised_tread",
       "value": "rubber sole"
@@ -493,7 +493,7 @@
       "value": "shaft measures approximately not_applicable from arch"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 464,
       "token": "press_stud",
       "value": "snap closure"
@@ -505,31 +505,31 @@
       "value": "solid colors: 100% cotton; heather grey: 90% cotton, 10% polyester; all other heathers: 50% cotton, 50% polyester"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 187,
       "token": "napped_tread",
       "value": "suede sole"
     },
     {
-      "attribute": "underfoot",
+      "attribute": "ground_contact",
       "document_frequency": 1362,
       "token": "engineered_tread",
       "value": "synthetic sole"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 525,
       "token": "knot_entry",
       "value": "tie closure"
     },
     {
-      "attribute": "optics",
+      "attribute": "lens_treatment",
       "document_frequency": 278,
       "token": "ray_shielding",
       "value": "uv protection coating coating"
     },
     {
-      "attribute": "fastening",
+      "attribute": "entry_method",
       "document_frequency": 2460,
       "token": "toothed_fastener",
       "value": "zipper closure"
