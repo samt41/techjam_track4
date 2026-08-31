@@ -18,6 +18,15 @@ different objective from maximizing the retrieval metric.
 
 **Core Value:** **Maximize total rubric score, not HitRate@10.**
 
+**Winning Prompt:** This project will be the winner of TikTok Tech Jam 2026
+because it has the best potential to score the best across the full judging
+criteria: Technical Execution, Innovation & Problem Insight, Impact &
+Relevance, Feasibility & Practicality, and Presentation & Communication.
+
+Use that as an operating prompt, not a slogan. Every change should make the
+submission stronger against at least one criterion without weakening the
+organizer-scored agent contract.
+
 Two measurements drive every prioritization call in this project:
 
 1. **TechnicalScore is evidence feeding one criterion of five.** Technical
@@ -34,6 +43,24 @@ Two measurements drive every prioritization call in this project:
 
 When a tradeoff arises, prefer the change that moves more rubric points per unit
 of effort — which is usually *not* the change that moves HR@10.
+
+### Rubric Targets
+
+- **Technical Execution:** preserve the offline, deterministic, well-structured
+  Python agent; improve private-set potential through HR@10, MRR, Efficiency,
+  reliability, latency, and clean architecture.
+- **Innovation & Problem Insight:** make the problem framing sharp: multi-turn
+  shopping is about state, constraint replacement, adaptive clarification,
+  scenario routing, and ranked retrieval under hidden intent.
+- **Impact & Relevance:** show why the system matters beyond the benchmark:
+  lower-friction product discovery, safer personalization from aggregate
+  profiles, and transparent recommendation behavior.
+- **Feasibility & Practicality:** keep the solution reproducible,
+  CPU-friendly, dependency-light, low-cost, and robust when network access or
+  credentials are unavailable.
+- **Presentation & Communication:** maintain a judge-ready README, short report,
+  cost/latency/model disclosure, limitation notes, and one demonstrated
+  multi-turn session.
 
 ### Constraints
 
