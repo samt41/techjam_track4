@@ -183,6 +183,12 @@ Ready. Plans 02-11, 02-12 and 02-13 are operator-run and every command they need
 - `data/datasets.json` does not exist yet, and that is correct: `resolve_dataset` treats a missing registry as "every value is a plain path", so the CLI works today and starts enforcing digests the moment the first corpus is frozen.
 - The four corpus names this CLI validates are `public` (by literal) plus any `name.vN` — so `expanded_dev.v1`, `expanded_confirm.v1` and `probe.v1` are accepted, and an unversioned typo is refused with a message naming the required suffix.
 
+## Self-Check: PASSED
+
+- Files claimed as modified exist: `arena/run_arena.py`, `tests/test_arena_runner.py`, `.planning/phases/02-expanded-dataset-paraphrase-probe/02-10-SUMMARY.md`.
+- Commits claimed exist on this branch: `b0920db`, `acbb875`, `ad2938e`, `7b3b825`.
+- Working tree clean; no file outside the plan's declared `files_modified` was touched, and `STATE.md` / `ROADMAP.md` / `docs/STATUS.md` / `arena/datasets/generate.py` were not modified.
+
 ---
 *Phase: 02-expanded-dataset-paraphrase-probe*
 *Completed: 2026-09-01*
