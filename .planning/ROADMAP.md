@@ -117,7 +117,41 @@ Plans:
   4. A second model family has independently authored or reviewed a cross-check subset of the probe, with any generator-affinity gap between families reported explicitly rather than assumed absent.
   5. The probe set is checksummed and frozen (recorded commit/hash) before any Phase 3 or Phase 4 candidate is measured against it.
 
-**Plans**: TBD
+**Plans**: 13 plans in 7 waves
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Seam widening to eight names (D-47), a recursive path-anchored boundary scan (L-1), the `arena/datasets/` package stub, and the public `STOPWORDS` promotion (D-54)
+- [ ] 02-02-PLAN.md — The D-53 corpus-baselines table: a reporting surface separate from `LEADERBOARD.md`
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 02-03-PLAN.md — Corpus schema, catalog-free fixtures, and both D-37 authored-branch conformance layers (MEAS-10)
+- [ ] 02-04-PLAN.md — DF-gated gist vocabulary and the D-52 feature-abstraction table, with the D-32 data-flow assertion (MEAS-12)
+- [ ] 02-05-PLAN.md — The D-33 bucket gate and the D-34/D-51 divergence gate, both two-sided (MEAS-12)
+- [ ] 02-06-PLAN.md — `paired_contrast` (D-44), exact McNemar, and the first exercise of `adjudicate`'s D-45 cross-corpus refusal
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 02-07-PLAN.md — The `claude -p` authoring driver, three committed prompt packs, and the D-50 replay log with D-35/D-57 isolation asserted by argv introspection
+- [ ] 02-08-PLAN.md — The D-43 dataset registry: canonical `data/datasets.json`, digest-enforced resolution, and the corpus-shape checks (MEAS-11/12/13)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 02-09-PLAN.md — The corpus generator: D-31 control arm, D-36 pair pinning, the five-gate authoring loop, and the asymmetric D-35 solvability rule (L-3)
+- [ ] 02-10-PLAN.md — `run_arena.py`: registry-name `--dataset` resolution plus the `contrast` and `corpus-baselines` subcommands
+
+**Wave 5** *(blocked on Wave 4; operator-run)*
+
+- [ ] 02-11-PLAN.md — Author and freeze `probe.v1`: 300 Sonnet pairs plus a 100-pair Haiku cross-check arm, with every gate swept over the committed file
+
+**Wave 6** *(blocked on Wave 5; operator-run)*
+
+- [ ] 02-12-PLAN.md — Author and freeze `expanded_dev.v1` and `expanded_confirm.v1` under D-27 split discipline (Haiku, D-49)
+
+**Wave 7** *(blocked on Wave 6; operator-run)*
+
+- [ ] 02-13-PLAN.md — The D-48 baseline runs, the D-53 corpus-baselines table, both paired contrasts, and the D-39/D-41/D-42/D-49 disclosures
 
 ### Phase 3: Ranking Precision & Conversational Efficiency
 
@@ -214,7 +248,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
+| 2. Expanded Dataset & Paraphrase Probe | 0/13 | Planned | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
