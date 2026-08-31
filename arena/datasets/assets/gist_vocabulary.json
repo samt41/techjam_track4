@@ -1,0 +1,550 @@
+{
+  "abstractions": {
+    "100% acrylic": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% cotton": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% fabric": [
+      "fibre_content",
+      "unspecified_fibre"
+    ],
+    "100% leather": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% manmade": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% nylon": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% polyester": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% rayon": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% suede": [
+      "fibre_content",
+      "napped_hide"
+    ],
+    "100% synthetic": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "100% textile": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "60% cotton, 40% polyester": [
+      "fibre_content",
+      "mixed_fibre"
+    ],
+    "95% cotton, 5% spandex": [
+      "fibre_content",
+      "stretch_blend"
+    ],
+    "95% polyester, 5% spandex": [
+      "fibre_content",
+      "stretch_blend"
+    ],
+    "95% rayon, 5% spandex": [
+      "fibre_content",
+      "stretch_blend"
+    ],
+    "an amazon brand": [
+      "retail_origin",
+      "house_label"
+    ],
+    "buckle closure": [
+      "fastening",
+      "prong_strap"
+    ],
+    "button closure": [
+      "fastening",
+      "disc_fastener"
+    ],
+    "canvas": [
+      "fabric_structure",
+      "plain_woven"
+    ],
+    "cotton": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "cotton blend": [
+      "fibre_content",
+      "mixed_fibre"
+    ],
+    "do not bleach": [
+      "laundering",
+      "whitener_restricted"
+    ],
+    "drawstring closure": [
+      "fastening",
+      "cinch_tie"
+    ],
+    "dry clean only": [
+      "laundering",
+      "professional_care"
+    ],
+    "dry cloth clean": [
+      "laundering",
+      "wipe_only"
+    ],
+    "elastic closure": [
+      "fastening",
+      "stretch_entry"
+    ],
+    "ethylene vinyl acetate sole": [
+      "underfoot",
+      "foam_tread"
+    ],
+    "fleece": [
+      "fabric_structure",
+      "napped_knit"
+    ],
+    "flexible sole": [
+      "underfoot",
+      "pliant_tread"
+    ],
+    "hand wash": [
+      "laundering",
+      "delicate_care"
+    ],
+    "hand wash only": [
+      "laundering",
+      "delicate_care"
+    ],
+    "heel measures approximately 0.75\"": [
+      "elevation",
+      "low_lift"
+    ],
+    "heel measures approximately 1 inches\"": [
+      "elevation",
+      "low_lift"
+    ],
+    "heel measures approximately 1\"": [
+      "elevation",
+      "low_lift"
+    ],
+    "heel measures approximately 1.25\"": [
+      "elevation",
+      "low_lift"
+    ],
+    "heel measures approximately 1.5\"": [
+      "elevation",
+      "mid_lift"
+    ],
+    "heel measures approximately 2\"": [
+      "elevation",
+      "mid_lift"
+    ],
+    "heel measures approximately 3\"": [
+      "elevation",
+      "high_lift"
+    ],
+    "hook and eye closure": [
+      "fastening",
+      "metal_catch"
+    ],
+    "hook and loop closure": [
+      "fastening",
+      "gripping_tape"
+    ],
+    "imported": [
+      "sourcing",
+      "overseas_origin"
+    ],
+    "lace up closure": [
+      "fastening",
+      "eyelet_threading"
+    ],
+    "leather": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "leather lining": [
+      "inner_facing",
+      "hide_facing"
+    ],
+    "leather sole": [
+      "underfoot",
+      "hide_tread"
+    ],
+    "leather upper": [
+      "outer_facing",
+      "hide_shell"
+    ],
+    "lightweight, classic fit, double-needle sleeve and bottom hem": [
+      "construction",
+      "staple_tee_build"
+    ],
+    "line dry": [
+      "laundering",
+      "air_finish"
+    ],
+    "machine wash": [
+      "laundering",
+      "home_launderable"
+    ],
+    "machine washable": [
+      "laundering",
+      "home_launderable"
+    ],
+    "made in china": [
+      "sourcing",
+      "overseas_origin"
+    ],
+    "made in the usa": [
+      "sourcing",
+      "domestic_origin"
+    ],
+    "made in the usa and imported": [
+      "sourcing",
+      "mixed_origin"
+    ],
+    "made in the usa or imported": [
+      "sourcing",
+      "mixed_origin"
+    ],
+    "made in us": [
+      "sourcing",
+      "domestic_origin"
+    ],
+    "made in usa": [
+      "sourcing",
+      "domestic_origin"
+    ],
+    "made in usa or imported": [
+      "sourcing",
+      "mixed_origin"
+    ],
+    "man made sole": [
+      "underfoot",
+      "engineered_tread"
+    ],
+    "manmade sole": [
+      "underfoot",
+      "engineered_tread"
+    ],
+    "mesh": [
+      "fabric_structure",
+      "open_weave"
+    ],
+    "metal frame": [
+      "spectacle_body",
+      "alloy_body"
+    ],
+    "no closure closure": [
+      "fastening",
+      "open_front"
+    ],
+    "non-polarized": [
+      "optics",
+      "unfiltered_glare"
+    ],
+    "nylon": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "plastic frame": [
+      "spectacle_body",
+      "resin_body"
+    ],
+    "plastic lens": [
+      "viewing_element",
+      "resin_pane"
+    ],
+    "platform measures approximately 0.5\"": [
+      "forepart_lift",
+      "slight_forepart"
+    ],
+    "platform measures approximately 0.75\"": [
+      "forepart_lift",
+      "slight_forepart"
+    ],
+    "polarized": [
+      "optics",
+      "glare_filtering"
+    ],
+    "polyester": [
+      "fibre_content",
+      "single_fibre"
+    ],
+    "polyester lining": [
+      "inner_facing",
+      "synthetic_facing"
+    ],
+    "polyester,cotton": [
+      "fibre_content",
+      "mixed_fibre"
+    ],
+    "polyester,spandex": [
+      "fibre_content",
+      "stretch_blend"
+    ],
+    "polyurethane sole": [
+      "underfoot",
+      "elastomer_tread"
+    ],
+    "pull on closure": [
+      "fastening",
+      "slip_entry"
+    ],
+    "pull-on closure": [
+      "fastening",
+      "slip_entry"
+    ],
+    "quartz movement": [
+      "timekeeping",
+      "battery_regulated"
+    ],
+    "rubber": [
+      "substance",
+      "elastomer_material"
+    ],
+    "rubber outsole": [
+      "underfoot",
+      "vulcanised_tread"
+    ],
+    "rubber sole": [
+      "underfoot",
+      "vulcanised_tread"
+    ],
+    "shaft measures approximately low-top from arch": [
+      "collar_height",
+      "ankle_exposed"
+    ],
+    "snap closure": [
+      "fastening",
+      "press_stud"
+    ],
+    "solid colors: 100% cotton; heather grey: 90% cotton, 10% polyester; all other heathers: 50% cotton, 50% polyester": [
+      "fibre_content",
+      "colourway_dependent_mix"
+    ],
+    "suede sole": [
+      "underfoot",
+      "napped_tread"
+    ],
+    "synthetic sole": [
+      "underfoot",
+      "engineered_tread"
+    ],
+    "tie closure": [
+      "fastening",
+      "knot_entry"
+    ],
+    "uv protection coating coating": [
+      "optics",
+      "ray_shielding"
+    ],
+    "zipper closure": [
+      "fastening",
+      "toothed_fastener"
+    ],
+    "\u8fdb\u53e3": [
+      "sourcing",
+      "overseas_origin"
+    ]
+  },
+  "catalog_sha256": "da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67",
+  "df_floor": 10,
+  "feature_abstraction_df_floor": 100,
+  "schema_version": 1,
+  "values": {
+    "color": [
+      "black",
+      "silver",
+      "white",
+      "blue",
+      "brown",
+      "red",
+      "gold",
+      "pink",
+      "yellow",
+      "purple",
+      "green",
+      "navy",
+      "multi",
+      "multicolor",
+      "multicolored",
+      "grey",
+      "gray",
+      "beige",
+      "black/white",
+      "clear",
+      "multicoloured",
+      "rose gold",
+      "navy blue",
+      "orange"
+    ],
+    "feature": [
+      "air_finish",
+      "alloy_body",
+      "ankle_exposed",
+      "battery_regulated",
+      "cinch_tie",
+      "colourway_dependent_mix",
+      "delicate_care",
+      "disc_fastener",
+      "domestic_origin",
+      "elastomer_material",
+      "elastomer_tread",
+      "engineered_tread",
+      "eyelet_threading",
+      "foam_tread",
+      "glare_filtering",
+      "gripping_tape",
+      "hide_facing",
+      "hide_shell",
+      "hide_tread",
+      "high_lift",
+      "home_launderable",
+      "house_label",
+      "knot_entry",
+      "low_lift",
+      "metal_catch",
+      "mid_lift",
+      "mixed_fibre",
+      "mixed_origin",
+      "napped_hide",
+      "napped_knit",
+      "napped_tread",
+      "open_front",
+      "open_weave",
+      "overseas_origin",
+      "plain_woven",
+      "pliant_tread",
+      "press_stud",
+      "professional_care",
+      "prong_strap",
+      "ray_shielding",
+      "resin_body",
+      "resin_pane",
+      "single_fibre",
+      "slight_forepart",
+      "slip_entry",
+      "staple_tee_build",
+      "stretch_blend",
+      "stretch_entry",
+      "synthetic_facing",
+      "toothed_fastener",
+      "unfiltered_glare",
+      "unspecified_fibre",
+      "vulcanised_tread",
+      "whitener_restricted",
+      "wipe_only"
+    ],
+    "material": [
+      "polyester",
+      "cotton",
+      "leather",
+      "spandex",
+      "fabric",
+      "synthetic",
+      "nylon",
+      "rayon",
+      "mesh",
+      "silver",
+      "textile",
+      "blend",
+      "acrylic",
+      "steel",
+      "suede",
+      "rubber",
+      "wool",
+      "gold",
+      "metal",
+      "alloy",
+      "fleece",
+      "canvas",
+      "iron",
+      "crystal",
+      "jersey",
+      "fur",
+      "satin",
+      "polyurethane",
+      "silk",
+      "plastic",
+      "chiffon",
+      "linen",
+      "stone",
+      "microfiber",
+      "stainless steel",
+      "brass",
+      "velvet",
+      "other",
+      "rhinestone",
+      "glass",
+      "wood",
+      "silicone",
+      "copper",
+      "faux leather",
+      "pearl",
+      "gemstone",
+      "rope",
+      "thread",
+      "resin",
+      "felt",
+      "neoprene",
+      "paper",
+      "vinyl",
+      "polyester, cotton",
+      "titanium",
+      "composite",
+      "enamel",
+      "aluminum",
+      "pewter",
+      "polycarbonate",
+      "sterling silver",
+      "not-applicable",
+      "zinc",
+      "ceramic",
+      "horn"
+    ],
+    "size": [
+      "one size",
+      "medium",
+      "large",
+      "small",
+      "x-large",
+      "xx-large",
+      "standard",
+      "8 inch",
+      "13",
+      "8",
+      "one_size"
+    ],
+    "style": [
+      "modern",
+      "classic",
+      "casual",
+      "rfid wallet",
+      "minimalist",
+      "vintage",
+      "elegant",
+      "compact",
+      "bangle",
+      "chain",
+      "zippered wallet",
+      "travel wallet",
+      "beads",
+      "cuff",
+      "fashion",
+      "traditional",
+      "slim wallet",
+      "bifold wallet",
+      "earloop"
+    ]
+  }
+}
