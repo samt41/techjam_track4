@@ -126,10 +126,10 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 02-03-PLAN.md — Corpus schema, catalog-free fixtures, and both D-37 authored-branch conformance layers (MEAS-10)
-- [ ] 02-04-PLAN.md — DF-gated gist vocabulary and the D-52 feature-abstraction table, with the D-32 data-flow assertion (MEAS-12)
-- [ ] 02-05-PLAN.md — The D-33 bucket gate and the D-34/D-51 divergence gate, both two-sided (MEAS-12)
-- [ ] 02-06-PLAN.md — `paired_contrast` (D-44), exact McNemar, and the first exercise of `adjudicate`'s D-45 cross-corpus refusal
+- [x] 02-03-PLAN.md — Corpus schema, catalog-free fixtures, and both D-37 authored-branch conformance layers (MEAS-10)
+- [x] 02-04-PLAN.md — DF-gated gist vocabulary and the D-52 feature-abstraction table, with the D-32 data-flow assertion (MEAS-12)
+- [x] 02-05-PLAN.md — The D-33 bucket gate and the D-34/D-51 divergence gate, both two-sided (MEAS-12)
+- [x] 02-06-PLAN.md — `paired_contrast` (D-44), exact McNemar, and the first exercise of `adjudicate`'s D-45 cross-corpus refusal
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -249,7 +249,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 2/14 | In Progress|  |
+| 2. Expanded Dataset & Paraphrase Probe | 6/14 | In Progress|  |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
