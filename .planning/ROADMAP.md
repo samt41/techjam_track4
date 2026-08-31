@@ -55,7 +55,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Every per-scenario non-inferiority verdict in the report states its bucket size and binomial standard error (e.g., Boundary n=10, σ≈0.086, explicitly flagged as not decision-grade in isolation).
   5. `CandidateSpec` construction from identical inputs produces an identical fingerprint hash twice, and the arena module contains no import of `evaluator.local_evaluator` internals beyond calling `evaluate()` as an opaque function.
 
-**Plans**: 9 plans
+**Plans**: 15 plans (9 original, 6 gap closure)
 Plans:
 **Wave 1**
 
@@ -86,6 +86,23 @@ Plans:
 **Wave 7** *(blocked on Wave 6 completion)*
 
 - [x] 01-09-PLAN.md — The three D-02 evaluation runs, adjudication, and the `RUNS.md` pointer (operator-gated)
+
+**Gap closure** *(from `01-VERIFICATION.md`, status `gaps_found`, 7/10 must-haves. Waves renumbered from 1 for this round; run with `--gaps-only`.)*
+
+**Gap-closure Wave 1**
+
+- [ ] 01-10-PLAN.md — Adjudication verdict repair: the D-23 exchange-rate sign inversion, the value-fabricating zero-variance branch, the `failures` rename, and the Holm-family decision (MEAS-07)
+- [ ] 01-11-PLAN.md — Symmetric `(R+1)` bootstrap percentile indices and a resample floor, with nominal coverage pinned (MEAS-04)
+- [ ] 01-12-PLAN.md — Record safety: narrowed `publish` deletion and a refuse-then-stage-then-rename legacy import (MEAS-03, MEAS-16)
+- [ ] 01-13-PLAN.md — Fingerprint identity: CLI records the invocation, and harness output cannot overwrite provenance (MEAS-14)
+
+**Gap-closure Wave 2** *(blocked on 01-10)*
+
+- [ ] 01-14-PLAN.md — Leaderboard auditability: fail closed on a drifted reconstruction, and disclose the Holm-family composition (MEAS-14)
+
+**Gap-closure Wave 3** *(blocked on all of the above)*
+
+- [ ] 01-15-PLAN.md — Per-scenario TechnicalScore column, report regeneration at R=10,000, and prose reconciliation (MEAS-01, MEAS-07) — operator-gated
 
 ### Phase 2: Expanded Dataset & Paraphrase Probe
 
