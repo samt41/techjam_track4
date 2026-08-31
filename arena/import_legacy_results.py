@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
 
@@ -141,14 +143,45 @@ def import_legacy_results(
     payload = json.loads(results_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("results payload is not a json object")
+    # Both run before anything is written, so a malformed input cannot leave a
+    # directory behind.
     sessions = _project_sessions(payload)
     summary = _build_summary(payload, results_path, destination, provenance)
-    destination.mkdir(parents=True, exist_ok=True)
-    sessions_path = destination / _SESSIONS_FILENAME
-    summary_path = destination / _SUMMARY_FILENAME
-    _write_jsonl(sessions_path, sessions)
-    _write_json(summary_path, summary)
-    return sessions_path, summary_path
+
+    # Refuse rather than replace (T-01-29). The destination is a git-tracked
+    # committed record: `--output experiments/baselines/run-a` at this one-off CLI
+    # would otherwise replace the baseline every delta in the committed leaderboard
+    # is measured against with provenance-free data carrying
+    # provenance_complete: false, code_revision: "unknown_revision" and
+    # catalog_sha256: "unknown". The refusal below raises exactly the exception type
+    # the sibling writer already raises at arena/arena.py:111, not a ValueError, so
+    # an operator sees one behaviour from both entry points. There is deliberately
+    # no escape-hatch flag: re-import is not a workflow this project has, and an
+    # override on a destructive path is the defect itself.
+    if destination.exists():
+        raise FileExistsError(f"legacy import destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    # Two files must land together or not at all: an interruption between them
+    # leaves a record whose sessions.jsonl and summary.json describe different runs,
+    # and nothing downstream detects that (T-01-30). Staging both and publishing
+    # them with one directory rename is what makes the pair atomic. The prefix mirrors
+    # arena/arena.py:113-116, marking the directory as in progress rather than a
+    # completed record. Moving the directory out from under TemporaryDirectory is
+    # safe: its cleanup swallows the FileNotFoundError it then raises.
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}-",
+        dir=destination.parent,
+    ) as temporary:
+        staging = Path(temporary)
+        # Written and closed inside the with block, before the rename: on Windows a
+        # directory rename raises PermissionError while any process still holds a
+        # handle inside it, the same ordering run_candidate observes when it closes
+        # the Agent before publishing.
+        _write_jsonl(staging / _SESSIONS_FILENAME, sessions)
+        _write_json(staging / _SUMMARY_FILENAME, summary)
+        os.replace(staging, destination)
+    return destination / _SESSIONS_FILENAME, destination / _SUMMARY_FILENAME
 
 
 def main() -> None:
