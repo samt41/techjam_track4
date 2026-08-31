@@ -110,10 +110,29 @@ def publish(working: Path, destination: Path) -> None:
     One caveat the original does not state: on Windows `os.replace` on a directory
     also fails with `PermissionError` when any process still holds a handle inside
     it, so the caller must close the `Agent` and any trace sink before publishing.
+
+    A second precondition the original assumed and never held (T-01-28): this is a
+    module-level public helper with no caller-enforced pre-check of its own, so it
+    must not treat a directory at `destination` as a corpse merely because the
+    replace failed. `run_candidate` does pre-check at `arena/arena.py:110`, but the
+    committed `elapsed_seconds` values are 337-462 seconds, so a completed record
+    can appear at that path inside the window between the check and this call. The
+    delete therefore fires only when a directory is actually visible at
+    `destination`; every other failure -- a cross-device link, an ACL denial, a
+    path-too-long, an antivirus lock -- is reported by name with its cause attached
+    and nothing is removed.
     """
     try:
         os.replace(working, destination)
-    except OSError:
-        if destination.exists():
-            shutil.rmtree(destination)
-        os.replace(working, destination)
+    except OSError as error:
+        if not destination.is_dir():
+            raise ArenaStoreError(
+                f"could not publish to {destination}: {error}"
+            ) from error
+        shutil.rmtree(destination)
+        try:
+            os.replace(working, destination)
+        except OSError as retry_error:
+            raise ArenaStoreError(
+                f"could not publish to {destination} after clearing it: {retry_error}"
+            ) from retry_error
