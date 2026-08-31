@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import tempfile
@@ -9,11 +10,14 @@ from pathlib import Path
 from arena.adjudication import CandidateArm, Verdict, adjudicate
 from arena.candidate import CandidateSpec
 from arena.leaderboard import (
+    CORPUS_BASELINES_SCHEMA_VERSION,
     HOW_TO_READ,
     LEADERBOARD_SCHEMA_VERSION,
     CandidateEntry,
+    build_corpus_baselines,
     build_leaderboard,
     entry_from_record,
+    render_corpus_baselines_markdown,
     render_markdown,
     spec_from_record,
 )
@@ -119,6 +123,62 @@ def _anchor_entry() -> CandidateEntry:
 # The name every identity fixture is written under, so _spec() below derives exactly the
 # digest a reader will derive from the written record.
 _RECORD_NAME = "identity-fixture"
+
+
+# D-58: FOUR corpora, not five. D-45 and D-48 both say "five", which predates D-46
+# consolidating the probe's three arms (control, probe_sonnet, probe_haiku) into a
+# single data/probe.v1.jsonl. Listed deliberately unsorted so the builder's explicit
+# sort is exercised rather than inherited from this tuple.
+_CORPUS_NAMES = ("probe.v1", "public", "expanded_confirm.v1", "expanded_dev.v1")
+
+# One configuration measured four times, so every row shares this name. A second name
+# in the table is the conflation the builder refuses.
+_CORPUS_CANDIDATE_NAME = "baseline-auto-disabled"
+
+
+def _corpus_entry(
+    dataset_name: str,
+    sessions: tuple[SessionOutcome, ...],
+    *,
+    name: str = _CORPUS_CANDIDATE_NAME,
+) -> CandidateEntry:
+    """One candidate as measured against one corpus.
+
+    The specs differ ONLY in dataset_sha256, which is what mints four distinct
+    fingerprints for one configuration and is exactly why adjudicate() refuses these
+    four as arms of a single comparison (D-45, adjudication.py:208-216). Deriving the
+    digest from the corpus name keeps the fixture content-seeded rather than
+    hand-assigned, so a renamed corpus cannot silently reuse another's identity.
+    """
+    spec = CandidateSpec(
+        name=name,
+        code_revision="unknown_revision",
+        code_revision_dirty=True,
+        overrides=(),
+        catalog_sha256="unknown",
+        dataset_sha256=hashlib.sha256(dataset_name.encode("utf-8")).hexdigest(),
+    )
+    spec.validate()
+    return CandidateEntry(
+        name=spec.name,
+        fingerprint=spec.fingerprint,
+        run_id=f"corpus-{dataset_name}",
+        code_revision=spec.code_revision,
+        code_revision_dirty=spec.code_revision_dirty,
+        overrides=spec.overrides,
+        sessions=sessions,
+        provenance="synthetic unit fixture",
+    )
+
+
+def _corpus_rows() -> tuple[tuple[str, CandidateEntry], ...]:
+    # Distinct session sets per corpus so the rendered rows are distinguishable and a
+    # transposed pairing would show up as a wrong TechnicalScore rather than as a tie.
+    outcomes = (_PERFECT, _MIDDLE, _WORST, _mixed_bucket_sessions())
+    return tuple(
+        (dataset_name, _corpus_entry(dataset_name, sessions))
+        for dataset_name, sessions in zip(_CORPUS_NAMES, outcomes)
+    )
 
 
 def _write_record(directory: Path, *, fingerprint: str | None = None) -> None:
@@ -847,6 +907,166 @@ class CommittedLeaderboardTest(unittest.TestCase):
         self.assertEqual(len(synthetic), 1)
         self.assertIn("fixture", synthetic[0]["provenance"])
         self.assertIn("promote_hits_to_rank_one", synthetic[0]["provenance"])
+
+
+class CorpusBaselinesTest(unittest.TestCase):
+    """D-53: corpus baselines and leaderboard candidates must not be conflatable.
+
+    Both directions are asserted. A separator that only ever admits its valid input
+    is not a separator -- the three conflation routes (a repeated corpus, a repeated
+    configuration, and a second candidate name) each have to raise, or the table
+    would silently become the same-corpus comparison D-45 refuses.
+    """
+
+    def test_rows_are_ordered_by_ascending_dataset_name(self) -> None:
+        payload = build_corpus_baselines(_corpus_rows())
+        self.assertEqual(
+            [row["dataset_name"] for row in payload["corpora"]],
+            ["expanded_confirm.v1", "expanded_dev.v1", "probe.v1", "public"],
+        )
+        # Non-vacuity: the fixture is handed over unsorted, so a pass cannot come
+        # from the caller's insertion order.
+        self.assertNotEqual(
+            [name for name, _ in _corpus_rows()],
+            [row["dataset_name"] for row in payload["corpora"]],
+        )
+
+    def test_every_row_names_its_own_corpus_and_carries_its_own_score(self) -> None:
+        rows = _corpus_rows()
+        payload = build_corpus_baselines(rows)
+        self.assertEqual(payload["schema_version"], CORPUS_BASELINES_SCHEMA_VERSION)
+        self.assertEqual(payload["candidate_name"], _CORPUS_CANDIDATE_NAME)
+        by_name = {name: entry for name, entry in rows}
+        for row in payload["corpora"]:
+            with self.subTest(corpus=row["dataset_name"]):
+                entry = by_name[row["dataset_name"]]
+                self.assertEqual(row["fingerprint"], entry.fingerprint)
+                self.assertEqual(row["run_id"], entry.run_id)
+                self.assertEqual(row["name"], _CORPUS_CANDIDATE_NAME)
+                # Recomputed from the sessions rather than read back off the row, so a
+                # row cannot satisfy this by being internally consistent with the
+                # wrong corpus's outcomes.
+                self.assertEqual(
+                    row["technical_score"], technical_score(metric_summary(entry.sessions))
+                )
+        # Four distinct configurations by fingerprint -- one per dataset_sha256 -- which
+        # is precisely why adjudicate() refuses them as arms.
+        self.assertEqual(len({row["fingerprint"] for row in payload["corpora"]}), 4)
+
+    def test_the_render_names_every_corpus_and_states_the_holm_omission(self) -> None:
+        rendered = render_corpus_baselines_markdown(
+            build_corpus_baselines(_corpus_rows())
+        )
+        for dataset_name in _CORPUS_NAMES:
+            with self.subTest(corpus=dataset_name):
+                self.assertIn(dataset_name, rendered)
+        # T-02-14: a report that does not say what it omitted is a repudiation
+        # surface, so the absent Holm family has to be named in prose rather than
+        # merely absent from the numbers.
+        self.assertIn("Holm", rendered)
+        self.assertIn("winner's-curse", rendered)
+        # Both tables are populated, so the `_none_` fallback must not appear at all.
+        self.assertNotIn("_none_", rendered)
+
+    def test_the_render_is_deterministic(self) -> None:
+        payload = build_corpus_baselines(_corpus_rows())
+        self.assertEqual(
+            render_corpus_baselines_markdown(payload),
+            render_corpus_baselines_markdown(payload),
+        )
+
+    def test_the_corpus_count_is_four_and_equals_the_rendered_row_count(self) -> None:
+        # D-58 machine-checked rather than left to prose. D-45 and D-48 both say
+        # "five", which predates D-46 consolidating the probe's three arms into one
+        # file; the payload states the count so the question is answered by the record.
+        payload = build_corpus_baselines(_corpus_rows())
+        self.assertEqual(payload["corpus_count"], 4)
+        self.assertEqual(len(payload["corpora"]), 4)
+        rendered = render_corpus_baselines_markdown(payload)
+        section = rendered[
+            rendered.index("## Per-corpus baseline") : rendered.index(
+                "## Per-scenario breakout"
+            )
+        ]
+        table_lines = [line for line in section.splitlines() if line.startswith("|")]
+        # Minus the header and the alignment separator.
+        self.assertEqual(len(table_lines) - 2, payload["corpus_count"])
+
+    def test_a_duplicate_dataset_name_is_rejected(self) -> None:
+        first = _corpus_entry("public", _PERFECT)
+        second = _corpus_entry("expanded_dev.v1", _MIDDLE)
+        self.assertNotEqual(first.fingerprint, second.fingerprint)
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_corpus_baselines((("public", first), ("public", second)))
+        self.assertIn("unique dataset names", str(raised.exception))
+
+    def test_a_duplicate_fingerprint_is_rejected(self) -> None:
+        # Two corpus labels over ONE configuration: the same run reported twice under
+        # different corpus names would fabricate a comparison out of one measurement.
+        entry = _corpus_entry("public", _PERFECT)
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_corpus_baselines((("public", entry), ("probe.v1", entry)))
+        self.assertIn("unique fingerprints", str(raised.exception))
+
+    def test_a_second_candidate_name_is_rejected(self) -> None:
+        # The D-45 misreading arriving by a different door: rows differing in BOTH the
+        # corpus and the configuration can be attributed to neither.
+        # The fourth corpus name is the one _corpus_rows()[:3] leaves unused, so the
+        # dataset names and the fingerprints both stay unique and the ONLY thing wrong
+        # with this input is the second candidate name. Reusing an already-present
+        # corpus name here would trip the duplicate-name refusal first and leave the
+        # mixed-name guard unexercised.
+        rows = _corpus_rows()[:3] + (
+            (
+                "expanded_dev.v1",
+                _corpus_entry("expanded_dev.v1", _WORST, name="other-candidate"),
+            ),
+        )
+        self.assertEqual(len({name for name, _ in rows}), 4)
+        self.assertEqual(len({entry.fingerprint for _, entry in rows}), 4)
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_corpus_baselines(rows)
+        self.assertIn("one candidate", str(raised.exception))
+
+    def test_an_empty_report_is_refused_rather_than_rendered_empty(self) -> None:
+        # The deliberate choice between `_table`'s `_none_` fallback and a refusal.
+        # Refusal, because this file's only claim is "one candidate, measured across
+        # these corpora"; a header with an empty body would publish that claim with no
+        # evidence under it. The fallback stays correct for the leaderboard's
+        # adjudication section, which can legitimately have adjudicated nothing.
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_corpus_baselines(())
+        self.assertIn("at least one corpus row", str(raised.exception))
+
+    def test_the_payload_carries_none_of_the_leaderboard_identity_keys(self) -> None:
+        # The structural half of the separation. `baseline_fingerprint` and
+        # `adjudication` are the leaderboard's identity -- one names the arm every
+        # delta is measured against, the other holds the tested family -- and neither
+        # has any meaning here, where nothing is tested against anything. Their absence
+        # is what makes the two payloads unmixable rather than merely differently
+        # named, and it is also proof that build_leaderboard was not called to produce
+        # this one.
+        payload = build_corpus_baselines(_corpus_rows())
+        self.assertEqual(
+            sorted(payload),
+            ["candidate_name", "corpora", "corpus_count", "reading", "schema_version"],
+        )
+        self.assertNotIn("adjudication", payload)
+        self.assertNotIn("baseline_fingerprint", payload)
+        # And the inverse, so the assertion is two-sided rather than a claim about one
+        # payload: the leaderboard does carry both, and carries no corpus table.
+        leaderboard = build_leaderboard(
+            (_entry("solo", _PERFECT),), (), baseline_fingerprint=None
+        )
+        self.assertIn("adjudication", leaderboard)
+        self.assertIn("baseline_fingerprint", leaderboard)
+        self.assertNotIn("corpora", leaderboard)
+        self.assertNotIn("corpus_count", leaderboard)
+
+    def test_the_payload_is_json_serializable_with_sorted_keys(self) -> None:
+        payload = build_corpus_baselines(_corpus_rows())
+        serialized = json.dumps(payload, sort_keys=True)
+        self.assertEqual(json.loads(serialized)["corpus_count"], 4)
 
 
 if __name__ == "__main__":
