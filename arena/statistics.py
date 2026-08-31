@@ -21,6 +21,25 @@ from arena.metrics import SessionOutcome, metric_summary, technical_score
 # (`arena/run_arena.py`, `arena/leaderboard.py`) takes the default.
 RESAMPLE_COUNT = 10_000
 
+# A 2.5% tail is REPRESENTABLE only when 1 / (resamples + 1) <= 0.025, i.e. only when
+# resamples >= 39. Below that `(resamples + 1) * 0.025` falls under 1, both indices
+# clamp to the extremes, and the function returns the full replicate range whatever
+# confidence was requested -- a silently WRONG answer rather than an honestly wide one.
+# That is the failure mode the pre-fix arithmetic exhibited at R=2, where the "97.5th
+# percentile" was literally the minimum replicate. 40 sits one above the
+# representability threshold. Note the interval legitimately remains the full replicate
+# range up to R=78 and the lower bound first leaves index 0 at R=79; that is expected
+# and honest at those counts, not a defect, which is why this floor is about
+# REPRESENTABILITY and not about the span. The suite's FAST_RESAMPLES=200,
+# STABLE_RESAMPLES=500, TEST_RESAMPLES=500 and the pinned 2000 in
+# `test_permutation_floor` all sit comfortably above it.
+MINIMUM_RESAMPLES = 40
+
+# The interval's confidence level appears once here rather than as four magic numbers
+# buried inside an index expression.
+_LOWER_QUANTILE = 0.025
+_UPPER_QUANTILE = 0.975
+
 # Float-noise slack when testing whether a permuted statistic is at least as extreme
 # as the observed one. TechnicalScore is rounded to 6 dp, so an exact tie is common
 # and a bare `>=` on raw floats would drop roughly half of them.
@@ -99,8 +118,44 @@ def _require_paired(
 
 
 def _require_resamples(resamples: int) -> None:
-    if resamples < 1:
-        raise ValueError("resample count must be at least one")
+    if resamples < MINIMUM_RESAMPLES:
+        raise ValueError(f"resample count must be at least {MINIMUM_RESAMPLES}")
+
+
+def percentile_indices(resamples: int) -> tuple[int, int]:
+    """Zero-based (lower, upper) order statistics of a 95% percentile interval."""
+    # PUBLIC, pure and side-effect-free specifically so the suite and a future auditor
+    # can assert the indices directly instead of inferring them from an interval --
+    # the same auditability discipline arena/adjudication.py:93-95 states for the
+    # correction columns.
+    #
+    # Two properties this (R+1) convention buys, both asserted in
+    # tests/test_arena_statistics.py::PercentileIntervalTest. Do not "simplify" them
+    # away:
+    #
+    #   SYMMETRY. lower == resamples - 1 - upper at every admissible R, so the two
+    #   tails are equally far from their ends. The pre-fix arithmetic had no such
+    #   property: at R=10,000 it took order statistic 251 from the bottom and 9750
+    #   from the top.
+    #
+    #   COVERAGE AT OR ABOVE NOMINAL. The interval spans upper - lower + 1 of the
+    #   `resamples` order statistics, which is at least 0.95 * resamples at every
+    #   admissible R. (R + 1) is the Efron-Tibshirani denominator: with R replicates
+    #   there are R+1 gaps between and outside them, so the alpha/2 quantile is the
+    #   (R+1) * alpha/2-th order statistic. The pre-fix code used `resamples` as the
+    #   denominator AND dropped one index on the upper side, which is where the
+    #   94.99% came from.
+    #
+    # Worked values, checkable by eye: R=10,000 -> (249, 9750), spanning 9,502 of
+    # 10,000 (95.02%); R=500 -> (11, 488), spanning 478 (95.6%); R=200 -> (4, 195),
+    # spanning 192 (96.0%); R=40 -> (0, 39), the full range.
+    #
+    # The clamps are defensive only: above MINIMUM_RESAMPLES neither can bind, since
+    # floor(0.025 * (R + 1)) >= 1 for R >= 39.
+    _require_resamples(resamples)
+    lower_index = max(0, math.floor(_LOWER_QUANTILE * (resamples + 1)) - 1)
+    upper_index = min(resamples - 1, math.ceil(_UPPER_QUANTILE * (resamples + 1)) - 1)
+    return (lower_index, upper_index)
 
 
 def _delta(
@@ -149,10 +204,11 @@ def paired_bootstrap(
     # pair the delta distribution is lattice-valued (26 distinct values in 5,000
     # replicates, 19.1% exact ties), so z0 swings nineteen-fold on a `<` versus `<=`
     # choice with no principled answer. Percentile degrades gracefully to (0.0, 0.0).
+    lower_index, upper_index = percentile_indices(resamples)
     return BootstrapResult(
         delta=_delta(baseline, candidate),
-        lower=deltas[int(0.025 * resamples)],
-        upper=deltas[int(0.975 * resamples) - 1],
+        lower=deltas[lower_index],
+        upper=deltas[upper_index],
         standard_error=statistics.pstdev(deltas),
         resamples=resamples,
     )
