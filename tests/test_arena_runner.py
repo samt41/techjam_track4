@@ -12,7 +12,12 @@ from arena.arena import _SampleMappingAgent, build_candidate_spec, run_candidate
 from arena.candidate import CandidateSpec
 from arena.metrics import SessionOutcome
 from arena.run_arena import main
-from arena.store import SESSIONS_FILENAME, SUMMARY_FILENAME, load_sessions
+from arena.store import (
+    SESSIONS_FILENAME,
+    SUMMARY_FILENAME,
+    ArenaStoreError,
+    load_sessions,
+)
 from starter.shopping_agent.search_backend import LexicalMode
 
 
@@ -485,6 +490,211 @@ class CliTest(unittest.TestCase):
 
     def test_a_subcommand_is_required(self) -> None:
         self.assertNotEqual(self._main(["run_arena.py"]), 0)
+
+
+class FingerprintIdentityTest(unittest.TestCase):
+    """MEAS-14's promise as assertions rather than as a comment.
+
+    One configuration must have exactly one fingerprint no matter which entry path
+    expressed it, and a knob the operator actually typed must still change it.
+    Verification measured the opposite before this was closed: the
+    default-everything configuration fingerprinted one way through the CLI, which
+    injected argparse defaults into the hashed overrides, and another way
+    programmatically, which recorded an empty mapping. Neither of those two digests
+    is pinned here -- both were computed over a code_revision captured at
+    verification time, so asserting them would fail on the next commit. The equality
+    and the inequality are the properties; the digests were only the symptom.
+    """
+
+    def _fixtures(self, directory: str) -> tuple[Path, Path, Path]:
+        # Real files, because the CLI validates both paths at its boundary before
+        # anything is patched, and build_candidate_spec digests them. They stay a
+        # single line each: nothing ever parses them, the seams below see to that.
+        root = Path(directory)
+        catalog = root / "catalog-fixture.jsonl"
+        catalog.write_text('{"parent_asin": "B01"}\n', encoding="utf-8")
+        dataset = root / "dataset-fixture.jsonl"
+        dataset.write_text('{"sample_id": "sample-a"}\n', encoding="utf-8")
+        return (catalog, dataset, root / "records")
+
+    @contextlib.contextmanager
+    def _seams(self, *, evaluate=None):
+        rows = [_session_row("sample-a", best_rank=2, turn=3)]
+        with (
+            patch("arena.arena.Agent", _AgentFactory()),
+            patch("arena.arena.load_jsonl", return_value=[_sample("sample-a")]),
+            patch("arena.arena.catalog_index", return_value=(set(), {}, {})),
+            patch(
+                "arena.arena.evaluate",
+                evaluate if evaluate is not None else _fake_evaluate(rows, ("public_aaa",)),
+            ),
+            # Pinned so the two entry paths can differ on nothing except the overrides
+            # mapping under test. It also keeps the identity assertion off a git
+            # subprocess whose answer could change between the two constructions.
+            patch(
+                "arena.arena.current_revision",
+                return_value=("unknown_revision", True),
+            ),
+        ):
+            yield
+
+    def _cli_run(self, argv: list[str]) -> Path:
+        # A successful `run` returns from main() rather than exiting, and prints the
+        # published directory. CliTest's helper asserts SystemExit and so cannot
+        # drive the success path.
+        stdout = io.StringIO()
+        with patch("sys.argv", argv), contextlib.redirect_stdout(stdout):
+            main()
+        return Path(stdout.getvalue().strip())
+
+    def _argv(
+        self,
+        run_id: str,
+        catalog: Path,
+        dataset: Path,
+        output_root: Path,
+        *extra: str,
+    ) -> list[str]:
+        return [
+            "run_arena.py",
+            "run",
+            "--run-id",
+            run_id,
+            "--name",
+            "synthetic-identity-candidate",
+            "--catalog",
+            str(catalog),
+            "--dataset",
+            str(dataset),
+            "--output-root",
+            str(output_root),
+            *extra,
+        ]
+
+    def _record(self, destination: Path) -> dict:
+        return json.loads((destination / SUMMARY_FILENAME).read_text(encoding="utf-8"))
+
+    def test_an_omitted_flag_is_absent_from_the_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            catalog, dataset, output_root = self._fixtures(directory)
+            with self._seams():
+                destination = self._cli_run(
+                    self._argv("default-invocation", catalog, dataset, output_root)
+                )
+            record = self._record(destination)
+        # Before the fix this carried {"exploration": "disabled",
+        # "lexical_mode": "auto"}, injected by argparse rather than by the operator.
+        self.assertEqual(record["overrides"], {})
+
+    def test_the_cli_default_invocation_agrees_with_the_programmatic_empty_overrides(
+        self,
+    ) -> None:
+        """One configuration expressed by OMISSION, one digest, either entry path.
+
+        What this does NOT claim: an invocation that explicitly types
+        `--exploration disabled` records {"exploration": "disabled"} and still
+        fingerprints differently from one that omits the flag, even though both
+        configure a byte-identical Agent. That is intended -- the fingerprint
+        describes the invocation -- and no test here may assert otherwise.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            catalog, dataset, output_root = self._fixtures(directory)
+            with self._seams():
+                destination = self._cli_run(
+                    self._argv("default-invocation", catalog, dataset, output_root)
+                )
+                programmatic = build_candidate_spec(
+                    "synthetic-identity-candidate",
+                    catalog_path=catalog,
+                    dataset_path=dataset,
+                    overrides={},
+                )
+            record = self._record(destination)
+        self.assertEqual(record["overrides"], {})
+        self.assertEqual(record["fingerprint"], programmatic.fingerprint)
+
+    def test_a_passed_flag_is_recorded_verbatim(self) -> None:
+        # The non-vacuity guard for the two assertions above: a filter that dropped
+        # every flag would satisfy both of them and be badly wrong.
+        with tempfile.TemporaryDirectory() as directory:
+            catalog, dataset, output_root = self._fixtures(directory)
+            with self._seams():
+                default_destination = self._cli_run(
+                    self._argv("default-invocation", catalog, dataset, output_root)
+                )
+                typed_destination = self._cli_run(
+                    self._argv(
+                        "typed-invocation",
+                        catalog,
+                        dataset,
+                        output_root,
+                        "--exploration",
+                        "tail-only",
+                        "--lexical-mode",
+                        "fallback",
+                    )
+                )
+            default_record = self._record(default_destination)
+            typed_record = self._record(typed_destination)
+        self.assertEqual(
+            typed_record["overrides"],
+            {"exploration": "tail-only", "lexical_mode": "fallback"},
+        )
+        self.assertNotEqual(
+            typed_record["fingerprint"],
+            default_record["fingerprint"],
+        )
+
+    def test_harness_output_colliding_with_a_provenance_key_is_refused(self) -> None:
+        rows = [_session_row("sample-a", best_rank=2, turn=3)]
+
+        def colliding_evaluate(agent, samples, catalog_ids, categories, products) -> dict:
+            for index, sample in enumerate(samples):
+                agent.reset(f"public_{index}", sample["user_profile"])
+            result = _evaluation_result(rows)
+            # The hazard the guard exists for: harness output that would win over an
+            # arena-written provenance field and publish a record claiming a
+            # fingerprint the arena never computed.
+            result["fingerprint"] = "0" * 64
+            return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_root = Path(directory) / "records"
+            destination = output_root / "collision"
+            with self._seams(evaluate=colliding_evaluate):
+                with self.assertRaises(ArenaStoreError) as raised:
+                    run_candidate(
+                        _spec(),
+                        run_id="collision",
+                        catalog_path=UNOPENED_CATALOG,
+                        dataset_path=UNOPENED_DATASET,
+                        output_root=output_root,
+                    )
+            self.assertIn("fingerprint", str(raised.exception))
+            # A refusal, not a repaired record: nothing was published.
+            self.assertFalse(destination.exists())
+
+    def test_a_clean_harness_result_still_publishes(self) -> None:
+        # The mirror non-vacuity guard: a check that rejected everything would pass
+        # the refusal test above.
+        spec = _spec()
+        with tempfile.TemporaryDirectory() as directory:
+            output_root = Path(directory) / "records"
+            with self._seams():
+                destination = run_candidate(
+                    spec,
+                    run_id="clean",
+                    catalog_path=UNOPENED_CATALOG,
+                    dataset_path=UNOPENED_DATASET,
+                    output_root=output_root,
+                )
+            record = self._record(destination)
+        self.assertEqual(record["fingerprint"], spec.fingerprint)
+        self.assertEqual(record["candidate_name"], spec.name)
+        self.assertEqual(record["code_revision"], spec.code_revision)
+        self.assertEqual(record["catalog_sha256"], spec.catalog_sha256)
+        self.assertEqual(record["dataset_sha256"], spec.dataset_sha256)
+        self.assertTrue(record["provenance_complete"])
 
 
 if __name__ == "__main__":
