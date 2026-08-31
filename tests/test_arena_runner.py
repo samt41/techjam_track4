@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -8,17 +9,35 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from arena import run_arena
 from arena.arena import _SampleMappingAgent, build_candidate_spec, run_candidate
 from arena.candidate import CandidateSpec
+from arena.datasets.registry import (
+    DatasetEntry,
+    RegistryError,
+    write_registry,
+)
+from arena.datasets.schema import (
+    CORPUS_SCHEMA_VERSION,
+    SampleRow,
+    distinct_targets,
+    load_corpus,
+    scenario_mix,
+    write_corpus,
+)
+from arena.leaderboard import LEADERBOARD_MARKDOWN_PATH
 from arena.metrics import SessionOutcome
-from arena.run_arena import main
+from arena.run_arena import _build_parser, _resolve_dataset, main
 from arena.store import (
     SESSIONS_FILENAME,
     SUMMARY_FILENAME,
     ArenaStoreError,
     load_sessions,
+    sha256_file,
+    write_sessions,
 )
 from starter.shopping_agent.search_backend import LexicalMode
+from tests.dataset_fixtures import matched_pair, pair_id, sample_row
 
 
 # Never a path under data/. Every collaborator that would touch the catalog is
@@ -695,6 +714,931 @@ class FingerprintIdentityTest(unittest.TestCase):
         self.assertEqual(record["catalog_sha256"], spec.catalog_sha256)
         self.assertEqual(record["dataset_sha256"], spec.dataset_sha256)
         self.assertTrue(record["provenance_complete"])
+
+
+# The five keys registry._DIVERGENCE_METRIC_KEYS pins, in sorted key order because
+# DatasetEntry.validate refuses an unsorted metric tuple. Hand-written rather than
+# derived through arena.datasets.divergence: nothing in this module measures
+# divergence, and a real aggregator call here would couple these CLI tests to a
+# module they do not exercise.
+_DIVERGENCE = (
+    (
+        "material",
+        (
+            ("mean_overlap_ratio", 0.1),
+            ("median_overlap_ratio", 0.1),
+            ("min_overlap_ratio", 0.1),
+            ("n", 1),
+            ("pass_count", 1),
+        ),
+    ),
+)
+
+
+def _registry_entry(corpus: Path, *, name: str) -> DatasetEntry:
+    """A registry entry describing `corpus` as it actually is on disk.
+
+    The three shape fields are READ BACK from the written file rather than asserted,
+    so a fixture cannot record a session count the corpus does not have and then
+    "pass" a resolution test for the wrong reason.
+    """
+    records = load_corpus(corpus)
+    entry = DatasetEntry(
+        name=name,
+        path=str(corpus),
+        sha256=sha256_file(corpus),
+        schema_version=CORPUS_SCHEMA_VERSION,
+        session_count=len(records),
+        distinct_target_count=len(distinct_targets(records)),
+        scenario_mix=scenario_mix(records),
+        generator_model_alias="sonnet",
+        generator_model_resolved="claude-sonnet-4-5-20250929",
+        claude_cli_version="2.0.14",
+        prompt_pack=(("authoring.md", "b" * 64),),
+        seed=7,
+        code_revision="deadbeefcafe",
+        code_revision_dirty=False,
+        frozen_commit="0123456789abcdef",
+        response_log_path="",
+        response_log_sha256="",
+        call_count=0,
+        cost_usd=0.0,
+        divergence=_DIVERGENCE,
+        divergence_log_path="",
+        divergence_log_sha256="",
+        divergence_pair_count=0,
+        target_snapshot_path="",
+        target_snapshot_sha256="",
+        target_snapshot_count=0,
+    )
+    entry.validate()
+    return entry
+
+
+def _outcome(sample_id: str, *, scenario_type: str, hit: bool) -> SessionOutcome:
+    outcome = SessionOutcome(
+        sample_id=sample_id,
+        scenario_type=scenario_type,
+        hit=hit,
+        first_hit_turn=2 if hit else None,
+        best_rank=1 if hit else None,
+        reciprocal_rank=1.0 if hit else 0.0,
+    )
+    outcome.validate()
+    return outcome
+
+
+def _sessions_for(rows: tuple[SampleRow, ...]) -> tuple[SessionOutcome, ...]:
+    # A fixed, index-derived hit pattern rather than a random one: control and probe
+    # rows of one pair sit next to each other, so alternating on the index gives the
+    # McNemar table discordant cells in both directions while staying byte-stable.
+    return tuple(
+        _outcome(
+            row.sample_id,
+            scenario_type=row.scenario_type,
+            hit=index % 3 != 0,
+        )
+        for index, row in enumerate(rows)
+    )
+
+
+def _write_record(
+    directory: Path,
+    *,
+    name: str,
+    dataset_sha256: str,
+    sessions: tuple[SessionOutcome, ...],
+) -> Path:
+    """A realistic run-record directory: a summary.json and a sessions.jsonl.
+
+    The fingerprint is DERIVED from a real CandidateSpec and the record carries
+    `candidate_name`, because leaderboard._spec_from_payload re-derives the
+    fingerprint on the read path and refuses a record whose stored digest disagrees.
+    A fixture that omitted candidate_name would resolve the spec name from run_id,
+    mint a second fingerprint, and fail for a reason unrelated to the CLI.
+    """
+    directory.mkdir(parents=True)
+    spec = CandidateSpec(
+        name=name,
+        code_revision="deadbeefcafe",
+        code_revision_dirty=False,
+        overrides=(("exploration", "disabled"),),
+        catalog_sha256="a" * 64,
+        dataset_sha256=dataset_sha256,
+    )
+    spec.validate()
+    record = spec.as_record()
+    record["candidate_name"] = spec.name
+    record["run_id"] = directory.name
+    record["provenance_complete"] = True
+    (directory / SUMMARY_FILENAME).write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_sessions(directory / SESSIONS_FILENAME, sessions)
+    return directory
+
+
+class _CliCase(unittest.TestCase):
+    """Drives main(argv) directly. Nothing here spawns a process or runs an agent."""
+
+    def _cli_failure(self, argv: tuple[str, ...]) -> str:
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with (
+            contextlib.redirect_stderr(stderr),
+            contextlib.redirect_stdout(stdout),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                main(argv)
+        code = raised.exception.code
+        self.assertNotEqual(0 if code is None else int(code), 0)
+        return stderr.getvalue()
+
+    def _cli_success(self, argv: tuple[str, ...]) -> str:
+        # A successful contrast or corpus-baselines RETURNS rather than exiting, so
+        # this helper must not assert SystemExit -- an exit here is the failure.
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            main(argv)
+        return stdout.getvalue()
+
+    def _help(self, argv: tuple[str, ...]) -> str:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            with self.assertRaises(SystemExit) as raised:
+                main(argv)
+        self.assertEqual(raised.exception.code, 0)
+        return stdout.getvalue()
+
+
+class DatasetResolutionTest(_CliCase):
+    """D-43 / Pitfall 6: a recorded digest becomes an enforced precondition."""
+
+    @contextlib.contextmanager
+    def _registry(self, directory: str, *, name: str = "probe.v1"):
+        root = Path(directory) / "data"
+        root.mkdir()
+        corpus = root / f"{name}.jsonl"
+        write_corpus(corpus, matched_pair(pair_id(0)))
+        registry = root / "datasets.json"
+        write_registry(registry, (_registry_entry(corpus, name=name),))
+        # Patched where the name is LOOKED UP. arena/run_arena.py binds
+        # REGISTRY_PATH and CORPUS_ROOT into its own module namespace and
+        # _resolve_dataset reads both at CALL time, so patching the attributes on
+        # arena.run_arena is what the resolver actually sees. Patching
+        # arena.datasets.registry.REGISTRY_PATH instead would touch a default that
+        # was already bound at def time and change nothing.
+        with (
+            patch.object(run_arena, "REGISTRY_PATH", registry),
+            patch.object(run_arena, "CORPUS_ROOT", root),
+        ):
+            yield (root, corpus, registry)
+
+    def test_a_registry_name_resolves_to_its_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory) as (_, corpus, _registry_path):
+                self.assertEqual(_resolve_dataset("probe.v1"), corpus)
+
+    def test_the_patched_registry_is_what_makes_the_name_resolve(self) -> None:
+        # The non-vacuity guard for every case in this class. Outside the patch the
+        # same name is not a registry name at all and falls through to the path
+        # branch, so a patch that silently did nothing would fail here rather than
+        # letting the assertions above pass for the wrong reason.
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory):
+                pass
+            with self.assertRaises(ValueError) as raised:
+                _resolve_dataset("probe.v1")
+        self.assertIn("dataset does not exist:", str(raised.exception))
+
+    def test_a_drifted_corpus_is_refused_naming_both_digests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory) as (_, corpus, registry):
+                recorded = sha256_file(corpus)
+                corpus.write_text(
+                    corpus.read_text(encoding="utf-8").replace("black", "brown", 1),
+                    encoding="utf-8",
+                )
+                observed = sha256_file(corpus)
+                self.assertNotEqual(recorded, observed)
+                with self.assertRaises(RegistryError) as raised:
+                    _resolve_dataset("probe.v1")
+        message = str(raised.exception)
+        # Both digests, not merely "drifted": an operator has to be able to tell
+        # which file changed from the message alone. This is the two-sided half --
+        # a resolver that always succeeded would enforce nothing at all.
+        self.assertIn(recorded, message)
+        self.assertIn(observed, message)
+        self.assertIn(str(registry), message)
+
+    def test_a_registered_corpus_whose_file_vanished_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory) as (_root, corpus, _registry_path):
+                corpus.unlink()
+                with self.assertRaises(RegistryError) as raised:
+                    _resolve_dataset("probe.v1")
+        # A distinct branch from the drift refusal, asserted on its own message: both
+        # raise RegistryError, so an exception-type assertion alone would not tell
+        # "the file changed" from "the file is gone".
+        self.assertIn("but the file is missing", str(raised.exception))
+
+    def test_an_unreadable_registry_is_refused_rather_than_ignored(self) -> None:
+        # A malformed registry must NOT fall through to the path branch and silently
+        # measure an unfrozen file: that would turn the one check standing between a
+        # recorded digest and a measurement into a no-op whenever the JSON broke.
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory) as (_root, _corpus, registry):
+                registry.write_text(
+                    json.dumps({"schema_version": 99, "datasets": []}) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(RegistryError) as raised:
+                    _resolve_dataset("probe.v1")
+        self.assertIn("unsupported registry schema version", str(raised.exception))
+
+    def test_a_plain_filesystem_path_still_resolves(self) -> None:
+        # Backward compatibility with data/public_set.jsonl, which is not and will
+        # never be registry-managed.
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "public_set.jsonl"
+            dataset.write_text('{"sample_id": "sample-a"}\n', encoding="utf-8")
+            self.assertEqual(_resolve_dataset(str(dataset)), dataset)
+
+    def test_a_nonexistent_path_keeps_the_existing_message_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            absent = Path(directory) / "absent.jsonl"
+            with self.assertRaises(ValueError) as raised:
+                _resolve_dataset(str(absent))
+        self.assertIn("dataset does not exist:", str(raised.exception))
+
+    def test_the_run_subcommand_refuses_a_drifted_name_through_parser_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self._registry(directory) as (root, corpus, _registry_path):
+                catalog = root / "catalog-fixture.jsonl"
+                catalog.write_text('{"parent_asin": "B01"}\n', encoding="utf-8")
+                recorded = sha256_file(corpus)
+                corpus.write_text(
+                    corpus.read_text(encoding="utf-8").replace("black", "brown", 1),
+                    encoding="utf-8",
+                )
+                # No seams patched: resolution happens at the CLI boundary before
+                # anything is built, so this never reaches an Agent or a catalog.
+                stderr = self._cli_failure(
+                    (
+                        "run",
+                        "--run-id",
+                        "drifted",
+                        "--name",
+                        "synthetic-drift-candidate",
+                        "--catalog",
+                        str(catalog),
+                        "--dataset",
+                        "probe.v1",
+                        "--output-root",
+                        str(root / "records"),
+                    )
+                )
+        self.assertIn(recorded, stderr)
+        self.assertIn("drifted from its frozen digest", stderr)
+
+
+class HelpTextTest(_CliCase):
+    """L-11: the warning lives in the subcommand it applies to, and nowhere else."""
+
+    def test_the_run_help_states_the_flags_a_reproduction_must_type(self) -> None:
+        text = self._help(("run", "--help"))
+        self.assertIn("--exploration disabled --lexical-mode auto", text)
+        self.assertIn("fingerprint", text)
+        self.assertIn("registry name", text)
+
+    def test_the_adjudicate_help_does_not_carry_the_run_warning(self) -> None:
+        # The negative direction, and it is what makes the assertion above mean
+        # something: a warning pasted into every subparser would satisfy the
+        # positive test while telling an operator nothing about scope.
+        text = self._help(("adjudicate", "--help"))
+        self.assertNotIn("--exploration disabled --lexical-mode auto", text)
+
+
+class _ContrastFixture(_CliCase):
+    """Shared corpus and record construction for the three contrast test classes."""
+
+    def _publish(
+        self,
+        directory: str,
+        rows: tuple[SampleRow, ...],
+        *,
+        corpus_name: str = "probe.v1",
+        extra_rows: tuple[SampleRow, ...] = (),
+    ) -> tuple[Path, Path, Path]:
+        root = Path(directory)
+        corpus = root / f"{corpus_name}.jsonl"
+        write_corpus(corpus, rows)
+        # The record's sessions cover `extra_rows` as well, so a cross-corpus test
+        # can point a second corpus at the SAME record and still reach the pair-id
+        # join instead of failing earlier on an empty partition.
+        record = _write_record(
+            root / "records" / "probe-run",
+            name="synthetic-contrast-candidate",
+            dataset_sha256="b" * 64,
+            sessions=_sessions_for(rows + extra_rows),
+        )
+        return (corpus, record, root / "out" / "baselines")
+
+
+class ContrastCommandTest(_ContrastFixture):
+    """D-44 through the CLI: one record, one corpus, two arms."""
+
+    def _rows(self, pair_count: int = 8) -> tuple[SampleRow, ...]:
+        rows: list[SampleRow] = []
+        for index in range(pair_count):
+            rows.extend(matched_pair(pair_id(index)))
+        return tuple(rows)
+
+    def test_the_default_shape_writes_both_artifacts_under_output_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stdout = self._cli_success(
+                (
+                    "contrast",
+                    "--record",
+                    str(record),
+                    "--corpus",
+                    str(corpus),
+                    "--control-arm",
+                    "control",
+                    "--probe-arm",
+                    "probe_sonnet",
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+            json_path = output_root / "paired_contrast.json"
+            markdown_path = output_root.parent / "PAIRED_CONTRAST.md"
+            self.assertTrue(json_path.is_file(), stdout)
+            self.assertTrue(markdown_path.is_file(), stdout)
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            markdown = markdown_path.read_text(encoding="utf-8")
+        self.assertEqual(payload["pair_count"], 8)
+        self.assertEqual(payload["restriction"], "strict")
+        self.assertEqual(payload["dropped_pair_count"], 0)
+        self.assertEqual(
+            payload["corrections_omitted"],
+            ["holm_bonferroni", "winners_curse_correction"],
+        )
+        self.assertIn("holm_bonferroni", markdown)
+        # Both counts reach stdout, so the operator sees them without opening the
+        # report they are about to cite.
+        self.assertIn("pairs=8 dropped=0", stdout)
+
+    def test_one_arm_named_twice_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stderr = self._cli_failure(
+                (
+                    "contrast",
+                    "--record",
+                    str(record),
+                    "--corpus",
+                    str(corpus),
+                    "--control-arm",
+                    "control",
+                    "--probe-arm",
+                    "control",
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+        # Asserted on the BRANCH's own message rather than on the exit code alone.
+        # Several refusals inside _contrast funnel through the same parser.error, so
+        # a bare non-zero exit would not distinguish this guard from any other.
+        self.assertIn("both arms partition on arm 'control'", stderr)
+
+    def test_an_arm_absent_from_the_corpus_lists_the_arms_present(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stderr = self._cli_failure(
+                (
+                    "contrast",
+                    "--record",
+                    str(record),
+                    "--corpus",
+                    str(corpus),
+                    "--probe-arm",
+                    "probe_haiku",
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+        self.assertIn("no corpus rows carry arm 'probe_haiku'", stderr)
+        self.assertIn("['control', 'probe_sonnet']", stderr)
+
+    def test_an_absent_record_directory_is_refused_at_the_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stderr = self._cli_failure(
+                (
+                    "contrast",
+                    "--record",
+                    str(record.parent / "absent-run"),
+                    "--corpus",
+                    str(corpus),
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+        self.assertIn("run directory does not exist:", stderr)
+
+    def test_an_absent_corpus_is_refused_at_the_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stderr = self._cli_failure(
+                (
+                    "contrast",
+                    "--record",
+                    str(record),
+                    "--corpus",
+                    str(corpus.parent / "absent.jsonl"),
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+        self.assertIn("dataset does not exist:", stderr)
+
+
+class PairSubsetCommandTest(_ContrastFixture):
+    """MEAS-13 / D-40: the honest default refuses; the narrowing reports its drop."""
+
+    _SONNET_PAIRS = 30
+    _HAIKU_PAIRS = 10
+
+    def _rows(self) -> tuple[SampleRow, ...]:
+        # The REAL unequal shape, not a matched one scaled down: every pair carries
+        # control and probe_sonnet, and only the first ten also carry probe_haiku.
+        rows: list[SampleRow] = []
+        for index in range(self._SONNET_PAIRS):
+            identifier = pair_id(index)
+            rows.extend(matched_pair(identifier))
+            if index < self._HAIKU_PAIRS:
+                rows.append(sample_row(identifier, arm="probe_haiku"))
+        return tuple(rows)
+
+    def _argv(self, corpus: Path, record: Path, output_root: Path, *extra: str):
+        return (
+            "contrast",
+            "--record",
+            str(record),
+            "--corpus",
+            str(corpus),
+            "--control-arm",
+            "probe_sonnet",
+            "--probe-arm",
+            "probe_haiku",
+            "--output-root",
+            str(output_root),
+            *extra,
+        )
+
+    def test_the_default_refuses_and_names_the_orphan_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stderr = self._cli_failure(self._argv(corpus, record, output_root))
+            self.assertFalse((output_root / "paired_contrast.json").exists())
+        self.assertIn("unmatched pair ids between arms", stderr)
+        # Names the ids, not merely the count: pair 10 is the first orphan, because
+        # only pairs 0-9 carry a probe_haiku arm.
+        self.assertIn("probe_v1_0010", stderr)
+
+    def test_typing_the_default_value_behaves_exactly_like_omitting_it(self) -> None:
+        # Not a tautology on this CLI. The one bug this repository has already
+        # shipped in argparse defaults was exactly a flag whose declared default and
+        # whose omitted behaviour diverged (L-11, and the comment block above _run),
+        # so "strict is the default" has to be measured rather than read off the
+        # declaration. Both spellings must produce the same refusal.
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            omitted = self._cli_failure(self._argv(corpus, record, output_root))
+            typed = self._cli_failure(
+                self._argv(corpus, record, output_root, "--pair-subset", "strict")
+            )
+            self.assertFalse((output_root / "paired_contrast.json").exists())
+        self.assertIn("unmatched pair ids between arms", omitted)
+        self.assertIn("unmatched pair ids between arms", typed)
+        self.assertIn("probe_v1_0010", typed)
+
+    def test_shared_narrows_explicitly_and_records_what_it_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, record, output_root = self._publish(directory, self._rows())
+            stdout = self._cli_success(
+                self._argv(
+                    corpus,
+                    record,
+                    output_root,
+                    "--pair-subset",
+                    "shared",
+                )
+            )
+            payload = json.loads(
+                (output_root / "paired_contrast.json").read_text(encoding="utf-8")
+            )
+            markdown = (output_root.parent / "PAIRED_CONTRAST.md").read_text(
+                encoding="utf-8"
+            )
+        self.assertEqual(payload["pair_count"], self._HAIKU_PAIRS)
+        self.assertEqual(
+            payload["dropped_pair_count"],
+            self._SONNET_PAIRS - self._HAIKU_PAIRS,
+        )
+        self.assertEqual(payload["restriction"], "shared-pairs")
+        self.assertIn("pairs=10 dropped=20", stdout)
+        # The drop is stated in prose as well as in a cell: "10 pairs" and "10 of 30
+        # pairs" support different claims (MEAS-06).
+        self.assertIn("10 of 30 matched pairs", markdown)
+
+
+class CrossCorpusGateTest(_ContrastFixture):
+    """D-45, in both layers: the typed flag, and the disjoint pair-id namespaces."""
+
+    def _corpora(self, directory: str) -> tuple[Path, Path, Path, Path]:
+        probe_rows: list[SampleRow] = []
+        foreign_rows: list[SampleRow] = []
+        for index in range(6):
+            probe_rows.extend(matched_pair(pair_id(index)))
+            foreign_rows.extend(
+                matched_pair(pair_id(index, corpus_stem="expanded_dev_v1"))
+            )
+        corpus, record, output_root = self._publish(
+            directory,
+            tuple(probe_rows),
+            extra_rows=tuple(foreign_rows),
+        )
+        foreign = Path(directory) / "expanded_dev.v1.jsonl"
+        write_corpus(foreign, tuple(foreign_rows))
+        return (corpus, foreign, record, output_root)
+
+    def _argv(self, corpus: Path, record: Path, output_root: Path, *extra: str):
+        return (
+            "contrast",
+            "--record",
+            str(record),
+            "--corpus",
+            str(corpus),
+            "--output-root",
+            str(output_root),
+            *extra,
+        )
+
+    def test_probe_corpus_without_the_flag_is_refused_naming_d45(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, foreign, record, output_root = self._corpora(directory)
+            stderr = self._cli_failure(
+                self._argv(
+                    corpus, record, output_root, "--probe-corpus", str(foreign)
+                )
+            )
+        self.assertIn("D-45", stderr)
+        self.assertIn("--allow-cross-corpus", stderr)
+
+    def test_probe_record_without_the_flag_is_refused_naming_d45(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, _foreign, record, output_root = self._corpora(directory)
+            stderr = self._cli_failure(
+                self._argv(
+                    corpus, record, output_root, "--probe-record", str(record)
+                )
+            )
+        self.assertIn("D-45", stderr)
+
+    def test_with_the_flag_the_namespaced_pair_ids_still_refuse_the_join(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, foreign, record, output_root = self._corpora(directory)
+            stderr = self._cli_failure(
+                self._argv(
+                    corpus,
+                    record,
+                    output_root,
+                    "--probe-corpus",
+                    str(foreign),
+                    "--allow-cross-corpus",
+                )
+            )
+            self.assertFalse((output_root / "paired_contrast.json").exists())
+        # The proof that the STRUCTURAL defence is what closes the hole: the second
+        # failure names pair ids from two namespaces, not the flag. Plan 02-03 makes
+        # every pair_id carry its corpus stem, so two corpora intersect in nothing
+        # and align_on_pair_id raises whether or not --allow-cross-corpus was typed.
+        self.assertIn("unmatched pair ids between arms", stderr)
+        self.assertIn("expanded_dev_v1_0000", stderr)
+        # And it is NOT the flag gate that fired. The discriminator has to be "D-45"
+        # rather than the flag name: argparse prints a usage banner alongside every
+        # parser.error, and that banner lists --allow-cross-corpus whichever refusal
+        # produced the message.
+        self.assertNotIn("D-45", stderr)
+
+    def _observe_flags(self, argv: tuple[str, ...]) -> dict[str, object]:
+        """Record the keyword arguments the handler hands to paired_contrast.
+
+        Patched on arena.run_arena, which is where the name is LOOKED UP: the module
+        binds paired_contrast into its own namespace and calls that global at call
+        time. The wrapper DELEGATES to the real function rather than standing in for
+        it, so the contrast still has to succeed for the recorded flags to mean
+        anything -- a stub would let the assertion pass over a handler that produced
+        no report at all.
+        """
+        observed: dict[str, object] = {}
+        real = run_arena.paired_contrast
+
+        def recording(control, probe, **kwargs):
+            observed.update(kwargs)
+            return real(control, probe, **kwargs)
+
+        with patch.object(run_arena, "paired_contrast", recording):
+            self._cli_success(argv)
+        self.assertTrue(observed, "the recording wrapper never ran")
+        return observed
+
+    def test_the_flag_is_false_unless_the_operator_types_it(self) -> None:
+        # The must-have stated as a call-argument assertion, because it is not
+        # otherwise observable: the CLI gate above already blocks every invocation
+        # in which a differing digest could reach the guard, so a handler that
+        # hard-coded allow_cross_corpus=True would behave identically from outside.
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, _foreign, record, output_root = self._corpora(directory)
+            observed = self._observe_flags(self._argv(corpus, record, output_root))
+        self.assertIs(observed["allow_cross_corpus"], False)
+        self.assertIs(observed["restrict_to_shared"], False)
+
+    def test_the_typed_flag_carries_a_genuinely_cross_corpus_contrast(self) -> None:
+        # The mirror direction, over the shape that actually differs on
+        # dataset_sha256: two records measured against two different digests, joined
+        # on ONE corpus so the pair ids still match and the digest guard is the only
+        # thing standing in the way. A handler that hard-coded
+        # allow_cross_corpus=False would refuse this.
+        with tempfile.TemporaryDirectory() as directory:
+            corpus, _foreign, record, output_root = self._corpora(directory)
+            second = _write_record(
+                Path(directory) / "records" / "second-run",
+                name="synthetic-contrast-candidate",
+                dataset_sha256="c" * 64,
+                sessions=load_sessions(record / SESSIONS_FILENAME),
+            )
+            observed = self._observe_flags(
+                self._argv(
+                    corpus,
+                    record,
+                    output_root,
+                    "--probe-record",
+                    str(second),
+                    "--allow-cross-corpus",
+                )
+            )
+            payload = json.loads(
+                (output_root / "paired_contrast.json").read_text(encoding="utf-8")
+            )
+        self.assertIs(observed["allow_cross_corpus"], True)
+        self.assertNotEqual(
+            payload["control_dataset_sha256"],
+            payload["probe_dataset_sha256"],
+        )
+
+
+class CorpusBaselinesCommandTest(_CliCase):
+    """D-53: four different-corpus rows get their own artifacts, never a leaderboard."""
+
+    _NAMES = ("public", "probe.v1", "expanded_dev.v1")
+
+    def _records(self, root: Path) -> tuple[Path, ...]:
+        rows = tuple(matched_pair(pair_id(0))) + tuple(matched_pair(pair_id(1)))
+        sessions = _sessions_for(rows)
+        # ONE candidate name across all three, and three different dataset digests --
+        # exactly the shape build_corpus_baselines admits and build_leaderboard
+        # refuses.
+        return tuple(
+            _write_record(
+                root / "records" / f"corpus-{index}",
+                name="synthetic-corpus-candidate",
+                dataset_sha256=str(index) * 64,
+                sessions=sessions,
+            )
+            for index in range(len(self._NAMES))
+        )
+
+    def test_it_writes_its_own_artifacts_and_never_a_leaderboard(self) -> None:
+        committed_leaderboard = (
+            Path(__file__).resolve().parent.parent / LEADERBOARD_MARKDOWN_PATH
+        )
+        before = (
+            committed_leaderboard.read_bytes()
+            if committed_leaderboard.is_file()
+            else None
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = self._records(root)
+            output_root = root / "out" / "baselines"
+            self._cli_success(
+                (
+                    "corpus-baselines",
+                    *(
+                        argument
+                        for name, record in zip(self._NAMES, records)
+                        for argument in ("--record", f"{name}={record}")
+                    ),
+                    "--output-root",
+                    str(output_root),
+                )
+            )
+            json_path = output_root / "corpus_baselines.json"
+            markdown_path = output_root.parent / "CORPUS_BASELINES.md"
+            self.assertTrue(json_path.is_file())
+            self.assertTrue(markdown_path.is_file())
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            markdown = markdown_path.read_text(encoding="utf-8")
+            # Asserted as an ABSENCE, which is the separation D-53 actually requires:
+            # rglob over the whole temporary tree, so a handler that wrote a
+            # leaderboard anywhere under --output-root would fail here.
+            self.assertEqual(list(root.rglob("LEADERBOARD.md")), [])
+        self.assertEqual(payload["corpus_count"], len(self._NAMES))
+        self.assertEqual(payload["candidate_name"], "synthetic-corpus-candidate")
+        for name in self._NAMES:
+            self.assertIn(name, markdown)
+        # And the committed report is untouched. The absence check above cannot see
+        # a handler that called write_leaderboard with its DEFAULT paths, which
+        # resolve relative to the process working directory rather than to the
+        # temporary tree.
+        after = (
+            committed_leaderboard.read_bytes()
+            if committed_leaderboard.is_file()
+            else None
+        )
+        self.assertEqual(before, after)
+
+    def test_a_record_without_a_name_binding_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = self._records(root)[0]
+            stderr = self._cli_failure(
+                (
+                    "corpus-baselines",
+                    "--record",
+                    str(record),
+                    "--output-root",
+                    str(root / "out" / "baselines"),
+                )
+            )
+        self.assertIn("--record must be NAME=DIRECTORY", stderr)
+
+    def test_an_unversioned_dataset_name_is_refused(self) -> None:
+        # `public` is admitted by literal; every other name must carry the D-43
+        # version suffix, because the name becomes a filename (T-02-03).
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = self._records(root)[0]
+            stderr = self._cli_failure(
+                (
+                    "corpus-baselines",
+                    "--record",
+                    f"probe={record}",
+                    "--output-root",
+                    str(root / "out" / "baselines"),
+                )
+            )
+        self.assertIn("version suffix", stderr)
+
+    def test_two_records_naming_one_corpus_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = self._records(root)
+            stderr = self._cli_failure(
+                (
+                    "corpus-baselines",
+                    "--record",
+                    f"probe.v1={records[0]}",
+                    "--record",
+                    f"probe.v1={records[1]}",
+                    "--output-root",
+                    str(root / "out" / "baselines"),
+                )
+            )
+        self.assertIn("must have unique dataset names", stderr)
+
+    def test_two_candidates_in_one_table_are_refused(self) -> None:
+        # The D-45 misreading arriving through a different door: rows differing in
+        # BOTH the corpus and the configuration can be attributed to neither, which
+        # is exactly what a one-candidate-across-corpora table must not contain.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self._records(root)[0]
+            second = _write_record(
+                root / "records" / "other-candidate",
+                name="synthetic-other-candidate",
+                dataset_sha256="9" * 64,
+                sessions=load_sessions(first / SESSIONS_FILENAME),
+            )
+            stderr = self._cli_failure(
+                (
+                    "corpus-baselines",
+                    "--record",
+                    f"public={first}",
+                    "--record",
+                    f"probe.v1={second}",
+                    "--output-root",
+                    str(root / "out" / "baselines"),
+                )
+            )
+        self.assertIn("must describe one candidate", stderr)
+
+
+class DispatchTest(unittest.TestCase):
+    """Every declared subcommand has its own handler, and none falls through."""
+
+    _COMMANDS = ("adjudicate", "contrast", "corpus-baselines", "run")
+
+    def test_every_declared_subcommand_is_bound_to_a_handler(self) -> None:
+        _parser, handlers = _build_parser()
+        self.assertEqual(tuple(sorted(handlers)), self._COMMANDS)
+
+    def test_each_handler_is_a_distinct_function(self) -> None:
+        # The regression this pins. Under the two-branch if/else it replaced, every
+        # command that was not "run" ran _adjudicate, so a third and fourth
+        # subcommand shared one handler and read attributes their Namespace did not
+        # carry. Distinctness is exactly what that shape could not provide.
+        _parser, handlers = _build_parser()
+        handler_functions = {handler for _subparser, handler in handlers.values()}
+        self.assertEqual(len(handler_functions), len(handlers))
+
+    def test_each_handler_is_paired_with_its_own_subparser(self) -> None:
+        _parser, handlers = _build_parser()
+        for command, (subparser, _handler) in sorted(handlers.items()):
+            self.assertTrue(
+                subparser.prog.endswith(command),
+                f"{command} is bound to the subparser {subparser.prog!r}",
+            )
+
+    def test_every_bound_command_is_reachable_through_argparse(self) -> None:
+        _parser, handlers = _build_parser()
+        for command in sorted(handlers):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                with self.assertRaises(SystemExit) as raised:
+                    main((command, "--help"))
+            self.assertEqual(raised.exception.code, 0, command)
+
+    def test_an_unknown_command_is_rejected_by_argparse(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                main(("bogus",))
+        self.assertNotEqual(raised.exception.code, 0)
+
+
+def _process_spawns(source: str) -> tuple[str, ...]:
+    """Every import of, or attribute access on, a process-spawning module."""
+    tree = ast.parse(source)
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend(
+                f"line {node.lineno}: import {alias.name}"
+                for alias in node.names
+                if alias.name.split(".")[0] == "subprocess"
+            )
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] == "subprocess":
+                found.append(f"line {node.lineno}: from subprocess import ...")
+        elif isinstance(node, ast.Attribute):
+            value = node.value
+            if isinstance(value, ast.Name) and value.id == "subprocess":
+                found.append(f"line {node.lineno}: subprocess.{node.attr}")
+    return tuple(sorted(found))
+
+
+class NoProcessSpawnTest(unittest.TestCase):
+    """The property the plan's `grep -c subprocess` gate was reaching for.
+
+    That grep cannot be satisfied by a correct file: line 533 of this module
+    legitimately says "subprocess" in prose, explaining that the git call it
+    describes is patched OUT. A text search cannot tell a comment from a call, so
+    the check is made over the AST instead -- which is strictly stronger, and is
+    proven below to actually fire.
+    """
+
+    def test_this_module_neither_imports_nor_calls_subprocess(self) -> None:
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(_process_spawns(source), ())
+
+    def test_the_scanner_fires_on_a_module_that_does(self) -> None:
+        # An unfired scanner is indistinguishable from a clean module, so both
+        # spellings are proven to be detected.
+        self.assertNotEqual(_process_spawns("import subprocess\n"), ())
+        self.assertNotEqual(
+            _process_spawns("import subprocess\nsubprocess.run(('git',))\n"),
+            (),
+        )
 
 
 if __name__ == "__main__":
