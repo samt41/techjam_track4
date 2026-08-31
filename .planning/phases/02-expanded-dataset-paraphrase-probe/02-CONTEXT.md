@@ -302,15 +302,26 @@ evaluator.
   - **no Holm, no winner's-curse correction**, with the omission stated in the
     report text so it reads as deliberate.
 
-- **D-45: WR-04 closes in this phase; CR-01 and CR-02 do not.** WR-04 ("nothing
+- **D-45: The WR-04 same-corpus guard is a hard requirement of this phase, but
+  verify its committed state before planning work against it.** WR-04 ("nothing
   checks that two compared arms measured the same catalog and dataset") is a
-  warning today only because one corpus exists. This phase makes five corpora
-  live, so a silent cross-corpus join becomes an available and catastrophic
-  error — `adjudicate` must refuse unless `dataset_sha256` **and**
-  `catalog_sha256` match. CR-01 (fingerprint collision collapsing rows) cannot
-  fire here: one candidate × five corpora yields five distinct `dataset_sha256`
-  values and therefore five distinct fingerprints. CR-01/CR-02 remain a Phase 3
-  gate, per `PROJECT.md`.
+  warning only while one corpus exists. This phase makes five corpora live, so a
+  silent cross-corpus join becomes an available and catastrophic error:
+  `adjudicate` must refuse unless `dataset_sha256` **and** `catalog_sha256`
+  match.
+
+  **As of 2026-08-31 that guard, plus fixes for CR-01, CR-02, CR-03, WR-01,
+  WR-03 and WR-05, exist as uncommitted working-tree changes in `arena/` and
+  `tests/` (384 tests green).** They were applied outside this discussion.
+  Planning must therefore start by checking `git status` and `git log` for
+  `arena/adjudication.py`: if those changes have been committed, WR-04 is
+  **closed** and this phase inherits it — do not re-implement it. If they were
+  discarded, WR-04 is in scope here.
+
+  CR-01 (fingerprint collision collapsing rows) cannot fire on this phase's
+  record set either way: one candidate × five corpora yields five distinct
+  `dataset_sha256` values and therefore five distinct fingerprints. CR-01/CR-02
+  remain a Phase 3 gate per `PROJECT.md` regardless of their current state.
 
 - **D-46: Pairing metadata rides inside the sample rows.** Each generated sample
   carries `pair_id` and `arm` (`control` | `probe_sonnet` | `probe_haiku`).
