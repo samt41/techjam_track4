@@ -33,7 +33,7 @@ scenario summaries.
 this rig, which holds no expectation about either outcome.
 
 - **`ΔTS(A, B)`, the lexical-mode ablation** (`auto` vs forced TF-IDF `fallback`,
-  exploration disabled in both): `+0.006110`, 95% CI `[-0.018886, 0.031239]`,
+  exploration disabled in both): `+0.006110`, 95% CI `[-0.018892, 0.031311]`,
   permutation p `0.645335`, Holm-adjusted p `1.000000`, MDD `0.035987`, sigma-hat
   `0.012845`, corrected `ΔTS` `-0.001137`. Verdict **`not detectable`** — the
   observed delta sits below the minimum detectable difference, so this null is
@@ -47,11 +47,14 @@ this rig, which holds no expectation about either outcome.
 - **`ΔTS(A, C)`, the exploration ablation** (`disabled` vs `tail-only`):
   `0.000000` exactly, 95% CI `[0.000000, 0.000000]`, permutation p `1.000000`,
   Holm-adjusted p `1.000000`, MDD `0.000000`, corrected `ΔTS` `0.000000`. Verdict
-  **`no difference`**. Run C's 200 session outcomes are byte-identical to run A's,
-  so the two arms are degenerate and the rig reports them through its zero-variance
-  guard rather than as a detectable difference. This reproduces, on committed
-  records and at current HEAD, the metric-identical exploration result the
-  superseded section below describes in prose.
+  **`no difference`**. Run C's 200 session outcomes are byte-identical to run A's.
+  Every quantity on this row — including the permutation p and the MDD — is now
+  **measured on the general path** rather than asserted by a special case; no field
+  on any adjudication row is a hard-coded constant on any path. The measured
+  permutation p is exactly `1.000000` because every sign-flip assignment of two
+  identical arms ties the observed statistic, so no resample can exceed it. This
+  reproduces, on committed records and at current HEAD, the metric-identical
+  exploration result the superseded section below describes in prose.
 
 A permutation p reported by this rig can never be `0`: its Phipson-Smyth floor is
 `1 / (R + 1)`, which at `R = 10,000` is `9.999e-05`.
@@ -65,6 +68,46 @@ consequence of an identity-only fix: `ΔTS` depends on the data, not on the seed
 leaderboard also carries `anchor-legacy` and the `synthetic-promote-10` validation
 fixture as report-only entries; neither is adjudicated, so neither joins the Holm
 family nor changes `correction_k`, which remains `2`.
+
+**Regenerated after the gap-closure round.** The report was regenerated from the same
+five committed records, at the same `R = 10,000`, after a round of fixes to the rig
+itself. No evaluation was re-run and no session outcome moved, so both deltas are
+unchanged and `correction_k` remains `2`. Six things changed:
+
+1. The bootstrap percentile convention was corrected to the Efron-Tibshirani `(R + 1)`
+   form, moving each 95% CI bound by one order statistic. This is why the `ΔTS(A, B)`
+   interval above now reads `[-0.018892, 0.031311]`. Nothing else on that row moved:
+   the resampling stream is untouched, so `standard_error`, MDD, sigma-hat, `E[max k]`
+   and the corrected delta are identical to their pre-fix values.
+2. The zero-variance short-circuit was removed, so the two previously asserted fields
+   on the `ΔTS(A, C)` row — its permutation p and its MDD — are now measured. Both
+   land on the values that were previously asserted, `1.000000` and `0.000000`.
+3. Each adjudication row gained an `is_degenerate` field, descriptive only.
+4. The `assumptions` block gained `holm_family_size` and
+   `holm_family_includes_degenerate_arms`, making the Holm multiplier re-derivable
+   from the payload instead of taken on trust. A degenerate arm still counts toward
+   the family, because family size is a property of the experimental design.
+5. The per-scenario breakout gained a TechnicalScore column, so all four metrics are
+   now reported per scenario as well as overall. Combine the four back to the overall
+   score by sample-size weighting only; a flat average of the four understates it.
+6. What an OMITTED override flag means to a fingerprint changed. This one is not a
+   number, and it is disclosed here rather than left in a source comment because it
+   is the only change in the round that touches how a committed record's identity is
+   minted.
+
+On that sixth change, three facts in order. (a) `experiments/baselines/run-a/summary.json`
+stores `overrides = {"exploration": "disabled", "lexical_mode": "auto"}` because the
+pre-fix CLI injected argparse defaults into the recorded mapping; run-b and run-c
+likewise each store one explicit default. (b) Every committed record **still derives
+exactly the fingerprint it stores**, because each is reconstructed from the `overrides`
+mapping in its own `summary.json` — which is why
+`test_every_record_derives_the_fingerprint_it_stores` and the stored-versus-derived
+refusal on the read path are both green, and why re-running each record's documented
+invocation, which typed both flags explicitly, still mints its committed digest.
+(c) The change is forward-looking: a flag-free `run` invocation now records
+`overrides = {}` and mints a **different** digest from these records, even though it
+configures a byte-identical Agent. A future run must therefore be compared against
+`run-a` on the `overrides` mapping rather than on the digest.
 
 ### Historical (pre-SQLite, in-memory catalog)
 
