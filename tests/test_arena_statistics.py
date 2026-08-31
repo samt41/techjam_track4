@@ -14,6 +14,7 @@ import arena.statistics
 from arena.metrics import metric_summary, technical_score
 from arena.statistics import (
     MDD_MULTIPLIER,
+    MINIMUM_RESAMPLES,
     RESAMPLE_COUNT,
     Z_ALPHA_TWO_SIDED,
     Z_POWER_80,
@@ -24,6 +25,7 @@ from arena.statistics import (
     pair_seed,
     paired_bootstrap,
     paired_permutation,
+    percentile_indices,
     winners_curse_correction,
 )
 from tests.arena_fixtures import (
@@ -250,6 +252,78 @@ class BootstrapTest(unittest.TestCase):
             technical_score(metric_summary((item,))) for item in outcomes
         )
         self.assertNotEqual(mean_of_per_session, technical_score(metric_summary(outcomes)))
+
+
+class PercentileIntervalTest(unittest.TestCase):
+    # The index contract, asserted directly rather than inferred from an interval.
+    # Nothing here touches the retrieval engine, SQLite or the catalog:
+    # percentile_indices is a pure integer function of R.
+
+    def test_production_indices_are_pinned_at_ten_thousand(self) -> None:
+        # Pins the production path so a future refactor of the arithmetic cannot move
+        # the committed report's 95% CI column without a failing test. The pre-fix code
+        # returned (250, 9749) -- order statistic 2.51% from the bottom and 97.50% from
+        # the top, which is the asymmetry WR-04 measured.
+        self.assertEqual(percentile_indices(10_000), (249, 9750))
+
+    def test_indices_are_symmetric_at_every_admissible_resample_count(self) -> None:
+        # Equal tails. Without this one bound sits closer to its end than the other and
+        # the interval is not centred on the confidence level it prints.
+        for resamples in (40, 41, 97, 200, 500, 999, 2000, 10_000):
+            with self.subTest(resamples=resamples):
+                lower, upper = percentile_indices(resamples)
+                self.assertEqual(lower, resamples - 1 - upper)
+
+    def test_nominal_coverage_is_never_below_ninety_five_percent(self) -> None:
+        checked = 0
+        for resamples in range(MINIMUM_RESAMPLES, 1201):
+            lower, upper = percentile_indices(resamples)
+            with self.subTest(resamples=resamples):
+                self.assertGreaterEqual(upper - lower + 1, 0.95 * resamples)
+            checked += 1
+        # Non-vacuity guard: a range that silently produced no iterations would also
+        # pass every assertion above.
+        self.assertGreater(checked, 1000)
+
+    def test_the_minimum_resample_count_yields_the_full_range(self) -> None:
+        # At and just above the floor the interval honestly spans every replicate --
+        # there are too few to trim a 2.5% tail from. The second assertion documents
+        # where that region ends, so a reader who sees (0, 39) and assumes the function
+        # is broken is answered: R=79 is the first count at which the lower bound
+        # leaves index 0.
+        self.assertEqual(
+            percentile_indices(MINIMUM_RESAMPLES), (0, MINIMUM_RESAMPLES - 1)
+        )
+        self.assertEqual(percentile_indices(79), (1, 77))
+
+    def test_a_resample_count_below_the_floor_is_rejected(self) -> None:
+        # Enforced on every public entry point, not merely on the helper.
+        below = MINIMUM_RESAMPLES - 1
+        with self.assertRaises(ValueError):
+            percentile_indices(below)
+        sessions = sessions_from_ranks((1, 2, 3, 4, 5, None))
+        with self.assertRaises(ValueError):
+            paired_bootstrap(sessions, sessions, seed=1, resamples=below)
+        with self.assertRaises(ValueError):
+            paired_permutation(sessions, sessions, seed=1, resamples=below)
+
+    def test_the_interval_contains_the_point_estimate(self) -> None:
+        # No exact CI value is asserted anywhere in this class: the contract under test
+        # is the index convention, not a numeric snapshot. This is the one property the
+        # interval owes the delta regardless of R.
+        baseline = load_anchor_sessions()
+        candidate = promote_hits_to_rank_one(baseline, 10)
+        result = paired_bootstrap(
+            baseline,
+            candidate,
+            seed=pair_seed("anchor", "m10", "bootstrap"),
+            resamples=TEST_RESAMPLES,
+        )
+        # Guards against the assertion passing vacuously on a degenerate replicate
+        # distribution, where lower == delta == upper holds trivially.
+        self.assertGreater(result.standard_error, 0.0)
+        self.assertLessEqual(result.lower, result.delta)
+        self.assertLessEqual(result.delta, result.upper)
 
 
 class PermutationTest(unittest.TestCase):
