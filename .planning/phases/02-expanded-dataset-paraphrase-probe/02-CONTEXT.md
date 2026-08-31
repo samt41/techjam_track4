@@ -611,7 +611,10 @@ constrains them:
   new committed files. `.gitignore` already permits them: only
   `data/catalog.jsonl`, `data/*.artifacts/` and `data/releases/` are excluded.
 - `arena/run_arena.py --dataset` → resolves registry names as well as paths.
-- `arena/adjudication.py` → gains the D-45 same-corpus refusal.
+- ~~`arena/adjudication.py` → gains the D-45 same-corpus refusal.~~ **Stale — the
+  guard already exists at `adjudication.py:205-219` (commit `f6c91e8`). Per D-45,
+  inherit it; do not rebuild it. Only its *test* widens, to exercise the refusal
+  path that five live corpora make reachable for the first time.**
 - `arena/` → a new `paired_contrast` readout (D-44), sibling to `adjudicate`,
   not folded into it.
 - Phase 3 re-validates every accepted ranking change against `probe.v1`; Phase 5
