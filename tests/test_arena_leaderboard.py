@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,13 @@ from arena.leaderboard import (
     spec_from_record,
 )
 from arena.metrics import SessionOutcome, metric_summary, technical_score
+from arena.store import (
+    ArenaStoreError,
+    SESSIONS_FILENAME,
+    SUMMARY_FILENAME,
+    write_json,
+    write_sessions,
+)
 from tests.arena_fixtures import ANCHOR_RECORD_DIR, session, sessions_from_ranks
 
 
@@ -105,6 +113,32 @@ def _mixed_bucket_sessions() -> tuple[SessionOutcome, ...]:
 
 def _anchor_entry() -> CandidateEntry:
     return entry_from_record(ANCHOR_RECORD_DIR)
+
+
+# The name every identity fixture is written under, so _spec() below derives exactly the
+# digest a reader will derive from the written record.
+_RECORD_NAME = "identity-fixture"
+
+
+def _write_record(directory: Path, *, fingerprint: str | None = None) -> None:
+    """Write a minimal valid record; `fingerprint=None` omits the key entirely.
+
+    One builder for all three identity cases -- drifted, absent and matching -- so the
+    only thing that varies between them is the stored digest.
+    """
+    write_sessions(directory / SESSIONS_FILENAME, sessions_from_ranks((2,) * 4))
+    record: dict[str, object] = {
+        "run_id": _RECORD_NAME,
+        "candidate_name": _RECORD_NAME,
+        "code_revision": "unknown_revision",
+        "code_revision_dirty": True,
+        "overrides": {},
+        "catalog_sha256": "unknown",
+        "dataset_sha256": "unknown",
+    }
+    if fingerprint is not None:
+        record["fingerprint"] = fingerprint
+    write_json(directory / SUMMARY_FILENAME, record)
 
 
 class LeaderboardPayloadTest(unittest.TestCase):
@@ -416,6 +450,94 @@ class LeaderboardMarkdownTest(unittest.TestCase):
         rendered = render_markdown(payload)
         self.assertIn("9.9990e-05", rendered)
         self.assertNotIn("`0.000000`", rendered)
+
+
+class RecordIdentityTest(unittest.TestCase):
+    """A record that cannot identify itself is refused when READ, not after commit.
+
+    Every fixture here is built in a temporary directory. The committed records are
+    covered by test_every_record_derives_the_fingerprint_it_stores, which can only
+    speak for records that already exist -- the gap these methods close.
+    """
+
+    def test_a_drifted_reconstruction_is_refused(self) -> None:
+        drifted = "0" * 64
+        derived = _spec(_RECORD_NAME).fingerprint
+        self.assertNotEqual(drifted, derived)
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "drifted-record"
+            directory.mkdir()
+            _write_record(directory, fingerprint=drifted)
+            # Both public readers, not just the one this test happened to reach for:
+            # they share a mapping today, and a future edit that gave either its own
+            # reconstruction would reopen exactly the divergence this guards.
+            for reader in (spec_from_record, entry_from_record):
+                with self.subTest(reader=reader.__name__):
+                    with self.assertRaises(ArenaStoreError) as raised:
+                        reader(directory)
+                    message = str(raised.exception)
+                    self.assertIn(directory.name, message)
+                    self.assertIn(drifted, message)
+                    self.assertIn(derived, message)
+
+    def test_a_record_storing_no_fingerprint_is_still_admitted(self) -> None:
+        # The rescued anchor-legacy case. That record stores no fingerprint at all --
+        # it is a rescue of a provenance-free file and its provenance_complete is
+        # false -- so there is nothing for it to diverge from. Hardening the absent-key
+        # branch into a refusal would reject the MEAS-16 anchor, which is why the legal
+        # case is pinned here beside the illegal one.
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "unfingerprinted-record"
+            directory.mkdir()
+            _write_record(directory)
+            spec = spec_from_record(directory)
+            self.assertEqual(len(spec.fingerprint), 64)
+            self.assertLessEqual(set(spec.fingerprint), set("0123456789abcdef"))
+
+    def test_a_matching_record_is_admitted(self) -> None:
+        # The non-vacuity guard: a check that refused every record, or one that never
+        # fired at all, would still pass the refusal test above.
+        derived = _spec(_RECORD_NAME).fingerprint
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "matching-record"
+            directory.mkdir()
+            _write_record(directory, fingerprint=derived)
+            self.assertEqual(spec_from_record(directory).fingerprint, derived)
+            self.assertEqual(entry_from_record(directory).fingerprint, derived)
+
+    def test_the_assumptions_block_states_the_holm_family_composition(self) -> None:
+        # Plan 01-10's WR-05 decision, pinned end to end: a genuinely degenerate arm
+        # stays in the family and in correction_k, so the size a reader finds in the
+        # payload is the multiplier that was actually applied to every permutation p.
+        baseline_sessions = sessions_from_ranks((2,) * 12)
+        baseline = _entry("base", baseline_sessions)
+        improved = _entry("cand", sessions_from_ranks((1,) + (2,) * 11))
+        # Identical to the baseline on every session, so its delta and SE are both zero.
+        identical = _entry("null", baseline_sessions)
+        rows = adjudicate(
+            CandidateArm(_spec("base"), baseline_sessions),
+            (
+                CandidateArm(_spec("cand"), improved.sessions),
+                CandidateArm(_spec("null"), identical.sessions),
+            ),
+            resamples=FAST_RESAMPLES,
+        )
+        payload = build_leaderboard(
+            (baseline, improved, identical),
+            rows,
+            baseline_fingerprint=baseline.fingerprint,
+        )
+        assumptions = payload["assumptions"]
+        self.assertEqual(assumptions["holm_family_size"], 2)
+        self.assertIs(assumptions["holm_family_includes_degenerate_arms"], True)
+        self.assertIn("correction_k", assumptions["holm_family"])
+        adjudication = {row["candidate_name"]: row for row in payload["adjudication"]}
+        self.assertIs(adjudication["null"]["is_degenerate"], True)
+        self.assertIs(adjudication["cand"]["is_degenerate"], False)
+        # The degenerate arm did not shrink the family it belongs to.
+        self.assertEqual(
+            [row["correction_k"] for row in payload["adjudication"]], [2, 2]
+        )
 
 
 class CommittedLeaderboardTest(unittest.TestCase):
