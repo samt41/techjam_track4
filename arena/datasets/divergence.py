@@ -153,9 +153,18 @@ def pinned_tokens(phrase: str) -> frozenset[str]:
         if matched is None and bucket == "budget":
             # The clause also fires on a bare "$40" or "under 40", where there is
             # no keyword to pin. Pin the tokens inside the matched span instead.
-            numeric = _BUDGET_NUMERIC_RE.search(lowered)
-            if numeric is not None:
-                span = frozenset(TOKEN_RE.findall(numeric.group(0)))
+            #
+            # findall rather than the obvious .search: SolvabilityAbsenceTest
+            # forbids EVERY attribute access named `search` in this module, so
+            # that "the probe pipeline never runs retrieval" (D-35, L-3) is
+            # checkable without the scanner needing to know which receiver is a
+            # regex and which is a backend. A blunt guard with one awkward call
+            # site beats a guard with a carve-out that a backend call could hide
+            # in. The pattern has no capturing group, so findall yields whole
+            # matches.
+            numeric = _BUDGET_NUMERIC_RE.findall(lowered)
+            if numeric:
+                span = frozenset(TOKEN_RE.findall(numeric[0]))
                 return frozenset(
                     token
                     for token in tokens
@@ -494,11 +503,18 @@ def bucket_summary(
     rows would imply six equally supported findings (D-34). Reporting the n
     alongside each row is what lets a reader discount the thin ones.
 
-    A bucket with no reports is SKIPPED rather than emitted as a zero-n row. The
-    statistics functions below have no defined value on an empty sequence, and
-    arena/metrics.py:126-127 refuses that case rather than inventing one (L-18);
-    fabricating a 0.0 mean here would read as measured divergence where nothing
-    was measured at all.
+    A bucket with no reports is SKIPPED rather than emitted as a zero-n row: the
+    statistics below have no defined value on an empty sequence, and
+    arena/metrics.py:126-127 refuses that case rather than inventing one (L-18).
+    Fabricating a 0.0 mean would read as measured divergence where nothing was
+    measured at all -- and 0.0 is the BEST possible score, so the fabricated row
+    would flatter the probe precisely where it has no evidence.
+
+    That skip is structural, not a filter: the groups are built from the reports
+    themselves, so a bucket nobody reported has no key and cannot reach a
+    statistic. Enumerating the seven classifier buckets and looking each one up
+    is the shape that reintroduces the bug, which is what BucketSummaryTest
+    pins. An empty input returns () by the same construction.
     """
     grouped: dict[str, list[DivergenceReport]] = {}
     for report in reports:
@@ -517,5 +533,4 @@ def bucket_summary(
             "pass_count": sum(1 for member in members if member.passes),
         }
         for bucket, members in sorted(grouped.items())
-        if members
     )
