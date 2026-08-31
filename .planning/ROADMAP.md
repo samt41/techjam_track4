@@ -31,7 +31,7 @@ numbers are known.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (all 9 plans executed 2026-08-30; verification `gaps_found` 7/10 — 2 blockers open in `arena/adjudication.py`, see 01-VERIFICATION.md)
+- [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (all 9 plans executed 2026-08-30; verification `gaps_found` 7/10 — 2 blockers open in `arena/adjudication.py`, see 01-VERIFICATION.md) (completed 2026-08-31)
 - [ ] **Phase 2: Expanded Dataset & Paraphrase Probe** - Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative.
 - [ ] **Phase 3: Ranking Precision & Conversational Efficiency** - Build and jointly measure MRR/MTTC candidates through the arena, gated by the breakeven rule and re-validated against the paraphrase probe.
 - [ ] **Phase 4: Semantic Asset & Candidate Spikes** - Ship the audited offline semantic asset and measure the two disclosed-cost spike candidates without adopting either by default.
@@ -102,7 +102,7 @@ Plans:
 
 **Gap-closure Wave 3** *(blocked on all of the above)*
 
-- [ ] 01-15-PLAN.md — Per-scenario TechnicalScore column, report regeneration at R=10,000, and prose reconciliation (MEAS-01, MEAS-07) — operator-gated
+- [x] 01-15-PLAN.md — Per-scenario TechnicalScore column, report regeneration at R=10,000, and prose reconciliation (MEAS-01, MEAS-07) — operator-gated
 
 ### Phase 2: Expanded Dataset & Paraphrase Probe
 
@@ -213,7 +213,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 14/15 | In Progress|  |
+| 1. Measurement Rig Core | 15/15 | Complete   | 2026-08-31 |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
