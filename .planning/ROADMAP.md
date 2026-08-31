@@ -133,8 +133,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 02-07-PLAN.md — The `claude -p` authoring driver, three committed prompt packs, and the D-50 replay log with D-35/D-57 isolation asserted by argv introspection
-- [ ] 02-08-PLAN.md — The D-43 dataset registry: canonical `data/datasets.json`, digest-enforced resolution, and the corpus-shape checks (MEAS-11/12/13)
+- [x] 02-07-PLAN.md — The `claude -p` authoring driver, three committed prompt packs, and the D-50 replay log with D-35/D-57 isolation asserted by argv introspection
+- [x] 02-08-PLAN.md — The D-43 dataset registry: canonical `data/datasets.json`, digest-enforced resolution, and the corpus-shape checks (MEAS-11/12/13)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -249,7 +249,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 6/14 | In Progress|  |
+| 2. Expanded Dataset & Paraphrase Probe | 8/14 | In Progress|  |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
