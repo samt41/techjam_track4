@@ -17,47 +17,112 @@ Two asymmetries are deliberate and are the easiest things in the phase to
 * `measure_solvability` exists for the expanded corpora and REFUSES the probe.
   See its own body for why; the short version is that a retrieval-backed filter
   deletes exactly the sessions carrying the vocabulary gap (D-35, L-3).
+
+Two operator notes:
+
+* L-11: the D-48 baseline runs that consume these corpora must type
+  `--exploration disabled --lexical-mode auto` explicitly. `arena/run_arena.py`
+  omits unset flags from the candidate fingerprint, so a flag-free invocation
+  records `{}` while configuring a byte-identical agent -- two runs that differ
+  only in what the operator typed then mint two different fingerprints for one
+  configuration, and the leaderboard shows them as separate candidates.
+* Smoke runs write to the repo-relative `.scratch/` root, never `$TMPDIR` or
+  `/tmp`. This repository documents Windows 11 / PowerShell, where `$TMPDIR`
+  expands to the empty string and the artifact lands on the drive root:
+
+      uv run python -m arena.datasets.generate --corpus probe.v1 --pairs 4 \
+          --response-log .scratch/probe-smoke.jsonl \
+          --registry .scratch/datasets.json --corpus-root .scratch \
+          --divergence-log .scratch/divergence.probe.v1.jsonl \
+          --target-snapshot .scratch/targets.probe.v1.json \
+          --markdown .scratch/datasets.md
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import random
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
+from arena.candidate import current_revision
 from arena.datasets.authoring import (
     AUTHORING_ATTEMPT_CAP,
+    AuthoringError,
     AuthoringRequest,
     AuthoringRunner,
     ReviewPayload,
     attempt_until,
+    claude_runner,
     load_prompt,
     log_record,
+    prompt_revision,
+    replay_runner,
+    resolved_model_ids,
+    response_log_path,
+    write_response_log,
 )
 from arena.datasets.divergence import (
     DivergenceRecord,
     DivergenceReport,
+    bucket_summary,
     contradicts,
+    divergence_log_path,
     measure,
     preserves_bucket,
     record_from_report,
+    write_divergence_log,
 )
-from arena.datasets.gist import GistVocabulary, gist_for_target, prompt_payload_strings
+from arena.datasets.gist import (
+    GistVocabulary,
+    gist_for_target,
+    load_vocabulary,
+    prompt_payload_strings,
+)
+from arena.datasets.registry import (
+    DATASETS_MARKDOWN_PATH,
+    REGISTRY_PATH,
+    CORPUS_ROOT,
+    DatasetEntry,
+    RegistryError,
+    check_cross_check_subset,
+    check_pairing,
+    check_scenario_mix,
+    divergence_from_summary,
+    load_registry,
+    publish_corpus,
+    render_markdown,
+    resolve_entry_path,
+    target_snapshot_path,
+    upsert_entry,
+    write_registry,
+    write_target_snapshot,
+)
 from arena.datasets.schema import (
     CATEGORY_BUCKET,
+    CORPUS_SCHEMA_VERSION,
     DIFFICULTY_BY_SCENARIO,
     MAX_CONSTRAINT_LENGTH,
     SCENARIO_MIX_TARGET,
     Behavior,
+    CorpusSchemaError,
     IntentCard,
     OverrideBehavior,
     SampleProfile,
     SampleRow,
+    assert_authored_branch,
+    corpus_stem,
+    distinct_targets,
     load_corpus,
+    validate_corpus,
 )
-from arena.evaluator_bridge import classify_constraint, intent_card
+from arena.evaluator_bridge import catalog_index, classify_constraint, intent_card, searchable_text
 from arena.statistics import pair_seed
+from arena.store import sha256_file
 from starter.shopping_agent.text_normalization import search_terms
 
 
@@ -199,6 +264,81 @@ _PROBE_CORPUS_PREFIX = "probe"
 # candidate is going to recover from wording alone.
 _SOLVABILITY_LIMIT = 200
 _SOLVABILITY_WORK_LIMIT = 1_000_000
+
+# Price bands for the D-30 stratified draw. Round numbers rather than measured
+# quantiles: the band only has to spread the draw across the price range so a
+# corpus cannot skew cheap or dear, and quantiles computed from the catalog would
+# make the strata depend on the catalog file, which is one more thing that has to
+# hold still for a corpus to be reproducible.
+_PRICE_BANDS = (("under_20", 20.0), ("under_50", 50.0), ("under_100", 100.0))
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusPlan:
+    """The shape D-25/D-28/D-49 fix for one corpus, in one place."""
+
+    name: str
+    paired: bool
+    default_size: int
+    default_cross_check: int
+    model_alias: str
+    prompt_name: str
+    probe_arm: str
+    size_flag: str
+
+
+# D-25's own table is the authority for every number here: the probe is 300 pairs
+# with a 100-pair cross-check arm (700 sessions, 300 targets), `expanded_dev` is
+# 2,000 sessions over 2,000 targets, `expanded_confirm` 800 over 800.
+#
+# `paired` follows directly from that table and is worth stating, because it is
+# the one place where a plausible reading goes wrong. The probe is 700 sessions
+# on 300 targets, so it is paired: every target carries a control arm plus at
+# least one authored arm. The expanded corpora are 2,000 sessions on 2,000
+# targets -- one session per target -- so they are NOT paired, and
+# `check_pairing` / `check_cross_check_subset` are skipped for them because both
+# structurally require two or more arms under one pair id. They are still
+# authored (D-49 sends the 2,800 bulk-paraphrase sessions to Haiku); their
+# statistical use is candidate-vs-candidate joined on `sample_id`, which needs no
+# second arm.
+_CORPUS_PLANS = (
+    CorpusPlan(
+        name="probe.v1",
+        paired=True,
+        default_size=300,
+        default_cross_check=100,
+        model_alias="sonnet",
+        prompt_name="author_probe.md",
+        probe_arm="probe_sonnet",
+        size_flag="pairs",
+    ),
+    CorpusPlan(
+        name="expanded_dev.v1",
+        paired=False,
+        default_size=2_000,
+        default_cross_check=0,
+        model_alias="haiku",
+        prompt_name="author_expanded.md",
+        probe_arm="probe_haiku",
+        size_flag="sessions",
+    ),
+    CorpusPlan(
+        name="expanded_confirm.v1",
+        paired=False,
+        default_size=800,
+        default_cross_check=0,
+        model_alias="haiku",
+        prompt_name="author_expanded.md",
+        probe_arm="probe_haiku",
+        size_flag="sessions",
+    ),
+)
+
+# D-39/D-40: the cross-check arm is Haiku, a different scale and generation from
+# the Sonnet primary, so the Sonnet-vs-Haiku delta on matched targets is
+# generator affinity and nothing else.
+_CROSS_CHECK_ALIAS = "haiku"
+_CROSS_CHECK_ARM = "probe_haiku"
 
 
 class GenerateError(RuntimeError):
@@ -988,6 +1128,7 @@ def measure_solvability(
     corpus_name: str,
     artifact_path: Path,
     catalog_path: Path,
+    observe: Callable[[SampleRow, bool], None] | None = None,
 ) -> dict[str, int]:
     """Report how many expanded-corpus targets exact FTS can reach. Never a filter."""
 
@@ -1036,11 +1177,18 @@ def measure_solvability(
             request.validate()
             result = backend.search(request)
             checked += 1
-            if any(
-                hit.parent_asin == row.ground_truth_parent_asin
-                for hit in result.hits
-            ):
+            hit = any(
+                candidate.parent_asin == row.ground_truth_parent_asin
+                for candidate in result.hits
+            )
+            if hit:
                 reachable += 1
+            # The per-row verdict is handed to the caller rather than acted on
+            # here, so `--drop-unsolvable` stays a decision an operator typed and
+            # this function stays a measurement. The counts below are the whole
+            # of its own return.
+            if observe is not None:
+                observe(row, hit)
     finally:
         # Windows holds the 580 MB database open until the connection is closed.
         backend.close()
@@ -1051,3 +1199,506 @@ def measure_solvability(
         "reachable": reachable,
         "unreachable": checked - reachable,
     }
+
+
+def corpus_plan(name: str) -> CorpusPlan:
+    plan = next((entry for entry in _CORPUS_PLANS if entry.name == name), None)
+    if plan is None:
+        raise GenerateError(
+            f"unknown corpus {name!r}; expected one of"
+            f" {[entry.name for entry in _CORPUS_PLANS]}"
+        )
+    return plan
+
+
+def stratum_for(product: dict[str, object], categories: list[str]) -> str:
+    """The `{department}|{price band}` stratum one target is drawn within (D-30)."""
+
+    values = [str(value).strip() for value in (categories or []) if str(value).strip()]
+    # The SECOND category value, not the first and not the last: the first is the
+    # store-wide "Clothing, Shoes & Jewelry" on essentially every product and
+    # stratifies nothing, while the last is a leaf so specific that the strata
+    # outnumber the targets and the allocation degenerates to an unstratified
+    # draw. The second is the department, which is the level that actually
+    # partitions the catalog.
+    department = values[1] if len(values) > 1 else (values[0] if values else "unknown")
+    price = product.get("price")
+    try:
+        value = float(price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return f"{department.lower()}|unknown"
+    for label, ceiling in _PRICE_BANDS:
+        if value < ceiling:
+            return f"{department.lower()}|{label}"
+    return f"{department.lower()}|over_100"
+
+
+def cross_check_pairs(
+    scenario_by_pair: tuple[tuple[str, str], ...], *, count: int
+) -> tuple[str, ...]:
+    """Pick the D-40 three-arm subset, stratified so the scenario mix is preserved."""
+
+    if count <= 0:
+        return ()
+    grouped: dict[str, list[str]] = {}
+    for pair_id, scenario in scenario_by_pair:
+        grouped.setdefault(scenario, []).append(pair_id)
+    if sum(len(members) for members in grouped.values()) < count:
+        raise GenerateError(
+            f"cannot draw {count} cross-check pairs from"
+            f" {sum(len(members) for members in grouped.values())} pairs"
+        )
+    # Drawn proportionally per scenario rather than as a flat sample: the
+    # cross-check pairs carry a third row each, so a subset skewed toward one
+    # scenario would move the whole corpus's mix off 40/40/15/5 and
+    # `check_scenario_mix` would refuse a corpus whose PAIRS were correctly
+    # allocated.
+    allocation = _proportional_allocation(
+        tuple(sorted((scenario, len(members)) for scenario, members in grouped.items())),
+        count,
+    )
+    rng = random.Random(
+        pair_seed(
+            "\0".join(pair_id for pair_id, _ in sorted(scenario_by_pair)),
+            str(count),
+            _CROSS_CHECK_LABEL,
+        )
+    )
+    drawn: list[str] = []
+    for scenario, quota in allocation:
+        drawn.extend(rng.sample(sorted(grouped[scenario]), quota))
+    return tuple(sorted(drawn))
+
+
+def _frozen_targets(registry_path: Path, *, exclude: str, root: Path) -> frozenset[str]:
+    """Every target already spent by another registered corpus (D-27)."""
+
+    if not Path(registry_path).is_file():
+        return frozenset()
+    spent: set[str] = set()
+    for entry in load_registry(Path(registry_path)):
+        if entry.name == exclude:
+            continue
+        path = resolve_entry_path(entry, root=root)
+        if not path.is_file():
+            # A registered corpus that is not on disk cannot be proven disjoint
+            # from the one being built, and D-27 makes disjointness a property
+            # enforced by construction rather than assumed. Refuse rather than
+            # quietly sample a target another corpus may already hold.
+            raise GenerateError(
+                f"corpus {entry.name!r} is registered at {path} but the file is"
+                " missing, so target disjointness cannot be established (D-27)"
+            )
+        for record in load_corpus(path):
+            spent.add(str(record["ground_truth"]["parent_asin"]))
+    return frozenset(spent)
+
+
+def _claude_cli_version() -> str:
+    try:
+        completed = subprocess.run(
+            ("claude", "--version"),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # Recorded as unavailable rather than as an empty string: an empty
+        # provenance field is indistinguishable from one nobody filled in.
+        return "unavailable"
+    return completed.stdout.strip() or "unavailable"
+
+
+def _resolved_for_alias(
+    calls: tuple[dict[str, object], ...], alias: str
+) -> str:
+    """Pitfall 7 / MEAS-13, scoped to one arm rather than to the whole corpus."""
+
+    # The check is per ARM, not per corpus, because the probe corpus deliberately
+    # spends TWO aliases: Sonnet authors the primary arm and Haiku the D-40
+    # cross-check. A corpus-wide single-id assertion would refuse that by design.
+    # What T-02-28 actually forbids is one arm silently changing generator
+    # mid-run, and that is exactly what this refuses.
+    identifiers = resolved_model_ids(
+        tuple(record for record in calls if record.get("model_alias") == alias)
+    )
+    if len(identifiers) != 1:
+        raise GenerateError(
+            f"expected exactly one resolved model id for the {alias!r} arm,"
+            f" got {list(identifiers)}; a corpus whose arm changed generator"
+            " mid-run has a confounded generator-affinity finding (MEAS-13)"
+        )
+    return identifiers[0]
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="arena.datasets.generate",
+        description="Generate and freeze a versioned paraphrase-probe or expanded corpus.",
+    )
+    parser.add_argument(
+        "--corpus", required=True, choices=[plan.name for plan in _CORPUS_PLANS]
+    )
+    parser.add_argument("--catalog", type=Path, default=Path("data/catalog.jsonl"))
+    parser.add_argument(
+        "--artifact-path", type=Path, default=Path("data/catalog.artifacts")
+    )
+    parser.add_argument(
+        "--pairs", type=int, default=None, help="probe corpus size, in matched pairs"
+    )
+    parser.add_argument(
+        "--sessions", type=int, default=None, help="expanded corpus size, in sessions"
+    )
+    parser.add_argument("--cross-check-pairs", type=int, default=None)
+    parser.add_argument("--model", default=None, choices=("haiku", "sonnet"))
+    parser.add_argument(
+        "--seed-label",
+        default=None,
+        help="D-27: expanded_confirm must use a DIFFERENT label from expanded_dev",
+    )
+    parser.add_argument("--prompt", default=None)
+    parser.add_argument("--response-log", type=Path, default=None)
+    parser.add_argument("--divergence-log", type=Path, default=None)
+    parser.add_argument("--target-snapshot", type=Path, default=None)
+    parser.add_argument(
+        "--replay",
+        type=Path,
+        default=None,
+        help="replay a committed response log; no subprocess is spawned",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="A5: 8-way fan-out is untested and 429s would force it back down",
+    )
+    parser.add_argument("--batch-size", type=int, default=_AUTHOR_BATCH_SIZE)
+    parser.add_argument("--solvability-check", action="store_true")
+    parser.add_argument("--drop-unsolvable", action="store_true")
+    parser.add_argument("--registry", type=Path, default=REGISTRY_PATH)
+    parser.add_argument("--corpus-root", type=Path, default=CORPUS_ROOT)
+    parser.add_argument("--markdown", type=Path, default=DATASETS_MARKDOWN_PATH)
+    return parser
+
+
+def main(argv: tuple[str, ...] | None = None) -> int:
+    arguments = _build_parser().parse_args(argv)
+
+    if arguments.solvability_check and is_probe_corpus(arguments.corpus):
+        # The same sentence `measure_solvability` raises, and deliberately a
+        # second copy rather than a shared constant: the CLI refusal is what an
+        # operator meets, and the function's own is what survives a refactor that
+        # bypasses the CLI. It is checked FIRST, before any file is opened, so it
+        # holds on a machine with no catalog and no artifact (L-3).
+        print(
+            "--solvability-check is forbidden for the probe corpus: a"
+            " retrieval-backed filter would delete exactly the sessions that"
+            " carry the vocabulary gap and launder the finding out of the"
+            " measurement before it is measured (D-35)",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        return _run(arguments)
+    except (
+        GenerateError,
+        RegistryError,
+        AuthoringError,
+        CorpusSchemaError,
+        OSError,
+        ValueError,
+        FileExistsError,
+    ) as error:
+        print(f"corpus generation failed: {error}", file=sys.stderr)
+        return 1
+
+
+def _run(arguments: argparse.Namespace) -> int:
+    plan = corpus_plan(arguments.corpus)
+    stem = corpus_stem(plan.name)
+    size = arguments.pairs if plan.paired else arguments.sessions
+    wrong = arguments.sessions if plan.paired else arguments.pairs
+    if wrong is not None:
+        raise GenerateError(
+            f"{plan.name} is sized in {plan.size_flag}; use --{plan.size_flag}"
+        )
+    if size is None:
+        size = plan.default_size
+    if size < 1:
+        raise GenerateError(f"corpus size must be positive, got {size}")
+    cross_check = (
+        plan.default_cross_check
+        if arguments.cross_check_pairs is None
+        else arguments.cross_check_pairs
+    )
+    if not plan.paired and cross_check:
+        raise GenerateError(
+            f"{plan.name} carries one session per target and has no second arm to"
+            " cross-check against (D-25)"
+        )
+    model_alias = arguments.model or plan.model_alias
+    prompt_name = arguments.prompt or plan.prompt_name
+    seed_label = arguments.seed_label or plan.name
+    response_log = arguments.response_log or response_log_path(plan.name)
+    divergence_log = arguments.divergence_log or divergence_log_path(plan.name)
+    snapshot = arguments.target_snapshot
+    if snapshot is None and is_probe_corpus(plan.name):
+        # Probe corpus only. A snapshot for the 2,800 expanded sessions would add
+        # megabytes of committed catalog text no test reads, and L-16 names repo
+        # weight as this phase's real risk.
+        snapshot = target_snapshot_path(plan.name)
+
+    runner: AuthoringRunner = (
+        replay_runner(arguments.replay) if arguments.replay else claude_runner
+    )
+    vocabulary = load_vocabulary()
+    catalog_sha256 = sha256_file(Path(arguments.catalog))
+    _, categories, products = catalog_index(Path(arguments.catalog))
+
+    # The candidate pool is filtered before the draw, not after it. A target
+    # dropped after sampling would leave the corpus short of its recorded session
+    # count, and topping up afterwards would make the draw depend on which
+    # targets happened to fail -- neither is reproducible.
+    candidates: list[str] = []
+    strata: list[tuple[str, str]] = []
+    for parent_asin in sorted(products):
+        product = products[parent_asin]
+        try:
+            card = control_card(product)
+            constraint_slots(
+                PairTarget(
+                    pair_id=pair_id_for(0, corpus_stem=stem),
+                    target=parent_asin,
+                    scenario_type="buying",
+                    card=card,
+                ),
+                vocabulary=vocabulary,
+                products={parent_asin: product},
+            )
+        except GenerateError:
+            continue
+        candidates.append(parent_asin)
+        strata.append((parent_asin, stratum_for(product, categories.get(parent_asin, []))))
+
+    excluded = public_target_ids() | _frozen_targets(
+        Path(arguments.registry), exclude=plan.name, root=Path(arguments.corpus_root)
+    )
+    targets = sample_targets(
+        tuple(candidates),
+        count=size,
+        seed_label=seed_label,
+        excluded=excluded,
+        strata=tuple(strata),
+    )
+    seed = pair_seed(seed_label, str(size), _SAMPLING_LABEL)
+
+    pair_id_by_target = {
+        target: pair_id_for(index, corpus_stem=stem)
+        for index, target in enumerate(targets)
+    }
+    scenario_by_pair = assign_scenarios(tuple(pair_id_by_target.values()))
+    scenarios = dict(scenario_by_pair)
+    pairs = tuple(
+        PairTarget(
+            pair_id=pair_id_by_target[target],
+            target=target,
+            scenario_type=scenarios[pair_id_by_target[target]],
+            card=control_card(products[target]),
+        )
+        for target in targets
+    )
+
+    rows: list[SampleRow] = []
+    measured: list[AuthoredConstraint] = []
+    calls: list[dict[str, object]] = []
+
+    if plan.paired:
+        # The control arm exists only where a pair has two arms to contrast.
+        for pair in pairs:
+            rows.append(
+                build_row(
+                    pair_id=pair.pair_id,
+                    arm="control",
+                    scenario_type=pair.scenario_type,
+                    target=pair.target,
+                    card=pair.card,
+                    profile=profile_for_target(products[pair.target], pair_id=pair.pair_id),
+                )
+            )
+        measured.extend(control_constraints(pairs, products=products))
+
+    arms: list[tuple[str, str, str, tuple[PairTarget, ...]]] = [
+        (plan.probe_arm, model_alias, prompt_name, pairs)
+    ]
+    if plan.paired and cross_check:
+        selected = frozenset(cross_check_pairs(scenario_by_pair, count=cross_check))
+        arms.append(
+            (
+                _CROSS_CHECK_ARM,
+                _CROSS_CHECK_ALIAS,
+                prompt_name,
+                tuple(pair for pair in pairs if pair.pair_id in selected),
+            )
+        )
+
+    for arm, alias, arm_prompt, arm_pairs in arms:
+        if not arm_pairs:
+            continue
+        authored = author_arm(
+            arm_pairs,
+            arm=arm,
+            runner=runner,
+            vocabulary=vocabulary,
+            products=products,
+            prompt_name=arm_prompt,
+            model_alias=alias,
+            batch_size=arguments.batch_size,
+        )
+        calls.extend(authored.calls)
+        measured.extend(authored.constraints)
+        by_pair: dict[str, list[AuthoredConstraint]] = {}
+        for constraint in authored.constraints:
+            by_pair.setdefault(constraint.slot.pair_id, []).append(constraint)
+        for pair in arm_pairs:
+            rows.append(
+                build_row(
+                    pair_id=pair.pair_id,
+                    arm=arm,
+                    scenario_type=pair.scenario_type,
+                    target=pair.target,
+                    card=card_from_constraints(
+                        tuple(by_pair[pair.pair_id]),
+                        target_category=pair.card.target_category,
+                    ),
+                    profile=profile_for_target(products[pair.target], pair_id=pair.pair_id),
+                )
+            )
+
+    solvability: dict[str, int] = {}
+    if arguments.solvability_check:
+        unreachable: list[str] = []
+        solvability = measure_solvability(
+            tuple(rows),
+            corpus_name=plan.name,
+            artifact_path=Path(arguments.artifact_path),
+            catalog_path=Path(arguments.catalog),
+            observe=lambda row, hit: None if hit else unreachable.append(row.sample_id),
+        )
+        if arguments.drop_unsolvable:
+            dropped = frozenset(unreachable)
+            rows = [row for row in rows if row.sample_id not in dropped]
+
+    ordered = tuple(sorted(rows, key=lambda row: (row.pair_id, row.arm)))
+    records = tuple(row.as_record() for row in ordered)
+    # The corpus name the OPERATOR asked for, never a stem recomputed from the
+    # rows: the whole point of the check is to catch rows that disagree with the
+    # corpus they are being published into, and a stem derived from those same
+    # rows would agree with itself by construction.
+    validate_corpus(records, corpus_name=plan.name)
+    for record in records:
+        assert_authored_branch(record)
+    check_scenario_mix(records)
+    if plan.paired:
+        check_pairing(records)
+        check_cross_check_subset(records)
+
+    destination = publish_corpus(
+        ordered, name=plan.name, root=Path(arguments.corpus_root)
+    )
+    Path(response_log).parent.mkdir(parents=True, exist_ok=True)
+    write_response_log(Path(response_log), tuple(calls))
+    Path(divergence_log).parent.mkdir(parents=True, exist_ok=True)
+    divergence = divergence_records(
+        tuple(measured), pair_id_by_target=pair_id_by_target
+    )
+    write_divergence_log(Path(divergence_log), divergence)
+
+    snapshot_targets = 0
+    if snapshot is not None:
+        Path(snapshot).parent.mkdir(parents=True, exist_ok=True)
+        pairs_out = tuple(
+            (target, searchable_text(products[target])) for target in sorted(targets)
+        )
+        write_target_snapshot(
+            Path(snapshot),
+            corpus_name=plan.name,
+            catalog_sha256=catalog_sha256,
+            targets=pairs_out,
+        )
+        snapshot_targets = len(pairs_out)
+
+    revision, dirty = current_revision()
+    resolved = _resolved_for_alias(tuple(calls), model_alias)
+    prompts = {prompt_name: prompt_revision(prompt_name)}
+    prompts[_REVIEW_PROMPT_NAME] = prompt_revision(_REVIEW_PROMPT_NAME)
+    entry = DatasetEntry(
+        name=plan.name,
+        path=destination.as_posix(),
+        sha256=sha256_file(destination),
+        schema_version=CORPUS_SCHEMA_VERSION,
+        session_count=len(ordered),
+        distinct_target_count=len(distinct_targets(records)),
+        scenario_mix=tuple(sorted(dict(_count_scenarios(records)).items())),
+        generator_model_alias=model_alias,
+        generator_model_resolved=resolved,
+        claude_cli_version=_claude_cli_version(),
+        prompt_pack=tuple(sorted(prompts.items())),
+        seed=seed,
+        code_revision=revision,
+        code_revision_dirty=dirty,
+        frozen_commit=revision,
+        response_log_path=Path(response_log).as_posix(),
+        response_log_sha256=sha256_file(Path(response_log)),
+        call_count=len(calls),
+        cost_usd=sum(float(record["cost_usd"]) for record in calls),
+        divergence=divergence_from_summary(
+            bucket_summary(
+                tuple(
+                    constraint.report
+                    for constraint in measured
+                    if constraint.arm != "control"
+                )
+            )
+        ),
+        divergence_log_path=Path(divergence_log).as_posix(),
+        divergence_log_sha256=sha256_file(Path(divergence_log)),
+        divergence_pair_count=len({record.pair_id for record in divergence}),
+        target_snapshot_path=Path(snapshot).as_posix() if snapshot is not None else "",
+        target_snapshot_sha256=sha256_file(Path(snapshot)) if snapshot is not None else "",
+        target_snapshot_count=snapshot_targets,
+    )
+    registry_path = Path(arguments.registry)
+    existing = load_registry(registry_path) if registry_path.is_file() else ()
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    entries = upsert_entry(existing, entry)
+    write_registry(registry_path, entries)
+    Path(arguments.markdown).parent.mkdir(parents=True, exist_ok=True)
+    Path(arguments.markdown).write_text(render_markdown(entries), encoding="utf-8")
+
+    print(f"corpus={plan.name}")
+    print(f"sessions={entry.session_count}")
+    print(f"targets={entry.distinct_target_count}")
+    print(f"sha256={entry.sha256}")
+    print(f"divergence_pairs={entry.divergence_pair_count}")
+    print(f"snapshot_targets={snapshot_targets}")
+    print(f"calls={entry.call_count}")
+    print(f"cost_usd={entry.cost_usd}")
+    print(f"model_resolved={entry.generator_model_resolved}")
+    if solvability:
+        print(f"solvability_checked={solvability['checked']}")
+        print(f"solvability_unreachable={solvability['unreachable']}")
+    return 0
+
+
+def _count_scenarios(records: tuple[dict, ...]) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for record in records:
+        scenario = str(record["scenario_type"])
+        counts[scenario] = counts.get(scenario, 0) + 1
+    return tuple(sorted(counts.items()))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
