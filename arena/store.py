@@ -76,19 +76,28 @@ def load_sessions(path: Path) -> tuple[SessionOutcome, ...]:
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
-        # json.loads only -- never pickle, eval or yaml (T-01-07). Every field is
-        # explicitly coerced and then validated before it can reach a statistic.
+        # json.loads only -- never pickle, eval or yaml (T-01-07). Identifiers are
+        # normalized to strings; metric fields keep their JSON types until validate()
+        # can reject incoherent rows.
         try:
             record = json.loads(line)
             outcome = SessionOutcome(
                 sample_id=str(record["sample_id"]),
                 scenario_type=str(record["scenario_type"]),
-                hit=bool(record["hit"]),
+                hit=record["hit"],
                 first_hit_turn=record["first_hit_turn"],
                 best_rank=record["best_rank"],
-                reciprocal_rank=float(record["reciprocal_rank"]),
+                reciprocal_rank=record["reciprocal_rank"],
             )
             outcome.validate()
+            outcome = SessionOutcome(
+                sample_id=outcome.sample_id,
+                scenario_type=outcome.scenario_type,
+                hit=outcome.hit,
+                first_hit_turn=outcome.first_hit_turn,
+                best_rank=outcome.best_rank,
+                reciprocal_rank=float(outcome.reciprocal_rank),
+            )
         except (KeyError, TypeError, ValueError) as error:
             raise ArenaStoreError(
                 f"invalid session row in {path} at line {number}: {error}"

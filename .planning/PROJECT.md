@@ -374,9 +374,8 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 *Last updated: 2026-08-31 — Phase 1 complete (measurement rig core, verification
-`passed` 10/10 after a six-plan gap-closure round). Three code-review blockers
-remain open against `arena/` write/report layers (`01-REVIEW.md`: CR-01 per-record
-metric collapse, CR-02 candidate-vs-candidate fingerprint collision inflating the
-Holm family, CR-03 permissive `SessionOutcome.validate()`), plus the non-existent
-T-01-19 staging gitignore. None violates a Phase 1 success criterion; CR-01 and
-CR-02 should close before Phase 2 runs real candidates through `adjudicate`.*
+`passed` 10/10 after a six-plan gap-closure round). Immediate follow-up closed the
+report-identity, duplicate-candidate, session-row validation, staging-gitignore,
+mixed-resample, same-dataset, and override-value gaps raised in `01-REVIEW.md`.
+Remaining Phase 1 review debt is now lower-risk cleanup around publish recovery,
+legacy import hardening, duplicated evaluator digest pins, and source prose.*

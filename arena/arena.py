@@ -128,8 +128,8 @@ def run_candidate(
     if destination.exists():
         raise FileExistsError(f"arena run already exists: {destination}")
 
-    # The `.{run_id}-` prefix is not cosmetic: it puts the in-progress directory
-    # under .gitignore's `experiments/.*-/` rule, so an interrupted run cannot be
+    # Under the default baseline root, the `.{run_id}-` prefix is matched by
+    # .gitignore's `experiments/baselines/.*/` rule, so an interrupted run is not
     # staged and mistaken for a completed record (T-01-19).
     with tempfile.TemporaryDirectory(prefix=f".{run_id}-", dir=root) as temporary:
         working = Path(temporary)
@@ -212,10 +212,17 @@ def _session_outcome(row: dict) -> SessionOutcome:
     outcome = SessionOutcome(
         sample_id=str(row["sample_id"]),
         scenario_type=str(row["scenario_type"]),
-        hit=bool(row["hit"]),
+        hit=row["hit"],
         first_hit_turn=row["first_hit_turn"],
         best_rank=row["best_rank"],
-        reciprocal_rank=float(row["reciprocal_rank"]),
+        reciprocal_rank=row["reciprocal_rank"],
     )
     outcome.validate()
-    return outcome
+    return SessionOutcome(
+        sample_id=outcome.sample_id,
+        scenario_type=outcome.scenario_type,
+        hit=outcome.hit,
+        first_hit_turn=outcome.first_hit_turn,
+        best_rank=outcome.best_rank,
+        reciprocal_rank=float(outcome.reciprocal_rank),
+    )

@@ -39,6 +39,11 @@ status: issues_found
 **Files Reviewed:** 20
 **Status:** issues_found
 
+**Resolution update:** Immediate follow-up on 2026-08-31 closed CR-01, CR-02,
+CR-03, WR-03, WR-04, WR-05, the invalid override-value path, and the missing
+`assertRaises` coverage for `adjudicate()` entry guards. This report is still useful
+as the audit trail; unresolved items begin at WR-06.
+
 ## Summary
 
 The statistical core is in better shape than the surrounding plumbing. I attacked

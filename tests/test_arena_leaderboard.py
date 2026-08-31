@@ -162,6 +162,40 @@ class LeaderboardPayloadTest(unittest.TestCase):
         self.assertEqual(payload["schema_version"], LEADERBOARD_SCHEMA_VERSION)
         self.assertEqual(LEADERBOARD_SCHEMA_VERSION, 1)
 
+    def test_duplicate_entry_fingerprints_are_rejected(self) -> None:
+        entry = _entry("duplicate", _PERFECT)
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_leaderboard((entry, entry), (), baseline_fingerprint=None)
+        self.assertIn("unique fingerprints", str(raised.exception))
+
+    def test_empty_adjudication_reports_no_resample_count(self) -> None:
+        payload = build_leaderboard(
+            (_entry("solo", _PERFECT),), (), baseline_fingerprint=None
+        )
+        self.assertIsNone(payload["assumptions"]["resample_count"])
+
+    def test_mixed_adjudication_resample_counts_are_rejected(self) -> None:
+        baseline = _entry("base", sessions_from_ranks((2,) * 12))
+        first = _entry("first", sessions_from_ranks((1,) + (2,) * 11))
+        second = _entry("second", sessions_from_ranks((1, 1) + (2,) * 10))
+        first_row = adjudicate(
+            CandidateArm(_spec("base"), baseline.sessions),
+            (CandidateArm(_spec("first"), first.sessions),),
+            resamples=40,
+        )[0]
+        second_row = adjudicate(
+            CandidateArm(_spec("base"), baseline.sessions),
+            (CandidateArm(_spec("second"), second.sessions),),
+            resamples=FAST_RESAMPLES,
+        )[0]
+        with self.assertRaises(ArenaStoreError) as raised:
+            build_leaderboard(
+                (baseline, first, second),
+                (first_row, second_row),
+                baseline_fingerprint=baseline.fingerprint,
+            )
+        self.assertIn("resample count", str(raised.exception))
+
     def test_efficiency_is_rounded_at_output_like_the_evaluator(self) -> None:
         # arena.metrics.efficiency returns 0.7575000000000001 on the anchor because the
         # unrounded term is what reproduces the TechnicalScore. The evaluator rounds the
@@ -783,7 +817,7 @@ class CommittedLeaderboardTest(unittest.TestCase):
         roots = sorted(
             path
             for path in (REPOSITORY_ROOT / "experiments" / "baselines").iterdir()
-            if path.is_dir()
+            if path.is_dir() and (path / SUMMARY_FILENAME).is_file()
         )
         self.assertGreaterEqual(len(roots), 1)
         checked = 0

@@ -31,7 +31,7 @@ numbers are known.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data, before any new candidate exists. (all 9 plans executed 2026-08-30; verification `gaps_found` 7/10 — 2 blockers open in `arena/adjudication.py`, see 01-VERIFICATION.md) (completed 2026-08-31)
+- [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data before any new candidate exists. All 15 plans are complete; re-verification passed 10/10 on 2026-08-31.
 - [ ] **Phase 2: Expanded Dataset & Paraphrase Probe** - Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative.
 - [ ] **Phase 3: Ranking Precision & Conversational Efficiency** - Build and jointly measure MRR/MTTC candidates through the arena, gated by the breakeven rule and re-validated against the paraphrase probe.
 - [ ] **Phase 4: Semantic Asset & Candidate Spikes** - Ship the audited offline semantic asset and measure the two disclosed-cost spike candidates without adopting either by default.
@@ -87,7 +87,7 @@ Plans:
 
 - [x] 01-09-PLAN.md — The three D-02 evaluation runs, adjudication, and the `RUNS.md` pointer (operator-gated)
 
-**Gap closure** *(from `01-VERIFICATION.md`, status `gaps_found`, 7/10 must-haves. Waves renumbered from 1 for this round; run with `--gaps-only`.)*
+**Gap closure** *(from `01-VERIFICATION.md`; the first pass found 7/10 must-haves, and plans 01-10 through 01-15 closed the remaining Phase 1 gaps.)*
 
 **Gap-closure Wave 1**
 

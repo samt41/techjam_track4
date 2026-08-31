@@ -186,6 +186,49 @@ _WIN_UNIFORM_PROMOTED = sessions_from_ranks((1,) * 50)
 
 
 class OrderingTest(unittest.TestCase):
+    def test_empty_candidate_tuple_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            adjudicate(arm("baseline", _FLOOR_BASELINE), (), resamples=FAST_RESAMPLES)
+        self.assertIn("at least one candidate", str(raised.exception))
+
+    def test_candidate_matching_baseline_fingerprint_is_rejected(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        with self.assertRaises(ValueError) as raised:
+            adjudicate(
+                baseline,
+                (CandidateArm(baseline.spec, _FLOOR_CANDIDATE),),
+                resamples=FAST_RESAMPLES,
+            )
+        self.assertIn("baseline", str(raised.exception))
+
+    def test_duplicate_candidate_fingerprints_are_rejected(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = arm("candidate", _FLOOR_CANDIDATE)
+        with self.assertRaises(ValueError) as raised:
+            adjudicate(
+                baseline,
+                (candidate, candidate),
+                resamples=FAST_RESAMPLES,
+            )
+        self.assertIn("unique", str(raised.exception))
+
+    def test_compared_arms_must_share_catalog_and_dataset_digests(self) -> None:
+        baseline = arm("baseline", _FLOOR_BASELINE)
+        candidate = arm("candidate", _FLOOR_CANDIDATE)
+        for digest_field in ("catalog_sha256", "dataset_sha256"):
+            with self.subTest(digest_field=digest_field):
+                mismatched = CandidateArm(
+                    dataclasses.replace(candidate.spec, **{digest_field: "c" * 64}),
+                    candidate.sessions,
+                )
+                with self.assertRaises(ValueError) as raised:
+                    adjudicate(
+                        baseline,
+                        (mismatched,),
+                        resamples=FAST_RESAMPLES,
+                    )
+                self.assertIn(digest_field, str(raised.exception))
+
     def test_floor_is_applied_to_the_corrected_delta(self) -> None:
         # The single ordering error D-20 exists to prevent. This test fails outright if
         # `clears_practical_floor` is computed from the raw delta.

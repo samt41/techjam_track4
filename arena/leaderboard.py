@@ -293,6 +293,20 @@ def build_leaderboard(
     *,
     baseline_fingerprint: str | None,
 ) -> dict[str, object]:
+    entry_fingerprints = [entry.fingerprint for entry in entries]
+    duplicates = sorted(
+        fingerprint
+        for fingerprint in set(entry_fingerprints)
+        if entry_fingerprints.count(fingerprint) > 1
+    )
+    if duplicates:
+        displayed = ", ".join(
+            _display_fingerprint(fingerprint) for fingerprint in duplicates
+        )
+        raise ArenaStoreError(
+            f"leaderboard entries must have unique fingerprints: {displayed}"
+        )
+
     summaries = {
         entry.fingerprint: metric_summary(entry.sessions) for entry in entries
     }
@@ -390,9 +404,11 @@ def build_leaderboard(
     # Describes what actually produced these rows rather than what the constant says.
     # A committed report generated at a test resample count is exactly the failure
     # T-01-20 guards against, and it is only visible if the number is recorded.
-    resample_count = (
-        observed_resamples[0] if len(observed_resamples) == 1 else RESAMPLE_COUNT
-    )
+    if len(observed_resamples) > 1:
+        raise ArenaStoreError(
+            f"adjudication rows disagree on resample count {observed_resamples}"
+        )
+    resample_count = observed_resamples[0] if observed_resamples else None
 
     return {
         "schema_version": LEADERBOARD_SCHEMA_VERSION,

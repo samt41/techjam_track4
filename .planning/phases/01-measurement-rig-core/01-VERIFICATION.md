@@ -197,6 +197,10 @@ re-includes everything beneath it regardless. This matches finding CR/T-01-19 in
 which reached the same conclusion independently. The mitigation does not exist and is carried as
 open debt; it does not affect any must-have, because no success criterion depends on it.
 
+**Post-verification cleanup (2026-08-31).** The staging ignore gap is now closed:
+`.gitignore` has `experiments/baselines/.*/`, and `arena/arena.py` points at that
+rule instead of the false `experiments/.*-/` claim.
+
 ### Probe Execution
 
 No `scripts/*/tests/probe-*.sh` exist in this repository and no PLAN or SUMMARY declares a
@@ -346,7 +350,11 @@ Per the Confirmation Bias Counter, three findings reported even though verificat
    sharing the baseline's fingerprint) are therefore unpinned. The second one matters more than
    it looks: a candidate sharing the baseline's fingerprint would make `pair_seed(fp, fp, …)`
    seed a self-comparison. I executed both guards and both fire with their documented messages,
-   so this is a coverage gap, not a defect. W-04.
+so this is a coverage gap, not a defect. W-04.
+
+**Post-verification cleanup (2026-08-31).** `tests/test_arena_adjudication.py` now
+covers empty candidate input, baseline fingerprint collision, duplicate candidate
+fingerprints, and catalog/dataset digest mismatch.
 3. **An untested error path elsewhere.** The `LexicalMode(...)` coercion at `arena/arena.py:145`
    has no test for an invalid `lexical_mode` string reaching it — `run_arena.py` constrains the
    flag with argparse `choices`, and `ALLOWED_OVERRIDES` gates the key but not the value, so a

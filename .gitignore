@@ -13,6 +13,8 @@ experiments/.*-/
 # 580 MB artifact. Must stay AFTER the excludes -- git will not descend into an
 # excluded directory, so a negation placed before them is silently ignored.
 !experiments/baselines/
+# Arena run/import staging directories live under the retained baseline root.
+experiments/baselines/.*/
 data/catalog.jsonl
 data/*.artifacts/
 data/releases/

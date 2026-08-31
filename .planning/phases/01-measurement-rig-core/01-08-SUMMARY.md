@@ -67,7 +67,7 @@ completed: 2026-08-30
 
 ### Task 1 — `arena/arena.py` (commit `7ee3a16`)
 
-`run_candidate(spec, *, run_id, catalog_path, dataset_path, output_root)` performs the whole path: validate the run id, refuse an existing destination, work inside a `.{run_id}-` prefixed temporary directory already covered by `.gitignore`'s `experiments/.*-/` rule, construct the Agent from the spec alone, run the evaluator through the bridge, convert each session row into a validated `SessionOutcome`, write `sessions.jsonl` and `summary.json`, and publish atomically.
+`run_candidate(spec, *, run_id, catalog_path, dataset_path, output_root)` performs the whole path: validate the run id, refuse an existing destination, work inside a `.{run_id}-` prefixed temporary directory covered by `.gitignore`'s `experiments/baselines/.*/` rule under the default baseline root, construct the Agent from the spec alone, run the evaluator through the bridge, convert each session row into a validated `SessionOutcome`, write `sessions.jsonl` and `summary.json`, and publish atomically.
 
 `build_candidate_spec` resolves revision and dirtiness, computes both digests, normalises the overrides, and calls `spec.validate()` **before** returning — validation before use is what makes it impossible for a fingerprint to describe an unapplied configuration.
 

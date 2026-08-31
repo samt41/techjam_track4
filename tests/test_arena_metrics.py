@@ -111,6 +111,58 @@ class MetricChainTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     SessionOutcome(**{**base, **invalid}).validate()
 
+    def test_session_outcome_validation_rejects_incoherent_metric_rows(self) -> None:
+        base = dict(
+            sample_id="s000",
+            scenario_type="buying",
+            hit=True,
+            first_hit_turn=2,
+            best_rank=2,
+            reciprocal_rank=0.5,
+        )
+        for invalid in (
+            {"hit": False},
+            {"hit": "true"},
+            {"first_hit_turn": None},
+            {"best_rank": None},
+            {"best_rank": True},
+            {"first_hit_turn": 2.5},
+            {"reciprocal_rank": 1.0},
+            {"reciprocal_rank": "0.5"},
+            {"scenario_type": ""},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    SessionOutcome(**{**base, **invalid}).validate()
+
+    def test_miss_fields_must_be_coherent(self) -> None:
+        SessionOutcome(
+            sample_id="s000",
+            scenario_type="buying",
+            hit=False,
+            first_hit_turn=None,
+            best_rank=None,
+            reciprocal_rank=0.0,
+        ).validate()
+        for invalid in (
+            {"best_rank": 1},
+            {"first_hit_turn": 1},
+            {"reciprocal_rank": 0.1},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    SessionOutcome(
+                        **{
+                            "sample_id": "s000",
+                            "scenario_type": "buying",
+                            "hit": False,
+                            "first_hit_turn": None,
+                            "best_rank": None,
+                            "reciprocal_rank": 0.0,
+                            **invalid,
+                        }
+                    ).validate()
+
     def test_binomial_standard_error_uses_the_bucket_p_and_n(self) -> None:
         self.assertAlmostEqual(
             binomial_standard_error(0.9, 10), 0.09486832980505137, places=12

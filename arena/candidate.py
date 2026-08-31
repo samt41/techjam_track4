@@ -13,6 +13,10 @@ from experiments.analyze_public import code_revision
 # (D-10): a fingerprint that claims a configuration which was silently ignored
 # invalidates every comparison built on it, and no downstream test would catch it.
 ALLOWED_OVERRIDES = frozenset({"lexical_mode", "exploration", "artifact_path"})
+ALLOWED_OVERRIDE_VALUES = {
+    "exploration": frozenset({"disabled", "tail-only"}),
+    "lexical_mode": frozenset({"auto", "fts5", "fallback"}),
+}
 
 # The one record field that carries CandidateSpec.name, named here so the writer and
 # every reader agree on it. `fingerprint` hashes `name`, so a reader reconstructing a
@@ -60,6 +64,12 @@ class CandidateSpec:
         unknown = sorted(set(keys) - ALLOWED_OVERRIDES)
         if unknown:
             raise ValueError(f"unknown candidate override keys: {unknown}")
+        for key, value in self.overrides:
+            allowed = ALLOWED_OVERRIDE_VALUES.get(key)
+            if allowed is not None and value not in allowed:
+                raise ValueError(
+                    f"invalid value for candidate override {key}: {value}"
+                )
         if not self.code_revision:
             raise ValueError("candidate code_revision must not be empty")
         if not _is_recorded_digest(self.catalog_sha256):

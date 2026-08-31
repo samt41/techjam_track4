@@ -200,9 +200,23 @@ def adjudicate(
     if not candidates:
         raise ValueError("adjudication requires at least one candidate")
     baseline_fingerprint = baseline.spec.fingerprint
+    candidate_fingerprints = []
     for candidate in candidates:
-        if candidate.spec.fingerprint == baseline_fingerprint:
+        fingerprint = candidate.spec.fingerprint
+        if fingerprint == baseline_fingerprint:
             raise ValueError("a candidate must not share the baseline's fingerprint")
+        for digest_field in ("catalog_sha256", "dataset_sha256"):
+            if getattr(candidate.spec, digest_field) != getattr(
+                baseline.spec,
+                digest_field,
+            ):
+                raise ValueError(
+                    f"{candidate.spec.name} was measured against a different"
+                    f" {digest_field}"
+                )
+        candidate_fingerprints.append(fingerprint)
+    if len(set(candidate_fingerprints)) != len(candidate_fingerprints):
+        raise ValueError("candidate fingerprints must be unique")
 
     baseline_summary = metric_summary(baseline.sessions)
 

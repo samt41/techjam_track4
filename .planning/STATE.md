@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-08-31T10:51:21.519Z"
+last_updated: "2026-08-31T10:51:57.768Z"
 last_activity: 2026-08-31
 progress:
   total_phases: 8
@@ -18,19 +18,19 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-29)
+See: .planning/PROJECT.md (updated 2026-08-31)
 
 **Core value:** Maximize total rubric score, not HitRate@10.
-**Current focus:** Phase 01 — measurement-rig-core
+**Current focus:** Phase 02 — expanded-dataset-and-paraphrase-probe
 
 ## Current Position
 
 Phase: 2
 Plan: Not started
-Status: Executing Phase 01
+Status: Phase 2 context gathered
 Last activity: 2026-08-31
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 13%
 
 ## Performance Metrics
 
@@ -71,7 +71,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 3/4 candidates must not be judged until Phase 1's stats engine is validated against retained `RUNS.md` history (MEAS-16) — do not shortcut this gate under time pressure.
+- Phase 1's stats engine is validated against retained `RUNS.md` history (MEAS-16). Phase 2 can proceed; Phase 3/4 candidate runs should use the arena guards added after review.
 - Phase 5's go/no-go decision is load-bearing: research flags this transition as where solo-dev time silently misallocates. Do not let Phase 3/4 iteration expand past the point of diminishing, statistically-uncertain returns before the checkpoint fires.
 
 ## Deferred Items

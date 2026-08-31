@@ -585,19 +585,20 @@ def build_test_artifacts(
 
 ### `.gitignore` (config)
 
-**Current lines 11-12:**
+**Current ignore shape:**
 
 ```text
 experiments/*/
 experiments/.*-/
+!experiments/baselines/
+experiments/baselines/.*/
 ```
 
-D-04 adds a negation immediately after (`!experiments/baselines/`). Note git's rule:
-a negation cannot re-include a path under an excluded **directory**, so the executor
-must verify the escape works — the practical form is to also negate the intermediate
-(`!experiments/baselines/`, then `!experiments/baselines/**`) and confirm with
-`git check-ignore -v experiments/baselines/<id>/summary.json`. Line 8 (`results.json`)
-is what F-03's untracked anchor file is hidden by; leave it.
+D-04 keeps committed baseline records visible with `!experiments/baselines/`.
+T-01-19 keeps dot-prefixed staging directories invisible with
+`experiments/baselines/.*/`; verify that with
+`git check-ignore -v experiments/baselines/.run-x-ab12cd/summary.json`. Line 8
+(`results.json`) is what F-03's untracked anchor file is hidden by; leave it.
 
 ---
 

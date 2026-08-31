@@ -90,6 +90,16 @@ class CandidateSpecValidationTest(unittest.TestCase):
             spec.validate()
         self.assertIn("duplicate", str(raised.exception))
 
+    def test_override_values_are_validated(self) -> None:
+        for overrides in (
+            (("exploration", "aggressive"),),
+            (("lexical_mode", "nonsense"),),
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValueError) as raised:
+                    _spec(overrides=overrides).validate()
+                self.assertIn("invalid value", str(raised.exception))
+
     def test_unsorted_override_keys_are_rejected(self) -> None:
         spec = _spec(overrides=(("exploration", "disabled"), ("artifact_path", "x")))
         with self.assertRaises(ValueError) as raised:

@@ -9,7 +9,7 @@ The implementation is deterministic and standard-library-only at inference time.
 Requirements:
 
 - `uv`
-- CPython 3.10 or later. CPython 3.13 is verified.
+- CPython 3.11 or later. CPython 3.13 is verified.
 - Python's SQLite build with FTS5 enabled.
 - Approximately 61 MB for the decompressed catalog. Approximately 580 MB for the prebuilt artifact database. RAM for a memory-mapped read connection.
 

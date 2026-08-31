@@ -37,14 +37,43 @@ class SessionOutcome:
     def validate(self) -> None:
         if not self.sample_id:
             raise ValueError("sample_id must not be empty")
+        if not self.scenario_type:
+            raise ValueError("scenario_type must not be empty")
+        if not isinstance(self.hit, bool):
+            raise ValueError("hit must be a boolean")
+        for name, value in (
+            ("best_rank", self.best_rank),
+            ("first_hit_turn", self.first_hit_turn),
+        ):
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool)
+            ):
+                raise ValueError(f"{name} must be an integer or null")
         if self.best_rank is not None and not 1 <= self.best_rank <= MAX_TURNS:
             raise ValueError("best_rank must be between 1 and 10")
         if self.first_hit_turn is not None and not 1 <= self.first_hit_turn <= MAX_TURNS:
             raise ValueError("first_hit_turn must be between 1 and 10")
+        if (
+            not isinstance(self.reciprocal_rank, (int, float))
+            or isinstance(self.reciprocal_rank, bool)
+        ):
+            raise ValueError("reciprocal_rank must be numeric")
         if not 0.0 <= self.reciprocal_rank <= 1.0:
             raise ValueError("reciprocal_rank must be between 0 and 1")
-        if self.hit != (self.first_hit_turn is not None):
-            raise ValueError("hit must agree with first_hit_turn presence")
+        if (self.first_hit_turn is None) != (self.best_rank is None):
+            raise ValueError("first_hit_turn and best_rank must agree on hit presence")
+        if self.hit != (self.best_rank is not None):
+            raise ValueError("hit must agree with best_rank presence")
+        expected_rank = 0.0 if self.best_rank is None else 1.0 / self.best_rank
+        if not math.isclose(
+            float(self.reciprocal_rank),
+            expected_rank,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "reciprocal_rank must equal 1 / best_rank, or 0.0 on a miss"
+            )
 
     def as_record(self) -> dict[str, object]:
         return {
