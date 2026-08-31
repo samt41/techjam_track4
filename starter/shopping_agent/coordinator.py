@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from time import perf_counter
 
 from starter.shopping_agent.catalog_index import CatalogIndex
+from starter.shopping_agent.candidate_provider import AdditionalCandidateProvider
 from starter.shopping_agent.clarification import (
     ClarificationPolicy,
     PosteriorQuestionModel,
@@ -33,6 +34,7 @@ from starter.shopping_agent.models import (
     UserProfile,
 )
 from starter.shopping_agent.preference_ledger import PreferenceLedger
+from starter.shopping_agent.recommendation_reranker import RecommendationReranker
 from starter.shopping_agent.ranking import ProductRanker
 from starter.shopping_agent.response import ResponseValidator, recommendation_message
 from starter.shopping_agent.retrieval import (
@@ -70,6 +72,8 @@ class TurnCoordinator:
         trace: EvaluationTrace | None = None,
         startup_ms: float = 0.0,
         exploration: str = "disabled",
+        candidate_provider: AdditionalCandidateProvider | None = None,
+        recommendation_reranker: RecommendationReranker | None = None,
     ) -> None:
         self._catalog_index = catalog_index
         self._extractor = ConstraintExtractor(catalog_index)
@@ -86,12 +90,18 @@ class TurnCoordinator:
         self._startup_ms = startup_ms
         self._exploration_enabled = exploration != "disabled"
         self._traced = not isinstance(self._trace, NoOpEvaluationTrace)
+        self._candidate_provider = candidate_provider
+        self._recommendation_reranker = recommendation_reranker
 
     def close(self) -> None:
         if not self._closed:
             self._sessions.clear()
             self._catalog_index.close()
             self._trace.close()
+            if self._candidate_provider is not None:
+                self._candidate_provider.close()
+            if self._recommendation_reranker is not None:
+                self._recommendation_reranker.close()
             self._closed = True
 
     def reset(self, session_id: str, profile: UserProfile) -> None:
@@ -123,15 +133,16 @@ class TurnCoordinator:
         if state is None:
             raise RuntimeError("reset must be called before respond")
 
+        asked_attribute = state.last_asked_attribute
         dialogue_act = self._extractor.dialogue_act(
             message,
-            state.last_asked_attribute,
+            asked_attribute,
         )
         before_intent_version = state.ledger.intent.intent_version
         updates = self._extractor.extract(
             message,
             turn,
-            asked_attribute=state.last_asked_attribute,
+            asked_attribute=asked_attribute,
         )
         state.last_asked_attribute = None
         intent = state.ledger.apply(updates)
@@ -158,13 +169,31 @@ class TurnCoordinator:
                 session_id, turn, intent, plan, result, len(route_candidates)
             )
         strict_candidates = tuple(strict_candidates_list)
+        if self._candidate_provider is not None:
+            try:
+                additional = self._candidate_provider.candidates(
+                    message,
+                    asked_attribute,
+                    updates,
+                    intent,
+                    self._catalog_index.backend,
+                    top_k,
+                )
+            except Exception:
+                additional = ()
+            strict_candidates = (*strict_candidates, *additional)
 
         shown_product_ids = state.history.shown_for(intent.intent_version)
+        ranking_limit = (
+            top_k
+            if self._recommendation_reranker is None
+            else max(top_k, self._recommendation_reranker.candidate_pool_size)
+        )
         recommendations = self._ranker.rank(
             strict_candidates,
             intent,
             shown_product_ids=shown_product_ids,
-            top_k=top_k,
+            top_k=ranking_limit,
             profile=state.profile,
         )
         # Estimate the clarifying question from the full preliminary strict
@@ -204,6 +233,21 @@ class TurnCoordinator:
                 top_k=top_k,
                 profile=state.profile,
             )
+        if self._recommendation_reranker is not None:
+            baseline = recommendations[:top_k]
+            try:
+                recommendations = self._recommendation_reranker.rerank(
+                    session_id,
+                    turn,
+                    message,
+                    intent,
+                    recommendations,
+                    shown_product_ids,
+                    self._catalog_index.backend,
+                    top_k,
+                )
+            except Exception:
+                recommendations = baseline
         recommendations = self._validator.validate(recommendations, top_k)
         state.history.record(
             intent.intent_version,

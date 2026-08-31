@@ -66,6 +66,7 @@ class RetrievalRoute(StrEnum):
     EXPANDED_FTS = "expanded_fts"
     CATEGORY_FALLBACK = "category_fallback"
     COUNTERFACTUAL = "counterfactual"
+    SEMANTIC = "semantic"
 
 
 @dataclass(frozen=True, slots=True)

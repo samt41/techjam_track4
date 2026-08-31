@@ -1,0 +1,24 @@
+{"attribute": "material", "mapping_id": "cal-rayon-1", "paraphrase": "a soft cloth made from regenerated plant cellulose", "split": "calibration", "surface_text": "rayon"}
+{"attribute": "material", "mapping_id": "cal-rayon-2", "paraphrase": "a silky textile produced from processed cellulose", "split": "calibration", "surface_text": "rayon"}
+{"attribute": "material", "mapping_id": "cal-wool-1", "paraphrase": "a warm natural fibre shorn from sheep", "split": "calibration", "surface_text": "wool"}
+{"attribute": "material", "mapping_id": "cal-wool-2", "paraphrase": "an insulating animal fleece textile", "split": "calibration", "surface_text": "wool"}
+{"attribute": "material", "mapping_id": "cal-spandex-1", "paraphrase": "an elastic fibre that stretches with movement", "split": "calibration", "surface_text": "spandex"}
+{"attribute": "material", "mapping_id": "cal-spandex-2", "paraphrase": "a highly stretchy synthetic thread", "split": "calibration", "surface_text": "spandex"}
+{"attribute": "feature", "mapping_id": "cal-buckle-1", "paraphrase": "fastens with a prong and clasp", "split": "calibration", "surface_text": "buckle closure"}
+{"attribute": "feature", "mapping_id": "cal-buckle-2", "paraphrase": "secured by threading through a framed clasp", "split": "calibration", "surface_text": "buckle closure"}
+{"attribute": "feature", "mapping_id": "cal-snap-1", "paraphrase": "fastens using press studs", "split": "calibration", "surface_text": "snap closure"}
+{"attribute": "feature", "mapping_id": "cal-snap-2", "paraphrase": "secured with small press-together buttons", "split": "calibration", "surface_text": "snap closure"}
+{"attribute": "feature", "mapping_id": "cal-zipper-1", "paraphrase": "closes using interlocking teeth and a sliding pull", "split": "calibration", "surface_text": "zipper closure"}
+{"attribute": "feature", "mapping_id": "cal-zipper-2", "paraphrase": "fastened by a toothed track with a slider", "split": "calibration", "surface_text": "zipper closure"}
+{"attribute": "material", "mapping_id": "test-polyester", "paraphrase": "made from durable synthetic polymer fibres", "split": "test", "surface_text": "polyester"}
+{"attribute": "material", "mapping_id": "test-cotton", "paraphrase": "made from breathable natural plant fibres", "split": "test", "surface_text": "cotton"}
+{"attribute": "material", "mapping_id": "test-leather", "paraphrase": "made from animal hide", "split": "test", "surface_text": "leather"}
+{"attribute": "material", "mapping_id": "test-nylon", "paraphrase": "made from a tough lightweight synthetic textile", "split": "test", "surface_text": "nylon"}
+{"attribute": "feature", "mapping_id": "test-rubber-sole", "paraphrase": "has a grippy flexible bottom for traction", "split": "test", "surface_text": "rubber sole"}
+{"attribute": "feature", "mapping_id": "test-pull-on", "paraphrase": "requires no buttons or zipper to put it on", "split": "test", "surface_text": "pull on closure"}
+{"attribute": "feature", "mapping_id": "test-pull-on-hyphen", "paraphrase": "requires no fastener before it can be worn", "split": "test", "surface_text": "pull-on closure"}
+{"attribute": "feature", "mapping_id": "test-hand-wash", "paraphrase": "requires manual cleaning in a basin", "split": "test", "surface_text": "hand wash only"}
+{"attribute": "feature", "mapping_id": "test-machine-wash", "paraphrase": "safe for cleaning in an automatic laundry appliance", "split": "test", "surface_text": "machine wash"}
+{"attribute": "feature", "mapping_id": "test-imported", "paraphrase": "manufactured abroad", "split": "test", "surface_text": "imported"}
+{"attribute": "feature", "mapping_id": "test-synthetic", "paraphrase": "made entirely from man-made fibres", "split": "test", "surface_text": "100% synthetic"}
+{"attribute": "feature", "mapping_id": "test-fabric", "paraphrase": "constructed from woven cloth", "split": "test", "surface_text": "fabric"}

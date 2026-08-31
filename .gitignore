@@ -8,6 +8,16 @@ __pycache__/
 results.json
 experiments/*/
 experiments/.*-/
+!experiments/semantic/
+!experiments/semantic/**
+!experiments/reranking/
+!experiments/reranking/**
+experiments/semantic/runs/
+experiments/semantic/model-cache/
+experiments/semantic/generated/
+experiments/reranking/runs/
+experiments/reranking/model-cache/
+**/__pycache__/
 data/catalog.jsonl
 data/*.artifacts/
 data/releases/

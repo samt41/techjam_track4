@@ -21,6 +21,46 @@ PROFILE = {
 }
 
 
+class _RecordingCandidateProvider:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.messages: list[str] = []
+        self.closed = False
+
+    def candidates(
+        self, message, asked_attribute, updates, intent, backend, top_k
+    ):
+        self.messages.append(message)
+        if self.fail:
+            raise RuntimeError("experimental provider failure")
+        return ()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RecordingRecommendationReranker:
+    candidate_pool_size = 20
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.pool_sizes: list[int] = []
+        self.closed = False
+
+    def rerank(
+        self, session_id, turn, message, intent, recommendations,
+        shown_product_ids, backend, top_k,
+    ):
+        del session_id, turn, message, intent, shown_product_ids, backend
+        self.pool_sizes.append(len(recommendations))
+        if self.fail:
+            raise RuntimeError("experimental reranker failure")
+        return tuple(reversed(recommendations[:top_k]))
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def integration_products() -> list[dict[str, object]]:
     products = sample_products()
     for number in range(1, 7):
@@ -240,6 +280,82 @@ class AgentIntegrationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "closed"):
             agent.respond("s1", "boots", 1, 10)
+
+    def test_optional_candidate_provider_is_invoked_and_closed(self) -> None:
+        provider = _RecordingCandidateProvider()
+        agent = Agent(
+            catalog_path=self.catalog_path,
+            candidate_provider=provider,
+        )
+        agent.reset("provider", PROFILE)
+
+        agent.respond("provider", "I need boots", 1, 10)
+        agent.close()
+
+        self.assertEqual(provider.messages, ["I need boots"])
+        self.assertTrue(provider.closed)
+
+    def test_candidate_provider_failure_falls_back_to_lexical_results(self) -> None:
+        provider = _RecordingCandidateProvider(fail=True)
+        agent = Agent(
+            catalog_path=self.catalog_path,
+            candidate_provider=provider,
+        )
+        self.addCleanup(agent.close)
+        agent.reset("provider-failure", PROFILE)
+
+        response = agent.respond("provider-failure", "I need boots", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 10)
+        self.assertEqual(provider.messages, ["I need boots"])
+
+    def test_optional_reranker_receives_a_larger_pool_and_is_closed(self) -> None:
+        reranker = _RecordingRecommendationReranker()
+        agent = Agent(
+            catalog_path=self.catalog_path,
+            recommendation_reranker=reranker,
+        )
+        agent.reset("reranker", PROFILE)
+
+        baseline = Agent(catalog_path=self.catalog_path)
+        self.addCleanup(baseline.close)
+        baseline.reset("baseline", PROFILE)
+        baseline_ids = tuple(
+            item["parent_asin"]
+            for item in baseline.respond("baseline", "I need boots", 1, 10)[
+                "recommendations"
+            ]
+        )
+        reranked_ids = tuple(
+            item["parent_asin"]
+            for item in agent.respond("reranker", "I need boots", 1, 10)[
+                "recommendations"
+            ]
+        )
+        agent.close()
+
+        self.assertGreater(reranker.pool_sizes[0], 10)
+        self.assertLessEqual(reranker.pool_sizes[0], 20)
+        self.assertEqual(reranked_ids, tuple(reversed(baseline_ids)))
+        self.assertTrue(reranker.closed)
+
+    def test_reranker_failure_returns_the_unchanged_baseline_slate(self) -> None:
+        baseline = Agent(catalog_path=self.catalog_path)
+        self.addCleanup(baseline.close)
+        baseline.reset("baseline", PROFILE)
+        expected = baseline.respond("baseline", "I need boots", 1, 10)
+
+        reranker = _RecordingRecommendationReranker(fail=True)
+        agent = Agent(
+            catalog_path=self.catalog_path,
+            recommendation_reranker=reranker,
+        )
+        self.addCleanup(agent.close)
+        agent.reset("reranker-failure", PROFILE)
+
+        actual = agent.respond("reranker-failure", "I need boots", 1, 10)
+
+        self.assertEqual(actual["recommendations"], expected["recommendations"])
 
     def test_failed_slate_rotates_but_override_resets_suppression(self) -> None:
         catalog_path, artifact_path = self.product_set(

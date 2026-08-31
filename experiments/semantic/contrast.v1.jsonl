@@ -1,0 +1,12 @@
+{"case_id": "opposite-warmth", "kind": "opposite", "message": "should release heat instead of trapping it", "split": "calibration"}
+{"case_id": "negated-leather", "kind": "negated", "message": "not made from animal hide", "split": "calibration"}
+{"case_id": "unrelated-documents", "kind": "unrelated", "message": "something for organizing tax documents", "split": "calibration"}
+{"case_id": "unrelated-baking", "kind": "unrelated", "message": "a tool suitable for baking bread", "split": "calibration"}
+{"case_id": "unrelated-gardening", "kind": "unrelated", "message": "equipment for watering balcony plants", "split": "calibration"}
+{"case_id": "generic-exploring", "kind": "generic", "message": "I am still exploring and have no specific preference", "split": "calibration"}
+{"case_id": "opposite-airflow", "kind": "opposite", "message": "must block airflow rather than let air circulate", "split": "test"}
+{"case_id": "negated-water", "kind": "negated", "message": "do not recommend anything that keeps rain out", "split": "test"}
+{"case_id": "excluded-wool", "kind": "negated", "message": "avoid animal fleece materials", "split": "test"}
+{"case_id": "unrelated-computing", "kind": "unrelated", "message": "a device for backing up computer files", "split": "test"}
+{"case_id": "unrelated-music", "kind": "unrelated", "message": "something for tuning a wooden guitar", "split": "test"}
+{"case_id": "unrelated-travel", "kind": "unrelated", "message": "a guide to train schedules in another country", "split": "test"}

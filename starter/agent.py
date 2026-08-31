@@ -4,10 +4,12 @@ from pathlib import Path
 from time import perf_counter
 
 from starter.shopping_agent.catalog_index import CatalogIndex
+from starter.shopping_agent.candidate_provider import AdditionalCandidateProvider
 from starter.shopping_agent.coordinator import TurnCoordinator
 from starter.shopping_agent.diagnostics import EvaluationTrace
 from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
 from starter.shopping_agent.models import TurnRecord, UserProfile
+from starter.shopping_agent.recommendation_reranker import RecommendationReranker
 from starter.shopping_agent.response import response_payload
 from starter.shopping_agent.search_backend import LexicalMode
 
@@ -22,6 +24,8 @@ class Agent:
         lexical_mode: LexicalMode = LexicalMode.AUTO,
         trace: EvaluationTrace | None = None,
         exploration: str = "disabled",
+        candidate_provider: AdditionalCandidateProvider | None = None,
+        recommendation_reranker: RecommendationReranker | None = None,
     ) -> None:
         resolved_catalog_path = Path(catalog_path)
         resolved_artifact_path = (
@@ -41,6 +45,8 @@ class Agent:
             trace=trace,
             startup_ms=startup_ms,
             exploration=exploration,
+            candidate_provider=candidate_provider,
+            recommendation_reranker=recommendation_reranker,
         )
 
     def reset(self, session_id: str, user_profile: dict[str, object]) -> None:
