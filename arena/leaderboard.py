@@ -20,6 +20,7 @@ from arena.metrics import (
 )
 from arena.statistics import RESAMPLE_COUNT
 from arena.store import (
+    ArenaStoreError,
     BASELINES_ROOT,
     SESSIONS_FILENAME,
     SUMMARY_FILENAME,
@@ -172,6 +173,29 @@ def _spec_from_payload(record: dict[str, object], run_directory: Path) -> Candid
         dataset_sha256=str(record.get("dataset_sha256", "unknown")),
     )
     spec.validate()
+    # Fail closed on a record that cannot identify itself. Every downstream consumer
+    # reads spec.fingerprint -- as the leaderboard identity, as the report's
+    # baseline_fingerprint, as the champion tie-break key, and as the RNG seed via
+    # pair_seed -- while record["fingerprint"], written by arena/arena.py, was read by
+    # nothing. That divergence shipped once already (experiments/RUNS.md, "Which numbers
+    # are current"): a record was reported under a digest that appeared nowhere in its
+    # own summary.json, and because the fingerprint seeds the bootstrap and permutation
+    # streams, the CI, p, MDD and sigma-hat all changed silently with it.
+    # test_every_record_derives_the_fingerprint_it_stores catches this, but only for
+    # records that are ALREADY committed -- one commit too late. The check therefore
+    # lives on the read path, which spec_from_record and entry_from_record both route
+    # through, so neither reader needs its own copy.
+    stored = record.get("fingerprint")
+    if stored is not None and str(stored) != spec.fingerprint:
+        raise ArenaStoreError(
+            f"{run_directory.name} stores fingerprint {stored}"
+            f" but derives {spec.fingerprint}"
+        )
+    # A record storing NO fingerprint is admitted, and that is not laxity. The rescued
+    # experiments/baselines/anchor-legacy record legitimately carries no such key -- it
+    # is a rescue of a provenance-free file, and its provenance_complete is false -- so
+    # there is nothing for it to diverge from. Do not later "harden" this branch into a
+    # refusal: doing so would reject the MEAS-16 anchor.
     return spec
 
 
