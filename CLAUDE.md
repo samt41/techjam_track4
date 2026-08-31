@@ -117,7 +117,7 @@ of effort — which is usually *not* the change that moves HR@10.
 - `_ROUTE_WEIGHTS` (`starter/shopping_agent/retrieval.py`) — metadata 1.40, exact FTS 1.20, expanded FTS 0.80, category fallback 0.25, counterfactual 0.15; route limit 1,000.
 - `QuestionModelConfiguration` (`starter/shopping_agent/clarification.py`) — population cap 64.
 - Caps: ranker population 5,000 (`ranking.py`), belief trace 20 (`coordinator.py`).
-- Extractor floors: `_STRUCTURED_DF_FLOOR = 2`, `_STOPWORDS` (`constraint_extractor.py`); `_MATERIAL_VOCAB_FLOOR = 2`, `_KEYED_VALUE_FLOOR = 2`, `_KEYED_VALUE_MAX_TOKENS = 4`, `_KEYED_VALUE_MAX_LENGTH = 25` (`catalog_artifacts.py`).
+- Extractor floors: `_STRUCTURED_DF_FLOOR = 2`, `STOPWORDS` (`constraint_extractor.py`, public since D-54 because `arena/datasets/divergence.py` consumes it); `_MATERIAL_VOCAB_FLOOR = 2`, `_KEYED_VALUE_FLOOR = 2`, `_KEYED_VALUE_MAX_TOKENS = 4`, `_KEYED_VALUE_MAX_LENGTH = 25` (`catalog_artifacts.py`).
 - Full audit of every tuned constant, with how principled each is: `docs/STATUS.md`.
 - `pyproject.toml` — five lines: project name `techjam-track4-agent`, version `0.1.0`, `requires-python`, empty dependencies. No build backend, no tool sections.
 - `data/catalog.artifacts/manifest.json` — the generated build configuration record: `schema_version: 1` (matching `ARTIFACT_SCHEMA_VERSION` in `catalog_artifacts.py`), `catalog_sha256`, `catalog_size_bytes`, `database_sha256`, `database_size_bytes`, `product_count: 50000`, `lexical_term_count: 101291`, `fts5_built: true`, `fts_tokenizer: "unicode61-remove-diacritics-2"`, `normalization_version: "nfkc-casefold-v1"`, `posting_batch_size: 1000`, and the FTS field weights (title 6.0, category 4.0, feature 2.5, details 2.5, store 1.5, description 1.0).

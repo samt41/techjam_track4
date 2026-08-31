@@ -15,6 +15,12 @@ experiments/.*-/
 !experiments/baselines/
 # Arena run/import staging directories live under the retained baseline root.
 experiments/baselines/.*/
+# The one repo-relative scratch root every phase-2 operator command writes to.
+# This repository documents Windows 11 / PowerShell as its platform, where
+# $TMPDIR expands to the empty string -- a smoke command pinned to "$TMPDIR/x"
+# silently writes to the drive root instead of failing. Pinning one relative
+# path removes the shell dependency and keeps smoke artifacts out of git status.
+.scratch/
 data/catalog.jsonl
 data/*.artifacts/
 data/releases/
