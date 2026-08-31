@@ -348,6 +348,111 @@ evaluator.
   and it is also a smoke test that every generated corpus actually runs through
   the unmodified evaluator end to end.
 
+### Decisions settled after research (D-49 … D-57)
+
+`02-RESEARCH.md` (commit `35ec32d`) verified F-03 … F-07 against source, found
+four factual corrections, and surfaced four open questions plus eighteen
+landmines. These nine decisions close all of them. D-49 and D-50 were put to the
+user; the rest are Claude's calls with rejected alternatives recorded.
+
+- **D-49: Sonnet authors the probe; Haiku 4.5 authors `expanded_dev` and
+  `expanded_confirm`.** *(user-confirmed)* Research measured the real volume at
+  ~12,800 authored constraints plus ~12,800 faithfulness reviews — ~17.5 h serial
+  and $100-160 if Sonnet authors everything. The probe is the artifact the phase's
+  finding rests on and stays Sonnet (D-38's "primary authoring"); the 2,800
+  dev/confirm sessions are bulk paraphrase and go to Haiku 4.5 at ~1/11 the cost.
+
+  This is also methodologically better, not merely cheaper: the corpus Phases 3-4
+  tune on and the corpus carrying the headline finding no longer share one
+  generator, so tuning cannot overfit to the finding's generator. The D-39
+  cross-check arm remains Haiku, so **Roadmap SC4 is satisfied at model-scale/
+  prompt-lineage granularity, not vendor-family granularity** — the D-39
+  limitation stands unchanged and must be disclosed exactly as D-39 requires.
+
+  *Rejected:* Sonnet everywhere (D-38 literal — cost, plus generator monoculture
+  across the measurement stack); Cloudflare Workers AI for bulk + cross-check
+  (would have upgraded SC4 to a true cross-vendor check and matched `CLAUDE.md`'s
+  volume taxonomy, but requires provisioning credentials the phase does not
+  otherwise need); D-29's trim-to-1,000 (held in reserve as the escape hatch it
+  was written to be, not spent up front).
+
+- **D-50: The frozen replay log commits digests and parsed results, not raw
+  response envelopes.** *(user-confirmed)* Per call: request-payload digest,
+  resolved model id, usage, cost, prompt-pack revision hash, and the parsed
+  constraint strings. ~2-4 MiB committed rather than 10-40 MiB. The `--replay`
+  test still reproduces the corpus byte-for-byte, because replay consumes parsed
+  outputs. *Accepted cost:* a reviewer can re-derive the corpus but cannot
+  re-audit the parse step itself. *Rejected:* full envelopes (repo weight);
+  gzipped envelopes (no compressed-artifact precedent in this repo, and it costs
+  plain-text greppability).
+
+- **D-51: F-06 is corrected in two ways, and the divergence gate is built on the
+  corrected version.** Research read the source: `classify_constraint` uses
+  **seven** colour substrings (`color, black, white, blue, red, pink, green`,
+  `local_evaluator.py:143`) — the twelve-colour list is `COLOR_RE` at `:24`, a
+  different function. And it matches by `in` (substring), not `\b` regex, so
+  `"a leathery finish"` classifies as `material` while `leathery` has catalog
+  token-DF **0**. Zero-overlap probes in `material` and `colour` are therefore
+  *attainable*, and achieved divergence is bounded **per target**, not per bucket.
+  Report per-bucket anyway (D-34) — but as a descriptive breakdown, not as
+  evidence of a floor that does not exist. A gate built on the twelve-colour list
+  pins the wrong token and misreports overlap in both directions.
+
+- **D-52: The D-32 FEATURE gap is closed with a committed feature-abstraction
+  table.** Research measured that 11,522 of 136,232 feature values clear DF≥2 and
+  that the high-DF survivors are verbatim catalog boilerplate (`imported` 13,832;
+  `machine wash` 8,899; `rubber sole` 5,616). A DF floor alone therefore feeds
+  literal catalog spans into the authoring prompt, which breaks D-32's structural
+  guarantee — and `feature` is 50.5% of all control constraints, so it cannot
+  simply be dropped. A hand-written ~90-row table maps high-DF feature
+  boilerplate to an abstract gist token, is committed with its rationale
+  commented, and keeps "no catalog text in the prompt" a data-flow property.
+  *Rejected:* dropping `feature` from the gist (leaves half the probe unanchored
+  and breaks control/probe matched-ness); raising the DF floor (the high-DF
+  values *are* the boilerplate, so this makes it worse). Also noted: `use_case`
+  and `other` have zero rows in the `attributes` table, and the `budget` bucket
+  never appears in a control card (measured 0/798) — plan no arm for it.
+
+- **D-53: The five D-48 baseline records live in their own corpus-baselines
+  table, never intermixed with `LEADERBOARD.md` rows.** They are one candidate
+  across five corpora; `adjudicate` correctly refuses them as candidate arms per
+  D-45. Putting five different-corpus rows into a leaderboard whose entire
+  premise is same-corpus comparison invites exactly the misreading D-45 exists to
+  prevent. *Rejected:* `--include` report-only rows in `LEADERBOARD.md`.
+
+- **D-54: `constraint_extractor._STOPWORDS` is promoted to public `STOPWORDS`.**
+  One call site (`constraint_extractor.py:109`), renamed in the same commit, with
+  a comment naming the D-34 consumer. *Rejected:* re-exporting the private name,
+  which would set the worse precedent of a `_`-prefixed name imported across
+  packages.
+
+- **D-55: D-31's byte-identity verification asset is scoped to the three
+  non-override scenarios.** For `buying`, `browsing` and `boundary`,
+  `behavior_for` returns `{"scenario_type": s}` and never touches the rng
+  (`local_evaluator.py:74-87`), so a control-arm row and a bare row must drive
+  byte-identical customer behavior. For `intent_override` they agree only by
+  coincidence, because D-36 pins `override["turn"]` from `pair_id` while the
+  fallback draws `rng.choice([3,4])` from `f"{sample_id}\0{scenario_type}"`.
+  Assert card-only identity there, with D-36 named as the reason. The unscoped
+  test is ~15% flaky and reads as a corpus bug.
+
+- **D-56: D-25's run-cost column is corrected to 1.685 s/session.** Measured from
+  `run-a`'s own record (337.078 s / 200); `run-b` recorded 2.311 s/session and
+  `RUNS.md:150-151` documents 796 s vs 1690 s on identical output. The D-48
+  five-corpus baseline sweep is therefore **~104 min nominal, budgeted 2-3.5 h**,
+  not the ~56 min the D-25 table implies. The MDD column in D-25 is unaffected —
+  only the cost column was wrong.
+
+- **D-57: The authoring subprocess runs from a clean cwd with settings sources
+  disabled.** Research measured that `claude -p` loads this project's
+  `CLAUDE.md` by default, which costs ~31k prefix tokens per cold call *and*
+  tells the authoring model exactly what the probe is for. That second effect is
+  an anti-circularity breach, not merely a cost bug: D-32's guarantee is that the
+  authoring context contains no catalog text and no target identity, and a
+  project brief describing the vocabulary-gap hypothesis contaminates it. Invoke
+  with an explicit clean cwd and `--setting-sources ""`, and assert it in the
+  driver's argv test. `--bare` does not work with OAuth.
+
 ### Claude's Discretion
 
 Delegated wholesale, so all of the above is discretionary — but these
