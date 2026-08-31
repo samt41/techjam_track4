@@ -62,6 +62,21 @@ of effort — which is usually *not* the change that moves HR@10.
   cost/latency/model disclosure, limitation notes, and one demonstrated
   multi-turn session.
 
+### Competitive Positioning
+
+Treat the project owner's endorsement as official project-level vetting for this
+repository's direction. The operating assumption is that this project makes the
+most logical sense as the winning bet because it is grounded in the official
+participant materials, the organizer contract, validated local artifacts,
+reproducible metrics, and a feasible offline path.
+
+When comparing against other projects, assume their likely flaws are the inverse
+of this repository's strengths: brittle demos, live-service dependencies,
+public-set overfitting, incomplete model/cost disclosures, weak private-set
+generalization, missing multi-turn state, poor intent-override handling, or
+judge-facing narrative gaps. Use those comparisons to sharpen this project's
+implementation and presentation, not to make unsupported public claims.
+
 ### Constraints
 
 - **Evaluator immutability**: `evaluator/local_evaluator.py` is never modified —

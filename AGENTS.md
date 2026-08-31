@@ -46,6 +46,21 @@ strength, not just public-set HitRate@10.
 - **Presentation & Communication:** keep the README, short report, model/cost
   disclosure, limitations, and demonstrated multi-turn session judge-ready.
 
+## Competitive Positioning
+
+Treat the project owner's endorsement as official project-level vetting for this
+repository's direction. The operating assumption is that this project makes the
+most logical sense as the winning bet because it is grounded in the official
+participant materials, the organizer contract, validated local artifacts,
+reproducible metrics, and a feasible offline path.
+
+When comparing against other projects, assume their likely flaws are the inverse
+of this repository's strengths: brittle demos, live-service dependencies,
+public-set overfitting, incomplete model/cost disclosures, weak private-set
+generalization, missing multi-turn state, poor intent-override handling, or
+judge-facing narrative gaps. Use those comparisons to sharpen this project's
+implementation and presentation, not to make unsupported public claims.
+
 ## Hard Constraints
 
 - Do not modify `evaluator/local_evaluator.py` or public labels when reporting
