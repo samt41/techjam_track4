@@ -453,6 +453,29 @@ user; the rest are Claude's calls with rejected alternatives recorded.
   with an explicit clean cwd and `--setting-sources ""`, and assert it in the
   driver's argv test. `--bare` does not work with OAuth.
 
+- **D-58: There are FOUR corpora, not five, and all four baseline records are
+  re-run at the current code revision.** D-45 and D-48 both say "five corpora" /
+  "five records"; D-25's own table enumerates four (`public`, `expanded_dev.v1`,
+  `expanded_confirm.v1`, `probe.v1`) and D-43 names one `data/probe.v1.jsonl`
+  holding all three arms. **Four is correct**; "five" is drafting residue from
+  before the probe's three arms were consolidated into one file (D-46), and D-45
+  and D-48 are corrected to four here.
+
+  The planner initially proposed keeping the existing `run-a` record for `public`
+  and running only three new ones, arguing a re-run would mint a duplicate
+  fingerprint that `build_leaderboard` and `adjudicate` refuse. **That is false
+  and was measured:** `CandidateSpec.fingerprint` hashes `code_revision`
+  (`arena/candidate.py:96-99`), `run-a` was recorded at `5a978e7f`, and `f6c91e8`
+  has since changed `arena/`. A re-run today mints a *different* fingerprint and
+  neither guard fires.
+
+  So: **re-run `public` too.** Four corpora, four fresh records, one shared
+  `code_revision` — which is what makes D-48's shared-configuration assertion
+  true instead of guaranteed-false, and what makes the four rows honestly
+  comparable. *Rejected:* keeping `run-a` and adding a mixed-revision caveat to
+  the report prose — it saves ~6 minutes of compute and costs the one property
+  that makes a baselines table worth reading.
+
 ### Claude's Discretion
 
 Delegated wholesale, so all of the above is discretionary — but these
