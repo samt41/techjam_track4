@@ -2,13 +2,33 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 from arena.candidate import CandidateSpec
-from arena.leaderboard import spec_from_record
-from arena.metrics import SessionOutcome
-from arena.store import BASELINES_ROOT
+from arena.leaderboard import (
+    _cell,
+    _table,
+    spec_from_record,
+)
+from arena.metrics import SessionOutcome, binomial_standard_error
+from arena.statistics import (
+    RESAMPLE_COUNT,
+    BootstrapResult,
+    minimum_detectable_difference,
+    pair_seed,
+    paired_bootstrap,
+)
+from arena.store import BASELINES_ROOT, write_json
+
+# `_cell` and `_table` are imported across a module boundary despite their leading
+# underscore, and the alternative is worse than the smell. Reproducing the six-decimal /
+# scientific-below-threshold rule here would put a THIRD copy of the number-formatting
+# policy in the repository, and two committed reports that disagree on how a p-value
+# prints is exactly the kind of silent divergence D-12 makes the JSON the source of truth
+# to avoid. The underscore marks them as not-for-general-use, not as unusable by the one
+# sibling report that must format identically.
 
 # Control-vs-probe is a DIFFERENT statistical object from candidate-vs-candidate, which
 # is the entire reason this module exists beside arena/adjudication.py instead of inside
@@ -40,6 +60,65 @@ CONTRAST_MARKDOWN_PATH = Path("experiments/PAIRED_CONTRAST.md")
 _STRICT = "strict"
 _SHARED_PAIRS = "shared-pairs"
 RESTRICTIONS = (_STRICT, _SHARED_PAIRS)
+
+# Named in the record itself rather than only in prose, so the omission reads as
+# DELIBERATE to a machine as well as to a reader (D-44). A readout that merely failed to
+# call these two would be indistinguishable from one that forgot.
+CORRECTIONS_OMITTED = ("holm_bonferroni", "winners_curse_correction")
+
+# The record's own words about what it is and what was deliberately not computed for it,
+# carried in the payload rather than only in the rendered view so a reader who opens the
+# JSON gets the caveat too.
+PAIRED_CONTRAST_READING = """\
+This is ONE candidate, measured once, partitioned into two arms by the `arm` field inside
+each corpus row and joined on `pair_id` (D-44, D-46). It is NOT two candidates selected
+from a pool of k.
+
+Neither `holm_bonferroni` nor `winners_curse_correction` is applied to anything below,
+and both omissions are deliberate rather than overlooked. Each correction is a property
+of SELECTING among competing candidates against a common baseline (D-19, D-21). Nothing
+here is selected, tested against a baseline, or declared a champion: there is one
+candidate and no family, so there is no family to correct and no maximum of k to debias.
+Applying either would shrink a difference that no selection inflated.
+
+The pairing key is `pair_id`, not `sample_id`. Control and probe rows necessarily carry
+different `sample_id`s, so `arena.statistics._require_paired` rejects the arms as handed
+in; the arms are re-keyed onto their shared `pair_id` at the call site and that guard is
+never weakened (L-8, MEAS-04).
+
+The minimum detectable difference below is computed from the BOOTSTRAP standard error of
+the delta, per `arena.statistics.minimum_detectable_difference`. D-25's `0.882/sqrt(n)`
+table is an a-priori SIZING heuristic derived from a per-session-difference model this rig
+rejects (D-17); the two may disagree, and this report states the measured one.
+
+The observed discordance rate is reported beside the delta on purpose. D-28's psi = 0.08
+is a CEILING as well as a parameter -- at psi = 0.08 the largest representable delta HR@10
+is 0.08 -- so the minimum detectable difference must be recomputed post hoc from the
+discordance that actually occurred rather than from the assumption that sized the corpus.
+"""
+
+# D-30, and the same rule as D-15/D-19: per-scenario probe deltas are DESCRIPTIVE. They
+# are reported with their bucket sigma and are never corrected, because a 15-pair cell is
+# a narrative aid and not a decision input. The sigma is emitted precisely so a reader can
+# see that for themselves.
+_SCENARIO_CAVEAT = (
+    "These per-scenario rows are DESCRIPTIVE. They carry no multiplicity correction and"
+    " are not decision inputs at these bucket sizes (D-30); the binomial sigma is"
+    " reported beside each so a reader can see how little a bucket this small can"
+    " resolve. Scenarios with no matched pairs are omitted entirely rather than"
+    " rendered as a zero-n row."
+)
+
+# D-39/D-49, required by Roadmap SC4 to appear in the GENERATED report text and not only
+# in the planning documents. Emitted whenever the two arms are the two probe generators.
+_GENERATOR_ARMS = frozenset({"probe_sonnet", "probe_haiku"})
+_ANTHROPIC_FAMILY_LIMITATION = (
+    "Scoped limitation (D-39, D-49): both arms are Anthropic-family models, so this"
+    " contrast bounds MODEL-SCALE and PROMPT-LINEAGE affinity only. It does NOT bound"
+    " vendor-family affinity, which would require a generator from a different vendor;"
+    " none was run, so no claim about vendor-family self-preference is supported by"
+    " these numbers."
+)
 
 
 class PairedContrastError(RuntimeError):
@@ -109,6 +188,75 @@ class McNemarResult:
             "discordance_rate": self.discordance_rate,
             "hit_rate_delta": self.hit_rate_delta,
             "p_value": self.p_value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PairedContrastResult:
+    schema_version: int
+    control_label: str
+    probe_label: str
+    # The two `schema.ARMS` values, carried so the payload can state WHICH arms were
+    # contrasted without a reader inferring it from the labels. The D-39/D-49 scoped
+    # limitation is derived from exactly these two fields, so it must be re-derivable from
+    # the JSON alone rather than only from the rendered Markdown.
+    control_arm: str
+    probe_arm: str
+    control_fingerprint: str
+    probe_fingerprint: str
+    control_dataset_sha256: str
+    probe_dataset_sha256: str
+    pair_count: int
+    restriction: str
+    dropped_pair_count: int
+    bootstrap: BootstrapResult
+    minimum_detectable_difference: float
+    mcnemar: McNemarResult
+    scenario_breakout: tuple[dict[str, object], ...]
+    corrections_omitted: tuple[str, ...]
+    reading: str
+
+    def validate(self) -> None:
+        if self.restriction not in RESTRICTIONS:
+            raise ValueError(f"restriction must be one of {list(RESTRICTIONS)}")
+        for name, value in (
+            ("pair_count", self.pair_count),
+            ("dropped_pair_count", self.dropped_pair_count),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{name} must be an integer")
+        if self.pair_count <= 0:
+            raise ValueError("pair_count must be positive")
+        if self.dropped_pair_count < 0:
+            raise ValueError("dropped_pair_count must not be negative")
+        # BOTH counts are emitted, and the pairing is the point: "n = 100" and
+        # "n = 100, 200 dropped" support different claims, and this record must not be
+        # able to state the first while meaning the second (MEAS-06). The strict path
+        # dropped nothing by construction, so a non-zero count there would mean the
+        # restriction label and the narrowing had come apart.
+        if self.restriction == _STRICT and self.dropped_pair_count != 0:
+            raise ValueError("a strict contrast cannot have dropped pairs")
+
+    def as_record(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "control_label": self.control_label,
+            "probe_label": self.probe_label,
+            "control_arm": self.control_arm,
+            "probe_arm": self.probe_arm,
+            "control_fingerprint": self.control_fingerprint,
+            "probe_fingerprint": self.probe_fingerprint,
+            "control_dataset_sha256": self.control_dataset_sha256,
+            "probe_dataset_sha256": self.probe_dataset_sha256,
+            "pair_count": self.pair_count,
+            "restriction": self.restriction,
+            "dropped_pair_count": self.dropped_pair_count,
+            "bootstrap": self.bootstrap.as_record(),
+            "minimum_detectable_difference": self.minimum_detectable_difference,
+            "mcnemar": self.mcnemar.as_record(),
+            "scenario_breakout": [dict(row) for row in self.scenario_breakout],
+            "corrections_omitted": list(self.corrections_omitted),
+            "reading": self.reading,
         }
 
 
@@ -409,3 +557,252 @@ def mcnemar_from_arms(
         hit_rate_delta=(favouring_probe - favouring_control) / count,
         p_value=mcnemar_exact(favouring_control, favouring_probe),
     )
+
+
+def _scenario_breakout(
+    control: tuple[SessionOutcome, ...],
+    probe: tuple[SessionOutcome, ...],
+) -> tuple[dict[str, object], ...]:
+    """Per-scenario descriptive deltas over two ALREADY-ALIGNED arms (D-30)."""
+    grouped: dict[str, list[tuple[SessionOutcome, SessionOutcome]]] = defaultdict(list)
+    for left, right in zip(control, probe):
+        # Grouped by the CONTROL session's scenario_type. The pair is one authored target
+        # measured twice, so the scenario is a property of the pair rather than of the
+        # arm, and taking it from one fixed side stops a probe-side relabelling from
+        # silently moving rows between buckets.
+        grouped[left.scenario_type].append((left, right))
+    rows: list[dict[str, object]] = []
+    for name in sorted(grouped):  # explicit sort, exactly as metrics.scenario_breakout
+        pairs = grouped[name]
+        count = len(pairs)
+        if not count:
+            # Unreachable via the grouping above, and kept as the explicit statement of
+            # the L-18 rule: a zero-count scenario is OMITTED, never zero-filled. At the
+            # official 40/40/15/5 mix the `boundary` cell is 5% of 300 = 15 pairs and can
+            # round to 0 in a smaller subset, and metric_summary raises on an empty tuple.
+            # Nothing in this function calls metric_summary for that reason -- the two
+            # counts below are taken directly rather than through a summary that would
+            # have to be guarded.
+            continue
+        control_hits = sum(1 for left, _ in pairs if left.hit)
+        probe_hits = sum(1 for _, right in pairs if right.hit)
+        discordant = sum(1 for left, right in pairs if left.hit != right.hit)
+        rows.append(
+            {
+                "scenario": name,
+                "pairs": count,
+                "hit_rate_delta": (probe_hits - control_hits) / count,
+                "discordant": discordant,
+                # D-15's bucket-own-p rule, applied to the CONTROL arm: the sigma
+                # describes how much a bucket of this size could move on noise, and
+                # anchoring it to the reference arm keeps it from shifting whenever the
+                # probe does.
+                "binomial_standard_error": binomial_standard_error(
+                    control_hits / count,
+                    count,
+                ),
+            }
+        )
+    return tuple(rows)
+
+
+def paired_contrast(
+    control: PairedArm,
+    probe: PairedArm,
+    *,
+    resamples: int = RESAMPLE_COUNT,
+    restrict_to_shared: bool = False,
+    allow_cross_corpus: bool = False,
+) -> PairedContrastResult:
+    """The D-44 control-vs-probe readout: bootstrap CI, MDD, exact McNemar, no corrections.
+
+    `resamples` exists so the unit suite can run at 200-500 while every production path
+    takes the RESAMPLE_COUNT default -- the pattern arena/statistics.py already documents.
+    `restrict_to_shared` defaults to False because the honest default is to REFUSE an
+    unequal pair of arms; the 300-pair headline contrast needs no narrowing, and the
+    100-pair MEAS-13 cross-check must ask for it explicitly and have the drop counted.
+    """
+    control.validate()
+    probe.validate()
+    require_comparable_arms(control, probe, allow_cross_corpus=allow_cross_corpus)
+
+    control_pairs = sessions_by_pair(control)
+    probe_pairs = sessions_by_pair(probe)
+    if restrict_to_shared:
+        control_pairs, probe_pairs, dropped = restrict_to_shared_pairs(
+            control_pairs,
+            probe_pairs,
+        )
+        restriction = _SHARED_PAIRS
+    else:
+        dropped = ()
+        restriction = _STRICT
+    # align_on_pair_id runs in BOTH branches. In the narrowed branch it runs over whatever
+    # survived, so the orphan refusal is still live rather than bypassed by the narrowing.
+    aligned_control, aligned_probe = align_on_pair_id(control_pairs, probe_pairs)
+    if not aligned_control:
+        raise PairedContrastError(
+            "a paired contrast requires at least one matched pair; the two arms"
+            f" ({control.label}, {probe.label}) produced none"
+        )
+
+    seed = pair_seed(
+        control.spec.fingerprint,
+        probe.spec.fingerprint,
+        BOOTSTRAP_LABEL,
+    )
+    bootstrap = paired_bootstrap(
+        aligned_control,
+        aligned_probe,
+        seed=seed,
+        resamples=resamples,
+    )
+    result = PairedContrastResult(
+        schema_version=PAIRED_CONTRAST_SCHEMA_VERSION,
+        control_label=control.label,
+        probe_label=probe.label,
+        control_arm=control.arm,
+        probe_arm=probe.arm,
+        control_fingerprint=control.spec.fingerprint,
+        probe_fingerprint=probe.spec.fingerprint,
+        control_dataset_sha256=control.spec.dataset_sha256,
+        probe_dataset_sha256=probe.spec.dataset_sha256,
+        pair_count=len(aligned_control),
+        restriction=restriction,
+        dropped_pair_count=len(dropped),
+        bootstrap=bootstrap,
+        # The BOOTSTRAP SE, per that function's own docstring -- never sd_d/sqrt(n).
+        minimum_detectable_difference=minimum_detectable_difference(
+            bootstrap.standard_error
+        ),
+        mcnemar=mcnemar_from_arms(aligned_control, aligned_probe),
+        scenario_breakout=_scenario_breakout(aligned_control, aligned_probe),
+        corrections_omitted=CORRECTIONS_OMITTED,
+        reading=PAIRED_CONTRAST_READING,
+    )
+    result.validate()
+    return result
+
+
+def render_markdown(payload: dict[str, object]) -> str:
+    """Render the paired-contrast report. Pure function of the payload -- no I/O, no clock."""
+    bootstrap = payload["bootstrap"]
+    mcnemar = payload["mcnemar"]
+    pair_count = payload["pair_count"]
+    dropped = payload["dropped_pair_count"]
+
+    contrast_table = _table(
+        (
+            "Control",
+            "Probe",
+            "pairs",
+            "dropped",
+            "restriction",
+            "delta TechnicalScore",
+            "95% CI",
+            "MDD",
+            "bootstrap sigma",
+            "resamples",
+        ),
+        ("---", "---", "---:", "---:", "---", "---:", "---", "---:", "---:", "---:"),
+        (
+            "| `{control}` | `{probe}` | {pairs} | {dropped} | {restriction} |"
+            " `{delta}` | `[{lower}, {upper}]` | `{mdd}` | `{sigma}` | {resamples} |".format(
+                control=payload["control_label"],
+                probe=payload["probe_label"],
+                pairs=_cell(pair_count),
+                dropped=_cell(dropped),
+                restriction=payload["restriction"],
+                delta=_cell(bootstrap["delta"]),
+                lower=_cell(bootstrap["lower"]),
+                upper=_cell(bootstrap["upper"]),
+                mdd=_cell(payload["minimum_detectable_difference"]),
+                sigma=_cell(bootstrap["standard_error"]),
+                resamples=_cell(bootstrap["resamples"]),
+            ),
+        ),
+    )
+
+    mcnemar_table = _table(
+        (
+            "b (control hit, probe miss)",
+            "c (probe hit, control miss)",
+            "discordant",
+            "observed psi",
+            "delta HR@10",
+            "exact two-sided p",
+        ),
+        ("---:", "---:", "---:", "---:", "---:", "---:"),
+        (
+            "| {b} | {c} | {discordant} | `{psi}` | `{delta}` | `{p_value}` |".format(
+                b=_cell(mcnemar["favouring_control"]),
+                c=_cell(mcnemar["favouring_probe"]),
+                discordant=_cell(mcnemar["discordant"]),
+                psi=_cell(mcnemar["discordance_rate"]),
+                delta=_cell(mcnemar["hit_rate_delta"]),
+                p_value=_cell(mcnemar["p_value"]),
+            ),
+        ),
+    )
+
+    scenario_table = _table(
+        ("Scenario", "pairs", "delta HR@10", "discordant", "binomial sigma"),
+        ("---", "---:", "---:", "---:", "---:"),
+        tuple(
+            "| `{scenario}` | {pairs} | `{delta}` | {discordant} | `{sigma}` |".format(
+                scenario=row["scenario"],
+                pairs=_cell(row["pairs"]),
+                delta=_cell(row["hit_rate_delta"]),
+                discordant=_cell(row["discordant"]),
+                sigma=_cell(row["binomial_standard_error"]),
+            )
+            for row in payload["scenario_breakout"]
+        ),
+    )
+
+    sections = [
+        "# Paired Contrast\n",
+        payload["reading"],
+    ]
+    if dropped:
+        # Stated in WORDS as well as in the cell. A reader who sees only "100" in a table
+        # cannot tell the retained n from the corpus n, and those support different
+        # claims (MEAS-06).
+        sections.append(
+            f"**{pair_count} of {pair_count + dropped} matched pairs.**"
+            f" {dropped} pairs carry no `{payload['probe_arm']}` arm by D-40's design"
+            " and were dropped by an explicit shared-pair restriction. The retained n"
+            f" is {pair_count}; it is not the size of the corpus.\n"
+        )
+    if {payload["control_arm"], payload["probe_arm"]} == _GENERATOR_ARMS:
+        sections.append(_ANTHROPIC_FAMILY_LIMITATION + "\n")
+    sections.extend(
+        [
+            "## Contrast\n",
+            contrast_table,
+            "## McNemar\n",
+            mcnemar_table,
+            "## Per-scenario, descriptive\n",
+            _SCENARIO_CAVEAT + "\n",
+            scenario_table,
+            "Corrections omitted: "
+            + ", ".join(f"`{name}`" for name in payload["corrections_omitted"])
+            + ". Neither is a bug or an oversight: there is one candidate and no"
+            " selection, so there is no family to correct and no maximum of k to"
+            " debias (D-44).\n",
+        ]
+    )
+    return "\n".join(sections)
+
+
+def write_paired_contrast(
+    payload: dict[str, object],
+    *,
+    json_path: Path = CONTRAST_JSON_PATH,
+    markdown_path: Path = CONTRAST_MARKDOWN_PATH,
+) -> tuple[Path, Path]:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(json_path, payload)
+    markdown_path.write_text(render_markdown(payload), encoding="utf-8")
+    return (json_path, markdown_path)
