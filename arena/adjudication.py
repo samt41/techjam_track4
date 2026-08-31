@@ -34,15 +34,23 @@ SIGNIFICANCE_ALPHA = 0.05
 # only when the MRR gain exceeds 0.0667 x the MAGNITUDE of the MTTC movement it was
 # traded for.
 #
-# "Gain" and "magnitude" are both load-bearing words, and the criterion originally
-# honoured neither. mttc_delta = candidate_mttc - baseline_mttc, so an MTTC
-# IMPROVEMENT is NEGATIVE; multiplying the un-absoluted delta by the rate put the bar
-# below zero, and the comparison then read "MRR above some negative number" -- which a
-# negative mrr_delta satisfies. Measured against the pre-fix code: a candidate that
-# regressed HR@10 by 0.030 AND MRR by 0.010 while improving MTTC by 4.11 turns was
-# adjudicated verdict = win with an EMPTY failed_criteria. At that MTTC movement the
-# bar sat at -0.274, licensing an MRR regression larger than this project's entire MRR
-# headroom.
+# "Magnitude" is the load-bearing word, and the criterion originally omitted it.
+# mttc_delta = candidate_mttc - baseline_mttc, so an MTTC IMPROVEMENT is NEGATIVE;
+# multiplying the un-absoluted delta by the rate put the bar below zero, and the
+# comparison then read "MRR above some negative number" -- which a negative mrr_delta
+# satisfies. Measured against the pre-fix code: a candidate that regressed HR@10 by
+# 0.030 AND MRR by 0.010 while improving MTTC by 4.11 turns was adjudicated
+# verdict = win with an EMPTY failed_criteria. At that MTTC movement the bar sat at
+# -0.274, licensing an MRR regression larger than this project's entire MRR headroom.
+#
+# The `mrr_delta > 0.0` clause below is, given abs(), LOGICALLY REDUNDANT and is kept
+# deliberately: the bar 0.0667 * abs(mttc_delta) is non-negative, so clearing it already
+# implies a positive gain. Mutation-tested -- deleting that clause fails no test, while
+# deleting the abs() fails
+# test_an_mrr_gain_below_the_magnitude_bar_does_not_buy_an_hr10_regression. It stays
+# because it states the INTENT ("there must be a gain to spend") independently of the
+# sign convention of mttc_delta, so a future change to how the bar is computed cannot
+# silently reintroduce forgiveness on a regression. Do not read it as a second guard.
 #
 # mttc_delta < 0 is not an edge case: it is the DESIGNED direction of improvement for
 # the whole Phase 3 CONV workstream, so the vacuous form was the main path. CONV-03 and
@@ -355,10 +363,11 @@ def adjudicate(
         clears_practical_floor = corrected_delta >= PRACTICAL_FLOOR
         # D-23: an HR@10 regression is disqualifying unless the exchange-rate math
         # clears. No regression means nothing to trade, so the check passes.
-        # The second clause requires a REAL MRR gain, and the third compares it
-        # against the MAGNITUDE of the MTTC movement; neither substitutes for the
-        # other, and dropping either one restores the vacuous form documented above
-        # the constant.
+        # The third clause -- comparing against the MAGNITUDE of the MTTC movement --
+        # is the one that does the work; dropping abs() restores the vacuous form
+        # documented above the constant. The `mrr_delta > 0.0` clause is redundant
+        # given that, and is retained as an explicit statement of intent; see the
+        # comment above EXCHANGE_RATE_PER_MTTC.
         exchange_rate_ok = hit_rate_delta >= 0.0 or (
             mrr_delta > 0.0 and mrr_delta > EXCHANGE_RATE_PER_MTTC * abs(mttc_delta)
         )

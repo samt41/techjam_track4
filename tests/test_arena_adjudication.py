@@ -20,6 +20,7 @@ from arena.adjudication import (
     classify_verdict,
 )
 from arena.candidate import CandidateSpec
+from arena.metrics import SessionOutcome
 from arena.statistics import expected_max_of_k, holm_bonferroni, pair_seed
 from tests.arena_fixtures import (
     load_anchor_sessions,
@@ -96,6 +97,92 @@ _TRADE_PAID = sessions_from_ranks((None, None) + (1,) * 8 + (2,) * 90)
 # MDD of ~0.00036, so the null here is uninformative rather than evidence of equivalence.
 _NEAR_NULL_BASELINE = sessions_from_ranks((4,) * 200)
 _NEAR_NULL_CANDIDATE = sessions_from_ranks((3,) + (4,) * 199)
+
+# A hundred sessions at rank 3 reached on turn 8. HR@10 1.00, MRR 0.333333, MTTC 8.00.
+# The eight turns of MTTC headroom are what make an MTTC IMPROVEMENT expressible at all:
+# every pre-existing _TRADE_* fixture adds misses without pulling anything forward, so
+# all of them have mttc_delta > 0 and none of them can reach the sign-inverted half of
+# the D-23 branch.
+_MTTC_TRADE_BASELINE = sessions_from_ranks((3,) * 100, turn=8)
+
+# 01-VERIFICATION.md's executed CR-02 reproducer, reconstructed to its measured values:
+# hit_rate_delta -0.03, mrr_delta -0.01, mttc_delta -4.11. Three sessions become misses
+# (HR@10 and MRR both regress) and sixty survivors are pulled forward to turn 1, so the
+# candidate is worse on BOTH headline retrieval metrics while looking four turns faster.
+_MTTC_TRADE_DOUBLE_REGRESSION = tuple(
+    dataclasses.replace(
+        item,
+        hit=False,
+        best_rank=None,
+        first_hit_turn=None,
+        reciprocal_rank=0.0,
+    )
+    if index < 3
+    else dataclasses.replace(
+        item,
+        first_hit_turn=1 if index < 63 else item.first_hit_turn,
+    )
+    for index, item in enumerate(_MTTC_TRADE_BASELINE)
+)
+
+
+def _traded(promoted: int, pulled_forward: int) -> tuple[SessionOutcome, ...]:
+    """One miss bought back with `promoted` rank-1 lifts and `pulled_forward` turn-1 hits.
+
+    Built with dataclasses.replace OVER _MTTC_TRADE_BASELINE rather than from a fresh
+    sessions_from_ranks call: a fresh call restarts the s000 numbering, and
+    _require_paired would then refuse the comparison.
+    """
+    traded: list[SessionOutcome] = []
+    for index, item in enumerate(_MTTC_TRADE_BASELINE):
+        if index == 0:
+            # Session 0 is always the miss, so every candidate from this factory carries
+            # the same -0.01 HR@10 regression and the same 11-turn MTTC penalty on it.
+            traded.append(
+                dataclasses.replace(
+                    item,
+                    hit=False,
+                    best_rank=None,
+                    first_hit_turn=None,
+                    reciprocal_rank=0.0,
+                )
+            )
+            continue
+        best_rank = 1 if index <= promoted else item.best_rank
+        traded.append(
+            dataclasses.replace(
+                item,
+                best_rank=best_rank,
+                reciprocal_rank=1.0 / best_rank,
+                first_hit_turn=1 if index <= pulled_forward else item.first_hit_turn,
+            )
+        )
+    return tuple(traded)
+
+
+# Five sessions pulled to turn 1 give mttc_delta -0.32, so the magnitude bar sits at
+# 0.0667 * 0.32 = 0.021344 for both fixtures below. Only the MRR side differs.
+#
+# Two rank-1 lifts: mrr_delta +0.010000, BELOW the bar -- so the trade is underpaid and
+# the HR@10 regression is not forgiven. This is the fixture that proves abs() is
+# load-bearing: without it the bar is -0.021344 and a +0.010000 gain sails over it.
+_MTTC_TRADE_UNDERPAID_GAIN = _traded(promoted=2, pulled_forward=5)
+# Six rank-1 lifts: mrr_delta +0.036667, ABOVE the same bar -- the mirror, confirming
+# the criterion still forgives a genuinely paid-for trade rather than having been
+# switched off in the other direction.
+_MTTC_TRADE_PAID_GAIN = _traded(promoted=6, pulled_forward=5)
+
+# 01-VERIFICATION.md's executed CR-01 reproducer. A uniform rank-2 -> rank-1 promotion:
+# HR@10 and MTTC are invariant under a rank move, so delta is exactly 0.30 * 0.5 = 0.15
+# up to TechnicalScore's 6-dp rounding, and the bootstrap SE is exactly 0.0 because the
+# delta does not depend on WHICH sessions are resampled. Zero SE on a real +0.15 effect
+# is the whole point: SE alone never meant "degenerate".
+_UNIFORM_BASELINE = sessions_from_ranks((2,) * 200)
+_UNIFORM_PROMOTED = sessions_from_ranks((1,) * 200)
+
+# The same zero-SE-on-a-real-effect shape at fifty sessions, so it can be adjudicated in
+# one family alongside _WIN_CANDIDATE and a clone of the baseline.
+_WIN_UNIFORM_PROMOTED = sessions_from_ranks((1,) * 50)
 
 
 class OrderingTest(unittest.TestCase):
@@ -264,6 +351,184 @@ class WinRuleTest(unittest.TestCase):
             row.failed_criteria,
             tuple(name for name in CRITERION_ORDER if name in set(row.failed_criteria)),
         )
+
+
+class ExchangeRateSignTest(unittest.TestCase):
+    """D-23 in the direction Phase 3 actually moves: an MTTC IMPROVEMENT, mttc_delta < 0.
+
+    mttc_delta = candidate_mttc - baseline_mttc, so getting faster makes it negative and
+    the un-absoluted `EXCHANGE_RATE_PER_MTTC * mttc_delta` bar drops below zero. Every
+    pre-existing exchange-rate fixture has mttc_delta > 0, which is why this half of the
+    branch had no coverage and shipped vacuous.
+    """
+
+    def test_double_regression_with_an_mttc_gain_is_not_a_win(self) -> None:
+        # 01-VERIFICATION.md's executed CR-02 reproducer, inverted into a test. Against
+        # the checked-in pre-fix code this exact input was adjudicated `verdict = win`
+        # with `failed_criteria = ()`, while regressing BOTH headline retrieval metrics.
+        row = adjudicate(
+            arm("baseline", _MTTC_TRADE_BASELINE),
+            (arm("double-regression", _MTTC_TRADE_DOUBLE_REGRESSION),),
+            resamples=FAST_RESAMPLES,
+        )[0]
+        # Non-vacuity first: a mis-calibrated fixture must not be able to pass this test
+        # by failing the criterion for some unrelated reason.
+        self.assertAlmostEqual(row.hit_rate_delta, -0.03, places=6)
+        self.assertAlmostEqual(row.mrr_delta, -0.01, places=6)
+        self.assertAlmostEqual(row.mttc_delta, -4.11, places=6)
+        self.assertIs(row.exchange_rate_ok, False)
+        self.assertIn("hr10_exchange_rate", row.failed_criteria)
+        self.assertIsNot(row.verdict, Verdict.WIN)
+
+    def test_an_mrr_gain_below_the_magnitude_bar_does_not_buy_an_hr10_regression(
+        self,
+    ) -> None:
+        # The SOLE mutation guard for `abs(` -- verified by executing that mutation,
+        # which fails this test and no other. This candidate's mrr_delta is genuinely
+        # POSITIVE, so the `mrr_delta > 0.0` clause cannot rescue the assertion: the only
+        # thing standing between +0.010000 and a forgiven HR@10 regression is comparing
+        # against the MAGNITUDE of a -0.32 MTTC movement rather than its signed value.
+        # The double-regression test above does NOT cover this mutation: its mrr_delta is
+        # -0.01, which fails the magnitude comparison whether or not abs() is present.
+        row = adjudicate(
+            arm("baseline", _MTTC_TRADE_BASELINE),
+            (arm("underpaid-gain", _MTTC_TRADE_UNDERPAID_GAIN),),
+            resamples=FAST_RESAMPLES,
+        )[0]
+        self.assertLess(row.hit_rate_delta, 0.0)
+        self.assertLess(row.mttc_delta, 0.0)
+        self.assertGreater(row.mrr_delta, 0.0)
+        self.assertLess(row.mrr_delta, EXCHANGE_RATE_PER_MTTC * abs(row.mttc_delta))
+        self.assertIs(row.exchange_rate_ok, False)
+        self.assertIn("hr10_exchange_rate", row.failed_criteria)
+
+    def test_an_mrr_gain_above_the_magnitude_bar_does_buy_an_hr10_regression(
+        self,
+    ) -> None:
+        # The mirror. D-23 was repaired, not disabled: a trade that actually pays the
+        # magnitude-scaled price is still forgiven.
+        row = adjudicate(
+            arm("baseline", _MTTC_TRADE_BASELINE),
+            (arm("paid-gain", _MTTC_TRADE_PAID_GAIN),),
+            resamples=FAST_RESAMPLES,
+        )[0]
+        self.assertLess(row.hit_rate_delta, 0.0)
+        self.assertLess(row.mttc_delta, 0.0)
+        self.assertGreater(row.mrr_delta, 0.0)
+        self.assertGreater(row.mrr_delta, EXCHANGE_RATE_PER_MTTC * abs(row.mttc_delta))
+        self.assertIs(row.exchange_rate_ok, True)
+        self.assertNotIn("hr10_exchange_rate", row.failed_criteria)
+
+
+class ZeroVarianceTest(unittest.TestCase):
+    """A zero bootstrap SE is not the same fact as a zero delta, and only one is degenerate."""
+
+    def test_uniform_improvement_is_not_reported_as_no_difference(self) -> None:
+        # 01-VERIFICATION.md's executed CR-01 reproducer, inverted into a test. Against
+        # the pre-fix code this +0.15 delta -- fifteen times the ship floor -- was
+        # reported `no difference`, on a permutation_p asserted as 1.0 rather than
+        # measured, beside a `clears_practical_floor = False` that contradicted the
+        # `corrected_delta = 0.15` printed on the same row.
+        row = adjudicate(
+            arm("base", _UNIFORM_BASELINE),
+            (arm("promoted", _UNIFORM_PROMOTED),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertAlmostEqual(row.delta, 0.15, places=9)
+        self.assertEqual(row.standard_error, 0.0)
+        # Zero SE, non-zero delta: real, and never degenerate.
+        self.assertIs(row.is_degenerate, False)
+        # Every sign flip that moves any session changes the statistic, so the count of
+        # at-least-as-extreme resamples is zero and the measured p lands exactly on the
+        # Phipson-Smyth floor.
+        self.assertEqual(row.permutation_p, 1.0 / (STABLE_RESAMPLES + 1))
+        self.assertIs(row.clears_practical_floor, True)
+        self.assertEqual(row.failed_criteria, ())
+        self.assertIs(row.verdict, Verdict.WIN)
+        self.assertIsNot(row.verdict, Verdict.NO_DIFFERENCE)
+
+    def test_identical_arms_remain_no_difference_on_measured_statistics(self) -> None:
+        # The truth-8 REGRESSION GUARD, not a re-derivation: the answer is unchanged,
+        # but every value below is now produced by the general path instead of being
+        # asserted by a branch. Deleting that branch must not have moved any of them.
+        row = adjudicate(
+            arm("base", _WIN_BASELINE),
+            (arm("clone", _WIN_BASELINE),),
+            resamples=STABLE_RESAMPLES,
+        )[0]
+        self.assertIs(row.is_degenerate, True)
+        self.assertEqual(row.delta, 0.0)
+        self.assertEqual(row.standard_error, 0.0)
+        self.assertEqual(row.permutation_p, 1.0)
+        self.assertEqual(row.holm_p, 1.0)
+        self.assertEqual(row.minimum_detectable_difference, 0.0)
+        self.assertEqual(row.corrected_delta, 0.0)
+        self.assertIs(row.clears_practical_floor, False)
+        self.assertIs(row.exchange_rate_ok, True)
+        self.assertEqual(row.failed_criteria, ("holm_significance", "practical_floor"))
+        self.assertIs(row.verdict, Verdict.NO_DIFFERENCE)
+        self.assertIsNot(row.verdict, Verdict.WIN)
+
+    def test_degenerate_arms_stay_in_the_holm_family_and_correction_k(self) -> None:
+        # Pins the WR-05 decision. The family and k are properties of the experimental
+        # DESIGN, so dropping an arm after seeing that it turned out degenerate would be
+        # a data-dependent family definition. Concretely, it would take k from 2 to 1,
+        # expected_max_of_k(1) is 0.0, and the D-20 floor-ordering tripwire would then
+        # pass on the raw delta.
+        rows = adjudicate(
+            arm("base", _WIN_BASELINE),
+            (
+                arm("strong", _WIN_CANDIDATE),
+                arm("clone", _WIN_BASELINE),
+            ),
+            resamples=STABLE_RESAMPLES,
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertIs(rows[0].is_degenerate, False)
+        self.assertIs(rows[1].is_degenerate, True)
+        for row in rows:
+            self.assertEqual(row.candidate_count, 2)
+            self.assertEqual(row.correction_k, 2)
+            self.assertEqual(row.expected_max_of_k, expected_max_of_k(2))
+        # The degenerate arm's 1.0 is a MEASURED member of the family, so Holm over the
+        # rows' own permutation_p column must reproduce the rows' own holm_p column.
+        adjusted = holm_bonferroni(tuple(row.permutation_p for row in rows))
+        for row, expected in zip(rows, adjusted):
+            self.assertEqual(row.holm_p, expected)
+
+    def test_no_row_field_is_a_fabricated_constant(self) -> None:
+        # Three shapes in one family: a real effect, an exactly-uniform effect (zero SE,
+        # non-zero delta) and an identical arm (zero SE, zero delta). Each identity below
+        # re-derives a printed column from other printed columns on the SAME row. Before
+        # this plan the degenerate row failed the third one, printing
+        # clears_practical_floor = False beside a corrected_delta of 0.15.
+        rows = adjudicate(
+            arm("base", _WIN_BASELINE),
+            (
+                arm("strong", _WIN_CANDIDATE),
+                arm("uniform", _WIN_UNIFORM_PROMOTED),
+                arm("clone", _WIN_BASELINE),
+            ),
+            resamples=FAST_RESAMPLES,
+        )
+        self.assertEqual(len(rows), 3)
+        # Non-vacuity: the family really does contain a degenerate arm.
+        self.assertTrue(any(row.is_degenerate for row in rows))
+        self.assertTrue(any(not row.is_degenerate for row in rows))
+        for row in rows:
+            self.assertEqual(
+                row.minimum_detectable_difference,
+                arena.statistics.minimum_detectable_difference(row.standard_error),
+            )
+            self.assertAlmostEqual(
+                row.corrected_delta,
+                row.delta - row.standard_error * row.expected_max_of_k,
+                places=12,
+            )
+            self.assertEqual(
+                row.clears_practical_floor,
+                row.corrected_delta >= PRACTICAL_FLOOR,
+            )
 
 
 class VerdictRuleTest(unittest.TestCase):
