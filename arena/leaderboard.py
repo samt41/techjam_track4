@@ -37,6 +37,21 @@ LEADERBOARD_SCHEMA_VERSION = 1
 LEADERBOARD_JSON_PATH = BASELINES_ROOT / "leaderboard.json"
 LEADERBOARD_MARKDOWN_PATH = Path("experiments/LEADERBOARD.md")
 
+CORPUS_BASELINES_SCHEMA_VERSION = 1
+
+# D-53. Both destinations are pinned OUTSIDE the paths .gitignore excludes, and the
+# choice is load-bearing rather than tidy. `.gitignore` line 9 excludes
+# `experiments/*/` -- every DIRECTORY under experiments/ -- while line 15 re-includes
+# `experiments/baselines/`. So the JSON is committed because it sits in the one
+# re-included directory, and the Markdown is committed because it sits at the top level
+# of experiments/ beside LEADERBOARD.md rather than in a subdirectory of its own.
+# L-13: a generated artifact placed anywhere else under experiments/ is silently
+# gitignored, which would make D-04/D-43's "frozen means committed" quietly false --
+# the file would exist on the machine that generated it and nowhere else, and a reader
+# checking the repository would find a report the prose cites but git does not carry.
+CORPUS_BASELINES_JSON_PATH = BASELINES_ROOT / "corpus_baselines.json"
+CORPUS_BASELINES_MARKDOWN_PATH = Path("experiments/CORPUS_BASELINES.md")
+
 # Enough to identify a candidate by eye in a table cell; the full digest is always
 # present in the JSON, so nothing is lost by truncating the DISPLAY column only.
 _FINGERPRINT_DISPLAY_LENGTH = 12
@@ -182,6 +197,37 @@ are the same number, correctly reported.
 zero; its smallest attainable value is `1 / (resamples + 1)`. A row printed at that
 value sits at the resolution limit of the resample count and must not be read as
 `p = 0`.
+"""
+
+# D-53. Carried in the payload rather than only in the rendered view, so a reader who
+# opens the JSON gets the caveat too. Every claim below is the record's own words about
+# what these rows are and what was deliberately NOT computed for them.
+CORPUS_BASELINES_READING = """\
+These rows are ONE candidate measured across FOUR corpora -- `public`,
+`expanded_dev.v1`, `expanded_confirm.v1` and `probe.v1` -- and NOT four candidates
+measured against one corpus. Every row names the dataset it was measured against for
+exactly that reason (D-45).
+
+They are therefore not comparable to one another as candidates. A different corpus is a
+different `dataset_sha256`, and `arena.adjudication.adjudicate` refuses two arms whose
+`dataset_sha256` disagree, by design. That refusal is why these rows live in their own
+file and never in `experiments/LEADERBOARD.md`, whose entire premise is a same-corpus
+comparison. They are not routed through `--include` either: a report-only row still
+lands in the leaderboard's candidate table, which is the misreading this file exists to
+prevent (D-53).
+
+No Holm-Bonferroni family and no winner's-curse order-statistic correction is applied to
+anything below, and both omissions are deliberate rather than overlooked. Each
+correction is a property of SELECTING among competing candidates against a common
+baseline (D-19, D-21). Nothing here is selected, tested against a baseline, or declared
+a champion: there is one candidate and no hypothesis, so there is no family to correct
+and no maximum of k to debias.
+
+`corpus_count` is emitted in the payload so the number of corpora is answered by the
+record itself rather than by counting table lines. It is four. D-45 and D-48 both say
+"five"; that wording predates D-46, which consolidated the probe's three arms
+(`control`, `probe_sonnet`, `probe_haiku`) into a single `data/probe.v1.jsonl`, and
+D-58 corrects the count to four.
 """
 
 
@@ -708,4 +754,219 @@ def write_leaderboard(
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(json_path, payload)
     markdown_path.write_text(render_markdown(payload), encoding="utf-8")
+    return (json_path, markdown_path)
+
+
+def build_corpus_baselines(
+    rows: tuple[tuple[str, CandidateEntry], ...],
+) -> dict[str, object]:
+    """The D-53 payload: ONE candidate measured across the four Phase 2 corpora.
+
+    Deliberately not a leaderboard. `build_leaderboard` compares candidates that
+    share a corpus; this compares corpora that share a candidate, so the two
+    payloads carry disjoint identity keys (`baseline_fingerprint` and
+    `adjudication` appear only in the leaderboard) and neither can be rendered by
+    the other's renderer. That structural separation is the mitigation, because a
+    reader who sees four different-corpus rows inside a same-corpus table has no
+    way to tell from the table itself that the comparison is meaningless.
+    """
+    if not rows:
+        # Refused rather than rendered as an empty table. An empty corpus-baselines
+        # report is never a legitimate artifact -- its entire claim is "one candidate,
+        # measured here, here, here and here" -- and a header with a `_none_` body
+        # would publish that claim with no evidence behind it. `_table`'s fallback is
+        # correct for an adjudication section that legitimately adjudicated nothing;
+        # it is not correct for the only section this file has.
+        raise ArenaStoreError("corpus baselines require at least one corpus row")
+
+    dataset_names = [dataset_name for dataset_name, _ in rows]
+    duplicate_names = sorted(
+        name for name in set(dataset_names) if dataset_names.count(name) > 1
+    )
+    if duplicate_names:
+        raise ArenaStoreError(
+            "corpus baselines must have unique dataset names:"
+            f" {', '.join(duplicate_names)}"
+        )
+
+    fingerprints = [entry.fingerprint for _, entry in rows]
+    duplicate_fingerprints = sorted(
+        fingerprint
+        for fingerprint in set(fingerprints)
+        if fingerprints.count(fingerprint) > 1
+    )
+    if duplicate_fingerprints:
+        displayed = ", ".join(
+            _display_fingerprint(fingerprint) for fingerprint in duplicate_fingerprints
+        )
+        raise ArenaStoreError(
+            f"corpus baselines must have unique fingerprints: {displayed}"
+        )
+
+    # The premise of this table is exactly one candidate across many corpora. A second
+    # candidate name arriving here is the D-45 misreading coming in through a different
+    # door: the rows would then differ in BOTH the corpus and the configuration, so no
+    # row could be attributed to either.
+    names = sorted({entry.name for _, entry in rows})
+    if len(names) != 1:
+        raise ArenaStoreError(
+            f"corpus baselines must describe one candidate; found: {', '.join(names)}"
+        )
+
+    # Explicit sort, never the caller's insertion order -- the same discipline
+    # build_leaderboard applies to its candidate table. `dataset_name` is unique by the
+    # refusal above, so it is a total order and needs no further tie-break.
+    ordered = sorted(rows, key=lambda item: item[0])
+
+    corpora: list[dict[str, object]] = []
+    for dataset_name, entry in ordered:
+        summary = metric_summary(entry.sessions)
+        corpora.append(
+            {
+                # First key by intent: a row that does not say which corpus produced it
+                # is the exact artifact D-45 exists to prevent.
+                "dataset_name": dataset_name,
+                "run_id": entry.run_id,
+                "name": entry.name,
+                "fingerprint": entry.fingerprint,
+                "code_revision": entry.code_revision,
+                "code_revision_dirty": entry.code_revision_dirty,
+                "overrides": dict(entry.overrides),
+                "provenance": entry.provenance,
+                "sample_count": summary.sample_count,
+                "hit_rate_at_10": summary.hit_rate_at_10,
+                "mrr": summary.mrr,
+                "mttc": summary.mttc,
+                # Rounded here for the same reason build_leaderboard rounds it: this is
+                # an output boundary and arena.metrics.efficiency deliberately returns
+                # the unrounded term that feeds TechnicalScore (T-01-16c).
+                "efficiency": round(efficiency(summary), 6),
+                "technical_score": technical_score(summary),
+                "scenario_breakout": [
+                    {
+                        **scenario.as_record(),
+                        "technical_score": technical_score(scenario.summary),
+                    }
+                    for scenario in scenario_breakout(entry.sessions)
+                ],
+            }
+        )
+
+    return {
+        "schema_version": CORPUS_BASELINES_SCHEMA_VERSION,
+        # Singular, and at the top level: the whole table is one candidate, so naming it
+        # per row would invite reading the rows as four different arms.
+        "candidate_name": names[0],
+        # Emitted so the four-versus-five question is answered by the payload rather
+        # than by counting rendered table lines (D-58).
+        "corpus_count": len(ordered),
+        "reading": CORPUS_BASELINES_READING,
+        "corpora": corpora,
+    }
+
+
+def render_corpus_baselines_markdown(payload: dict[str, object]) -> str:
+    """Render the corpus-baselines report. Pure function of the payload -- no I/O, no clock."""
+    corpora = payload["corpora"]
+
+    corpus_rows = tuple(
+        "| `{dataset}` | `{run_id}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{efficiency}` | `{technical_score}` |".format(
+            dataset=item["dataset_name"],
+            run_id=item["run_id"],
+            count=item["sample_count"],
+            hit_rate=_cell(item["hit_rate_at_10"]),
+            mrr=_cell(item["mrr"]),
+            mttc=_cell(item["mttc"]),
+            efficiency=_cell(item["efficiency"]),
+            technical_score=_cell(item["technical_score"]),
+        )
+        for item in corpora
+    )
+    corpus_table = _table(
+        ("Corpus", "Run", "n", "HR@10", "MRR", "MTTC", "Efficiency", "TechnicalScore"),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:"),
+        corpus_rows,
+    )
+
+    # Deliberately the leaderboard's own per-scenario columns, in the leaderboard's own
+    # order, with only the leading identity column changed from Candidate to Corpus. A
+    # reader moving between the two reports should not have to relearn the table.
+    scenario_rows = tuple(
+        "| `{dataset}` | `{scenario}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{technical_score}` | `{sigma}` | {grade} |".format(
+            dataset=item["dataset_name"],
+            scenario=scenario["scenario_type"],
+            count=scenario["sample_count"],
+            hit_rate=_cell(scenario["hit_rate_at_10"]),
+            mrr=_cell(scenario["mrr"]),
+            mttc=_cell(scenario["mttc"]),
+            technical_score=_cell(scenario["technical_score"]),
+            sigma=_cell(scenario["binomial_standard_error"]),
+            grade=_cell(scenario["decision_grade"]),
+        )
+        for item in corpora
+        for scenario in item["scenario_breakout"]
+    )
+    scenario_table = _table(
+        (
+            "Corpus",
+            "Scenario",
+            "n",
+            "HR@10",
+            "MRR",
+            "MTTC",
+            "TechnicalScore",
+            "binomial sigma",
+            "Decision-grade?",
+        ),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---"),
+        scenario_rows,
+    )
+
+    return (
+        "# Corpus Baselines\n"
+        "\n"
+        "> **Generated file -- never hand-edit.**\n"
+        "> `experiments/baselines/corpus_baselines.json` is the source of truth; this\n"
+        "> Markdown is a view rendered from it by `arena/leaderboard.py`. Regenerate\n"
+        "> both rather than editing this file.\n"
+        "\n"
+        f"- Schema version: `{payload['schema_version']}`\n"
+        f"- Candidate: `{payload['candidate_name']}`\n"
+        f"- Corpora measured: `{payload['corpus_count']}`\n"
+        "\n"
+        "## How to read this report\n"
+        "\n"
+        f"{payload['reading']}"
+        "\n"
+        "## Per-corpus baseline\n"
+        "\n"
+        "One candidate, one row per corpus, ordered by corpus name. These rows are not\n"
+        "a ranking and must not be read as one.\n"
+        "\n"
+        f"{corpus_table}"
+        "\n"
+        "## Per-scenario breakout\n"
+        "\n"
+        "Each sigma is the bucket's own binomial standard error, unrounded. A row that\n"
+        "is not decision-grade cannot resolve a one-session swing from noise on its own.\n"
+        "\n"
+        f"{scenario_table}"
+        "\n"
+        "Compare this report with `experiments/LEADERBOARD.md`, which is the\n"
+        "same-corpus candidate comparison these rows are deliberately kept out of.\n"
+    )
+
+
+def write_corpus_baselines(
+    payload: dict[str, object],
+    *,
+    json_path: Path = CORPUS_BASELINES_JSON_PATH,
+    markdown_path: Path = CORPUS_BASELINES_MARKDOWN_PATH,
+) -> tuple[Path, Path]:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(json_path, payload)
+    markdown_path.write_text(render_corpus_baselines_markdown(payload), encoding="utf-8")
     return (json_path, markdown_path)
