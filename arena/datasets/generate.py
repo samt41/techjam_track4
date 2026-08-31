@@ -21,12 +21,33 @@ Two asymmetries are deliberate and are the easiest things in the phase to
 
 from __future__ import annotations
 
+import json
 import random
+from dataclasses import dataclass
 from pathlib import Path
 
+from arena.datasets.authoring import (
+    AUTHORING_ATTEMPT_CAP,
+    AuthoringRequest,
+    AuthoringRunner,
+    ReviewPayload,
+    attempt_until,
+    load_prompt,
+    log_record,
+)
+from arena.datasets.divergence import (
+    DivergenceRecord,
+    DivergenceReport,
+    contradicts,
+    measure,
+    preserves_bucket,
+    record_from_report,
+)
+from arena.datasets.gist import GistVocabulary, gist_for_target, prompt_payload_strings
 from arena.datasets.schema import (
     CATEGORY_BUCKET,
     DIFFICULTY_BY_SCENARIO,
+    MAX_CONSTRAINT_LENGTH,
     SCENARIO_MIX_TARGET,
     Behavior,
     IntentCard,
@@ -35,8 +56,9 @@ from arena.datasets.schema import (
     SampleRow,
     load_corpus,
 )
-from arena.evaluator_bridge import intent_card
+from arena.evaluator_bridge import classify_constraint, intent_card
 from arena.statistics import pair_seed
+from starter.shopping_agent.text_normalization import search_terms
 
 
 # The `pair_seed` labels. Each derived quantity gets its own stream so that two
@@ -99,6 +121,84 @@ _SUMMARY_TEMPLATE = "Prior purchases emphasize {tags}; ratings are {style}."
 # Four digits of zero padding bound the index, so an index that would need five
 # is refused rather than silently widened.
 _MAX_PAIR_INDEX = 9999
+
+# The two card slots an authored constraint can occupy, and their one-character
+# codes. The code keeps an item id short and, more importantly, keeps the
+# `parent_asin` OUT of it: an item id is echoed back by the authoring model, so
+# putting the target's catalog identifier there would hand the author the one
+# thing D-32 withholds. An id is built from `pair_id`, which names a position in
+# a corpus and nothing about the product.
+_SLOTS = ("hard_constraints", "soft_preferences")
+_SLOT_CODES = (("hard_constraints", "h"), ("soft_preferences", "s"))
+
+# `classify_constraint` buckets that a gist attribute can name directly. Every
+# other gist attribute -- including the D-52 abstract compounds such as
+# `ground_contact` -- lands in the residual `feature` bucket, which is where the
+# harness routes anything carrying none of its six keyword clauses.
+_STRUCTURED_GIST_BUCKETS = ("color", "material", "size", "style")
+
+_REVIEW_PROMPT_NAME = "review_faithfulness.md"
+
+# The only verdict that admits a phrase. `drifted` and `wrong` are both
+# rejections; they are distinguished in the reason string so a failing item's
+# log says which way the phrase went.
+_FAITHFUL_VERDICT = "faithful"
+
+# Batch sizes. Authoring is 20 because a rejected batch is re-authored whole, and
+# review is 40 because a review item is three short fields and its call is
+# cheaper per item. Batching many REVIEW items into one call is a throughput
+# choice and is fine; batching an author step and its own review into one call is
+# not, and D-35 forbids it -- see `author_arm`.
+_AUTHOR_BATCH_SIZE = 20
+_REVIEW_BATCH_SIZE = 40
+
+# Inline JSON, never a path: `build_argv` refuses a path because a Windows drive
+# letter parses as a JSON identifier (authoring.py:262-266).
+_AUTHOR_SCHEMA_JSON = json.dumps(
+    {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "phrase": {"type": "string"},
+            },
+            "required": ["id", "phrase"],
+            "additionalProperties": False,
+        },
+    },
+    sort_keys=True,
+    separators=(",", ":"),
+)
+
+_REVIEW_SCHEMA_JSON = json.dumps(
+    {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "verdict": {"enum": ["drifted", "faithful", "wrong"]},
+            },
+            "required": ["id", "verdict"],
+            "additionalProperties": False,
+        },
+    },
+    sort_keys=True,
+    separators=(",", ":"),
+)
+
+# A corpus whose name begins with this stem is a probe corpus, and the
+# solvability check is refused for it. Matched on the name rather than on a flag
+# a caller could forget to pass.
+_PROBE_CORPUS_PREFIX = "probe"
+
+# Bounds for the expanded-corpus solvability probe. The limit is 200 rather than
+# the scored TOP_K of 10 because the question is "can retrieval reach this target
+# at all", not "does it rank"; a target outside 200 exact-FTS hits is one no
+# candidate is going to recover from wording alone.
+_SOLVABILITY_LIMIT = 200
+_SOLVABILITY_WORK_LIMIT = 1_000_000
 
 
 class GenerateError(RuntimeError):
@@ -417,3 +517,537 @@ def build_row(
     # arena/arena.py:110-113 documents. `SampleRow.__init__` does not validate.
     row.validate()
     return row
+
+
+@dataclass(frozen=True, slots=True)
+class PairTarget:
+    """One pair: its id, its target, and the control card both arms are built on."""
+
+    pair_id: str
+    target: str
+    scenario_type: str
+    card: IntentCard
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintSlot:
+    """One authorable position: which control constraint, and which gist pair."""
+
+    pair_id: str
+    target: str
+    slot: str
+    position: int
+    control_phrase: str
+    bucket: str
+    gist_attribute: str
+    gist_value: str
+    gist_payload: str
+
+    def item_id(self) -> str:
+        return f"{self.pair_id}:{dict(_SLOT_CODES)[self.slot]}{self.position}"
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredConstraint:
+    """An accepted phrase together with the measurement that accepted it."""
+
+    # The DivergenceReport travels WITH the phrase rather than being recomputed
+    # later. Roadmap SC3 asks for a measured overlap ratio reported for every
+    # pair, and a ratio computed inside the gate loop and then dropped on the
+    # floor is not reported -- it is merely checked. Retaining it here is what
+    # lets `divergence_records` emit a committed per-pair log without measuring
+    # anything a second time and possibly differently.
+    slot: ConstraintSlot
+    arm: str
+    phrase: str
+    report: DivergenceReport
+
+
+@dataclass(frozen=True, slots=True)
+class ArmAuthoring:
+    """Everything one authored arm produced: its constraints and its call log."""
+
+    constraints: tuple[AuthoredConstraint, ...]
+    calls: tuple[dict[str, object], ...]
+
+
+def _gist_bucket(attribute: str) -> str:
+    return attribute if attribute in _STRUCTURED_GIST_BUCKETS else "feature"
+
+
+def constraint_slots(
+    pair: PairTarget,
+    *,
+    vocabulary: GistVocabulary,
+    products: dict[str, dict[str, object]],
+) -> tuple[ConstraintSlot, ...]:
+    """Pair every control constraint with the gist pair its phrase must denote."""
+
+    product = products.get(pair.target)
+    if product is None:
+        raise GenerateError(f"target {pair.target!r} is absent from the catalog")
+    gist = gist_for_target(product, vocabulary)
+    # `prompt_payload_strings` is the ONLY surface a gist reaches a prompt
+    # through (MEAS-12). The payload string is captured here, at the one place
+    # that calls it, so no later formatting step can quietly interpolate the
+    # product instead.
+    catalogue = list(zip(gist, prompt_payload_strings(gist)))
+    if not catalogue:
+        # An empty gist is the one unrecoverable case: there is nothing for the
+        # author to write about, and nothing for the reviewer to check a phrase
+        # against. Such a target is refused here and excluded from the pool.
+        raise GenerateError(
+            f"target {pair.target!r} has an empty attribute gist; there is"
+            " nothing an author could be shown about it (D-32)"
+        )
+    available = list(catalogue)
+    slots: list[ConstraintSlot] = []
+    for name in _SLOTS:
+        for position, phrase in enumerate(getattr(pair.card, name)):
+            bucket = classify_constraint(phrase)
+            # Preference order: an unspent pair in this constraint's own bucket,
+            # then any unspent pair, then a spent pair back in the right bucket,
+            # then any pair at all.
+            #
+            # Reuse is admitted deliberately rather than refused. A control card
+            # carries up to four constraints while a thin product's gist may hold
+            # two or three, so refusing reuse would drop every attribute-poor
+            # target from the pool -- and attribute-poor products are not
+            # randomly distributed, so the corpus would skew toward richly
+            # described listings. That is precisely the silent skew D-30's
+            # stratification exists to prevent, and it would be a far worse
+            # defect than a card stating one attribute twice in two different
+            # wordings. The two phrases are still forced apart by the
+            # pair-uniqueness gate in `author_arm`.
+            chosen = next(
+                (
+                    entry
+                    for entry in available
+                    if _gist_bucket(entry[0].attribute) == bucket
+                ),
+                None,
+            )
+            if chosen is None and available:
+                chosen = available[0]
+            if chosen is None:
+                chosen = next(
+                    (
+                        entry
+                        for entry in catalogue
+                        if _gist_bucket(entry[0].attribute) == bucket
+                    ),
+                    catalogue[0],
+                )
+            if chosen in available:
+                available.remove(chosen)
+            gist_pair, payload = chosen
+            slots.append(
+                ConstraintSlot(
+                    pair_id=pair.pair_id,
+                    target=pair.target,
+                    slot=name,
+                    position=position,
+                    control_phrase=phrase,
+                    bucket=bucket,
+                    gist_attribute=gist_pair.attribute,
+                    gist_value=gist_pair.value,
+                    gist_payload=payload,
+                )
+            )
+    return tuple(slots)
+
+
+def control_constraints(
+    targets: tuple[PairTarget, ...],
+    *,
+    products: dict[str, dict[str, object]],
+) -> tuple[AuthoredConstraint, ...]:
+    """Measure the control arm too, so the contrast is quantified, not asserted."""
+
+    # The control arm is not authored, but D-34 requires its overlap to be
+    # MEASURED and reported anyway: its measured mean (~0.9857 on the 200 public
+    # targets) is the number a probe ratio is read against, and a probe number
+    # alone means nothing. Running the identical `measure` over both arms is also
+    # what makes the two figures comparable rather than merely adjacent.
+    measured: list[AuthoredConstraint] = []
+    for pair in targets:
+        product = products.get(pair.target)
+        if product is None:
+            raise GenerateError(f"target {pair.target!r} is absent from the catalog")
+        for name in _SLOTS:
+            for position, phrase in enumerate(getattr(pair.card, name)):
+                measured.append(
+                    AuthoredConstraint(
+                        slot=ConstraintSlot(
+                            pair_id=pair.pair_id,
+                            target=pair.target,
+                            slot=name,
+                            position=position,
+                            control_phrase=phrase,
+                            bucket=classify_constraint(phrase),
+                            gist_attribute="",
+                            gist_value="",
+                            gist_payload="",
+                        ),
+                        arm="control",
+                        phrase=phrase,
+                        report=measure(phrase, product),
+                    )
+                )
+    return tuple(measured)
+
+
+def author_arm(
+    targets: tuple[PairTarget, ...],
+    *,
+    arm: str,
+    runner: AuthoringRunner,
+    vocabulary: GistVocabulary,
+    products: dict[str, dict[str, object]],
+    prompt_name: str,
+    model_alias: str,
+    batch_size: int = _AUTHOR_BATCH_SIZE,
+    review_batch_size: int = _REVIEW_BATCH_SIZE,
+) -> ArmAuthoring:
+    """Author one arm's constraints, gated, bounded, and with every ratio kept."""
+
+    slots: list[ConstraintSlot] = []
+    for pair in targets:
+        slots.extend(constraint_slots(pair, vocabulary=vocabulary, products=products))
+    slot_by_id = {slot.item_id(): slot for slot in slots}
+    item_ids = tuple(sorted(slot_by_id))
+    if not item_ids:
+        raise GenerateError("authoring requires at least one constraint slot")
+    # The full admitted vocabulary, so the D-35 contradiction guard fires when a
+    # phrase asserts ANY value the closed vocabulary knows and the target lacks --
+    # not merely a value from its own attribute.
+    admitted = frozenset(
+        value for _, values in vocabulary.values for value in values
+    )
+    author_prompt = load_prompt(prompt_name)
+    # load_prompt, never read_text: the committed prompt files carry maintainer
+    # notes explaining the framing, and shipping those notes to the authoring
+    # model tells it what the measurement is for. That is D-57 contamination, and
+    # load_prompt strips them.
+    review_prompt = load_prompt(_REVIEW_PROMPT_NAME)
+
+    calls: list[dict[str, object]] = []
+    reports: dict[str, DivergenceReport] = {}
+    verdicts: dict[str, str] = {}
+    local: dict[str, tuple[bool, str]] = {}
+    accepted_by_pair: dict[str, set[str]] = {}
+
+    def _call(request: AuthoringRequest) -> tuple[dict[str, object], ...]:
+        request.validate()
+        response = runner(request)
+        calls.append(log_record(request, response))
+        return response.item_records()
+
+    def _local_gates(item_id: str, phrase: str, claimed: dict[tuple[str, str], str]) -> tuple[bool, str]:
+        slot = slot_by_id[item_id]
+        product = products[slot.target]
+        if not phrase or phrase != phrase.strip():
+            return False, "phrase is empty or carries surrounding whitespace"
+        # 1. Length. Past this the harness silently truncates, and the committed
+        #    corpus would then not describe what was actually scored.
+        if len(phrase) > MAX_CONSTRAINT_LENGTH:
+            return False, f"phrase is {len(phrase)} characters, over {MAX_CONSTRAINT_LENGTH}"
+        # 2. D-33, the hard gate. A paraphrase that moves the bucket changes which
+        #    asked attribute unlocks the constraint, so the arm-to-arm delta would
+        #    mix disclosure mechanics with vocabulary and explain neither.
+        if not preserves_bucket(slot.control_phrase, phrase):
+            return False, (
+                f"bucket moved from {slot.bucket!r} to"
+                f" {classify_constraint(phrase)!r}"
+            )
+        # 3. D-34. Computed here and RETAINED: this is the report that ends up in
+        #    the committed per-pair log.
+        report = measure(phrase, product)
+        reports[item_id] = report
+        if not report.passes:
+            return False, (
+                f"lexical overlap {report.overlap_ratio:.4f} on"
+                f" {list(report.overlapping_tokens)} and shared 2-grams"
+                f" {list(report.shared_bigrams)}"
+            )
+        # 4. D-35's programmatic guard: the phrase must not assert admitted
+        #    vocabulary the target does not carry.
+        if contradicts(phrase, product, admitted) is not False:
+            return False, "phrase asserts admitted vocabulary the target lacks"
+        # 5. Uniqueness within the pair. Not in D-33/D-34, but a correctness
+        #    requirement: `IntentCard.validate()` refuses a value repeated across
+        #    hard_constraints and soft_preferences, because `customer_reply`
+        #    discloses it once and leaves it undiscoverable through the other
+        #    list. Without this gate such a pair fails at row assembly, after the
+        #    tokens are already spent.
+        if phrase in accepted_by_pair.get(slot.pair_id, set()):
+            return False, "phrase duplicates one already accepted for this pair"
+        key = (slot.pair_id, phrase)
+        holder = claimed.get(key)
+        if holder is not None and holder != item_id:
+            return False, f"phrase duplicates the one produced for {holder}"
+        claimed[key] = item_id
+        return True, ""
+
+    def _review(
+        reviewable: tuple[str, ...], produced: dict[str, str], attempt_index: int
+    ) -> None:
+        # 6. The D-35 faithfulness review, in its OWN request with its own kind,
+        #    its own prompt and -- through `claude_runner` -- its own process and
+        #    fresh session. Batching many review items into one call is a
+        #    throughput choice and is fine. Batching an author step and its own
+        #    review into one call is not: the reviewer would then share context
+        #    with the writer it is meant to be an independent check on.
+        for start in range(0, len(reviewable), review_batch_size):
+            batch = reviewable[start : start + review_batch_size]
+            payload = []
+            for item_id in batch:
+                slot = slot_by_id[item_id]
+                review = ReviewPayload(
+                    gist_attribute=slot.gist_attribute,
+                    gist_value=slot.gist_value,
+                    phrase=produced[item_id],
+                )
+                review.validate()
+                payload.append({"id": item_id, **review.as_record()})
+            request = AuthoringRequest(
+                kind="review",
+                model_alias=model_alias,
+                prompt_name=_REVIEW_PROMPT_NAME,
+                # The attempt index rides in the review body for the same reason
+                # it rides in the author body, and the case is easier to miss
+                # here: a re-authored batch that comes back with the SAME phrases
+                # would otherwise mint a byte-identical review request, and
+                # `replay_runner` refuses a log that repeats a request digest
+                # rather than coin-flipping between two records. The corpus would
+                # then be unreplayable -- discovered only at regeneration time,
+                # long after the calls were paid for.
+                prompt=_request_body(review_prompt, payload, attempt=attempt_index),
+                schema_json=_REVIEW_SCHEMA_JSON,
+                item_ids=batch,
+            )
+            for record in _call(request):
+                identifier = str(record.get("id", ""))
+                if identifier in slot_by_id:
+                    verdicts[identifier] = str(record.get("verdict", ""))
+
+    def produce(pending: tuple[str, ...], attempt_index: int) -> dict[str, str]:
+        produced: dict[str, str] = {}
+        for start in range(0, len(pending), batch_size):
+            batch = pending[start : start + batch_size]
+            payload = [
+                {
+                    "id": item_id,
+                    "gist": slot_by_id[item_id].gist_payload,
+                    "bucket": slot_by_id[item_id].bucket,
+                }
+                for item_id in batch
+            ]
+            request = AuthoringRequest(
+                kind="author",
+                model_alias=model_alias,
+                prompt_name=prompt_name,
+                # `attempt` is in the body on purpose: it is what makes each
+                # re-authoring attempt carry a DIFFERENT request digest.
+                # `replay_runner` refuses a log that repeats a digest rather than
+                # coin-flipping between two records, so without this a second
+                # attempt over the same batch could not be replayed at all.
+                prompt=_request_body(author_prompt, payload, attempt=attempt_index),
+                schema_json=_AUTHOR_SCHEMA_JSON,
+                item_ids=batch,
+            )
+            for record in _call(request):
+                identifier = str(record.get("id", ""))
+                phrase = record.get("phrase")
+                if identifier in batch and isinstance(phrase, str):
+                    produced[identifier] = phrase.strip()
+        local.clear()
+        claimed: dict[tuple[str, str], str] = {}
+        # Sorted, so which of two identical phrases wins the pair-uniqueness gate
+        # is a stable property of the item ids and not of dict ordering.
+        for item_id in sorted(produced):
+            local[item_id] = _local_gates(item_id, produced[item_id], claimed)
+        _review(
+            tuple(item_id for item_id in sorted(produced) if local[item_id][0]),
+            produced,
+            attempt_index,
+        )
+        return produced
+
+    def accept(item_id: str, phrase: str) -> tuple[bool, str]:
+        passed, reason = local.get(item_id, (False, "no gate result recorded"))
+        if not passed:
+            return False, reason
+        verdict = verdicts.get(item_id, "")
+        if verdict != _FAITHFUL_VERDICT:
+            return False, f"faithfulness review returned {verdict!r}"
+        accepted_by_pair.setdefault(slot_by_id[item_id].pair_id, set()).add(phrase)
+        return True, ""
+
+    accepted = attempt_until(
+        item_ids, produce, accept, cap=AUTHORING_ATTEMPT_CAP
+    )
+    constraints = tuple(
+        AuthoredConstraint(
+            slot=slot_by_id[item_id],
+            arm=arm,
+            phrase=phrase,
+            report=reports[item_id],
+        )
+        for item_id, phrase in accepted
+    )
+    return ArmAuthoring(constraints=constraints, calls=tuple(calls))
+
+
+def _request_body(
+    prompt: str, payload: list[dict[str, object]], *, attempt: int | None = None
+) -> str:
+    body: dict[str, object] = {"items": payload}
+    if attempt is not None:
+        body["attempt"] = attempt
+    return (
+        prompt
+        + "\n"
+        + json.dumps(body, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+
+
+def card_from_constraints(
+    constraints: tuple[AuthoredConstraint, ...], *, target_category: str
+) -> IntentCard:
+    """Reassemble one arm's authored card from its accepted constraints."""
+
+    slotted: dict[str, list[tuple[int, str]]] = {name: [] for name in _SLOTS}
+    for constraint in constraints:
+        slotted[constraint.slot.slot].append(
+            (constraint.slot.position, constraint.phrase)
+        )
+    card = IntentCard(
+        # F-04 again: `target_category` is inert, so the control's value is
+        # carried across for schema fidelity. It is never sent to an authoring
+        # model and never read by the harness, so it costs no authoring budget
+        # and leaks nothing.
+        target_category=target_category,
+        hard_constraints=tuple(
+            phrase for _, phrase in sorted(slotted["hard_constraints"])
+        ),
+        soft_preferences=tuple(
+            phrase for _, phrase in sorted(slotted["soft_preferences"])
+        ),
+    )
+    card.validate()
+    return card
+
+
+def divergence_records(
+    accepted: tuple[AuthoredConstraint, ...],
+    *,
+    pair_id_by_target: dict[str, str],
+) -> tuple[DivergenceRecord, ...]:
+    """Turn every retained report into a committed per-pair record (Roadmap SC3)."""
+
+    records: list[DivergenceRecord] = []
+    for constraint in accepted:
+        expected = pair_id_by_target.get(constraint.slot.target)
+        if expected is None:
+            raise GenerateError(
+                f"target {constraint.slot.target!r} carries no pair id;"
+                " the divergence log would name a pair the corpus does not hold"
+            )
+        if expected != constraint.slot.pair_id:
+            # Not bookkeeping: `coverage()` keys the committed log on
+            # (pair_id, arm, slot, position) and plan 02-11 asserts those keys
+            # equal the corpus's own constraint count. A slot filed under the
+            # wrong pair would satisfy that count while describing another
+            # session's phrase.
+            raise GenerateError(
+                f"target {constraint.slot.target!r} is paired as {expected!r}"
+                f" but its constraint is filed under {constraint.slot.pair_id!r}"
+            )
+        records.append(
+            record_from_report(
+                constraint.report,
+                pair_id=constraint.slot.pair_id,
+                arm=constraint.arm,
+                position=constraint.slot.position,
+                slot=constraint.slot.slot,
+                phrase=constraint.phrase,
+            )
+        )
+    return tuple(records)
+
+
+def is_probe_corpus(corpus_name: str) -> bool:
+    return corpus_name.split(".")[0].startswith(_PROBE_CORPUS_PREFIX)
+
+
+def measure_solvability(
+    rows: tuple[SampleRow, ...],
+    *,
+    corpus_name: str,
+    artifact_path: Path,
+    catalog_path: Path,
+) -> dict[str, int]:
+    """Report how many expanded-corpus targets exact FTS can reach. Never a filter."""
+
+    if is_probe_corpus(corpus_name):
+        # The refusal lives HERE as well as at the CLI, and the reason is in the
+        # raised error rather than only in a comment, because
+        # `.planning/research/ARCHITECTURE.md:258` recommends a solvability check
+        # in general terms and a diligent reader will otherwise "fix" the probe
+        # pipeline by calling this function directly, bypassing the CLI guard.
+        #
+        # The asymmetry is correct rather than inconsistent. For the expanded
+        # corpora a session no candidate can win wastes evaluation budget and
+        # depresses absolute scores for a reason unrelated to the candidate, so
+        # reporting unreachable targets is a service. For the probe the SAME
+        # filter is the exact mechanism that erases the finding: the sessions it
+        # would delete are the ones whose customer wording no longer retrieves
+        # the target, which is the vocabulary gap the probe exists to measure.
+        raise GenerateError(
+            "--solvability-check is forbidden for the probe corpus: a"
+            " retrieval-backed filter would delete exactly the sessions that"
+            " carry the vocabulary gap and launder the finding out of the"
+            " measurement before it is measured (D-35)"
+        )
+    # Imported inside the function, never at module scope: this is the only code
+    # path that may open the 580 MB artifact, and a module-level import would put
+    # the SQLite backend into the import graph of every caller and every test.
+    from starter.shopping_agent.local_search_backend import LocalProductSearchBackend
+    from starter.shopping_agent.models import RetrievalRoute
+    from starter.shopping_agent.search_backend import SearchRequest
+
+    checked = 0
+    reachable = 0
+    backend = LocalProductSearchBackend.open(Path(catalog_path), Path(artifact_path))
+    try:
+        for row in rows:
+            card = row.intent_card
+            request = SearchRequest(
+                route=RetrievalRoute.EXACT_FTS,
+                lexical_terms=search_terms(
+                    " ".join((*card.hard_constraints, *card.soft_preferences))
+                ),
+                filters=(),
+                limit=_SOLVABILITY_LIMIT,
+                work_limit=_SOLVABILITY_WORK_LIMIT,
+            )
+            request.validate()
+            result = backend.search(request)
+            checked += 1
+            if any(
+                hit.parent_asin == row.ground_truth_parent_asin
+                for hit in result.hits
+            ):
+                reachable += 1
+    finally:
+        # Windows holds the 580 MB database open until the connection is closed.
+        backend.close()
+    # REPORTED, never applied. Dropping a row is the CLI's `--drop-unsolvable`
+    # decision, made by an operator who typed it, not this function's.
+    return {
+        "checked": checked,
+        "reachable": reachable,
+        "unreachable": checked - reachable,
+    }
