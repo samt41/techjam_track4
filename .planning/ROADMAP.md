@@ -117,7 +117,7 @@ Plans:
   4. A second model family has independently authored or reviewed a cross-check subset of the probe, with any generator-affinity gap between families reported explicitly rather than assumed absent.
   5. The probe set is checksummed and frozen (recorded commit/hash) before any Phase 3 or Phase 4 candidate is measured against it.
 
-**Plans**: 13 plans in 7 waves
+**Plans**: 14 plans in 7 waves
 Plans:
 **Wave 1**
 
@@ -138,12 +138,13 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 02-09-PLAN.md — The corpus generator: D-31 control arm, D-36 pair pinning, the five-gate authoring loop, and the asymmetric D-35 solvability rule (L-3)
+- [ ] 02-09-PLAN.md — The corpus generator: D-31 control arm, D-36 pair pinning, the five-gate authoring loop, the asymmetric D-35 solvability rule (L-3), and the CLI whose publish sequence emits the per-pair divergence log and the probe target snapshot
 - [ ] 02-10-PLAN.md — `run_arena.py`: registry-name `--dataset` resolution plus the `contrast` and `corpus-baselines` subcommands
 
 **Wave 5** *(blocked on Wave 4; operator-run)*
 
-- [ ] 02-11-PLAN.md — Author and freeze `probe.v1`: 300 Sonnet pairs plus a 100-pair Haiku cross-check arm, with every gate swept over the committed file
+- [ ] 02-11-PLAN.md — Author and freeze `probe.v1`: 300 Sonnet pairs plus a 100-pair Haiku cross-check arm, with every gate swept over the committed file and every per-pair overlap ratio re-derived from the committed target snapshot
+- [ ] 02-14-PLAN.md — D-31/D-55 control-vs-fallback byte identity, D-36 pair pinning, and the L-3 solvability-absence AST proof (split out of 02-09 on scope grounds)
 
 **Wave 6** *(blocked on Wave 5; operator-run)*
 
@@ -151,7 +152,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6; operator-run)*
 
-- [ ] 02-13-PLAN.md — The D-48 baseline runs, the D-53 corpus-baselines table, both paired contrasts, and the D-39/D-41/D-42/D-49 disclosures
+- [ ] 02-13-PLAN.md — The four D-48 baseline runs at one shared code revision (D-58), the D-53 corpus-baselines table, both paired contrasts, and the D-39/D-41/D-42/D-49/D-58 disclosures
 
 ### Phase 3: Ranking Precision & Conversational Efficiency
 
