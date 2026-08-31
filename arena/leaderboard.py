@@ -336,8 +336,27 @@ def build_leaderboard(
                 "paired-difference bootstrap SE of TechnicalScore (D-21)"
             ),
             "holm_family": (
-                "non-baseline candidates against a common baseline (D-19)"
+                "non-baseline candidates against a common baseline (D-19);"
+                " an arm whose delta and standard error are both zero still counts"
+                " toward the family and toward correction_k, because the family size"
+                " is a property of the experimental design and shrinking it after"
+                " seeing which arms turned out degenerate would be a data-dependent"
+                " family definition; --include is the a-priori mechanism for a"
+                " retained record that belongs in the report without joining the"
+                " family"
             ),
+            # Derived from the rows themselves, on the same "describe what actually
+            # produced these rows" discipline as resample_count above: the multiplier
+            # applied to every permutation_p is then re-derivable from the payload
+            # alone, instead of being a claim the reader must take on trust or dig out
+            # of the source. Zero is the honest answer for a report that adjudicated
+            # nothing.
+            "holm_family_size": len(rows),
+            # Stated as the standing policy rather than computed from the rows: it
+            # describes the RULE for joining the family, so it must read the same
+            # whether or not this particular report happened to contain a degenerate
+            # arm.
+            "holm_family_includes_degenerate_arms": True,
             "practical_floor": 0.01,
             "resample_count": resample_count,
             "efficiency_rounding": (
