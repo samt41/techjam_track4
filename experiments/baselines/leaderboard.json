@@ -5,8 +5,8 @@
       "candidate_count": 2,
       "candidate_fingerprint": "e0d73537d58b4f844877319a36fbb90160f73065cebe709366e31628a6ade11a",
       "candidate_name": "fallback-lexical",
-      "ci_lower": -0.01888599999999996,
-      "ci_upper": 0.031239000000000017,
+      "ci_lower": -0.01889200000000002,
+      "ci_upper": 0.03131099999999998,
       "clears_practical_floor": false,
       "corrected_delta": -0.0011370775936071038,
       "correction_k": 2,
@@ -20,6 +20,7 @@
       "hit_rate_delta": 0.0050000000000000044,
       "holm_p": 1.0,
       "is_champion": true,
+      "is_degenerate": false,
       "minimum_detectable_difference": 0.0359866719500484,
       "mrr_delta": -0.00229899999999994,
       "mttc_delta": -0.21499999999999986,
@@ -48,6 +49,7 @@
       "hit_rate_delta": 0.0,
       "holm_p": 1.0,
       "is_champion": false,
+      "is_degenerate": true,
       "minimum_detectable_difference": 0.0,
       "mrr_delta": 0.0,
       "mttc_delta": 0.0,
@@ -59,7 +61,9 @@
   ],
   "assumptions": {
     "efficiency_rounding": "6 dp at output, matching evaluator/local_evaluator.py:286",
-    "holm_family": "non-baseline candidates against a common baseline (D-19)",
+    "holm_family": "non-baseline candidates against a common baseline (D-19); an arm whose delta and standard error are both zero still counts toward the family and toward correction_k, because the family size is a property of the experimental design and shrinking it after seeing which arms turned out degenerate would be a data-dependent family definition; --include is the a-priori mechanism for a retained record that belongs in the report without joining the family",
+    "holm_family_includes_degenerate_arms": true,
+    "holm_family_size": 2,
     "per_bucket_sigma_source": "bucket-observed p and n (D-15)",
     "per_scenario_holm_corrected": false,
     "practical_floor": 0.01,
@@ -209,7 +213,8 @@
       "mrr": 0.404444,
       "mttc": 3.6,
       "sample_count": 10,
-      "scenario_type": "boundary"
+      "scenario_type": "boundary",
+      "technical_score": 0.719333
     },
     {
       "binomial_standard_error": 0.02436698586202242,
@@ -219,7 +224,8 @@
       "mrr": 0.570764,
       "mttc": 3.125,
       "sample_count": 80,
-      "scenario_type": "browsing"
+      "scenario_type": "browsing",
+      "technical_score": 0.803729
     },
     {
       "binomial_standard_error": 0.03354101966249684,
@@ -229,7 +235,8 @@
       "mrr": 0.51249,
       "mttc": 3.2875,
       "sample_count": 80,
-      "scenario_type": "buying"
+      "scenario_type": "buying",
+      "technical_score": 0.757997
     },
     {
       "binomial_standard_error": 0.054772255750516606,
@@ -239,7 +246,8 @@
       "mrr": 0.738095,
       "mttc": 4.533333,
       "sample_count": 30,
-      "scenario_type": "intent_override"
+      "scenario_type": "intent_override",
+      "technical_score": 0.800762
     },
     {
       "binomial_standard_error": 0.09486832980505137,
@@ -249,7 +257,8 @@
       "mrr": 0.428175,
       "mttc": 3.1,
       "sample_count": 10,
-      "scenario_type": "boundary"
+      "scenario_type": "boundary",
+      "technical_score": 0.736453
     },
     {
       "binomial_standard_error": 0.017455300054711183,
@@ -259,7 +268,8 @@
       "mrr": 0.488844,
       "mttc": 2.675,
       "sample_count": 80,
-      "scenario_type": "browsing"
+      "scenario_type": "browsing",
+      "technical_score": 0.800653
     },
     {
       "binomial_standard_error": 0.03354101966249684,
@@ -269,7 +279,8 @@
       "mrr": 0.497376,
       "mttc": 3.1625,
       "sample_count": 80,
-      "scenario_type": "buying"
+      "scenario_type": "buying",
+      "technical_score": 0.755963
     },
     {
       "binomial_standard_error": 0.062063223439489515,
@@ -279,7 +290,8 @@
       "mrr": 0.708466,
       "mttc": 4.8,
       "sample_count": 30,
-      "scenario_type": "intent_override"
+      "scenario_type": "intent_override",
+      "technical_score": 0.769873
     },
     {
       "binomial_standard_error": 0.09486832980505137,
@@ -289,7 +301,8 @@
       "mrr": 0.404444,
       "mttc": 3.6,
       "sample_count": 10,
-      "scenario_type": "boundary"
+      "scenario_type": "boundary",
+      "technical_score": 0.719333
     },
     {
       "binomial_standard_error": 0.02436698586202242,
@@ -299,7 +312,8 @@
       "mrr": 0.527862,
       "mttc": 3.125,
       "sample_count": 80,
-      "scenario_type": "browsing"
+      "scenario_type": "browsing",
+      "technical_score": 0.790859
     },
     {
       "binomial_standard_error": 0.03354101966249684,
@@ -309,7 +323,8 @@
       "mrr": 0.464296,
       "mttc": 3.2875,
       "sample_count": 80,
-      "scenario_type": "buying"
+      "scenario_type": "buying",
+      "technical_score": 0.743539
     },
     {
       "binomial_standard_error": 0.054772255750516606,
@@ -319,7 +334,8 @@
       "mrr": 0.715873,
       "mttc": 4.533333,
       "sample_count": 30,
-      "scenario_type": "intent_override"
+      "scenario_type": "intent_override",
+      "technical_score": 0.794095
     },
     {
       "binomial_standard_error": 0.09486832980505137,
@@ -329,7 +345,8 @@
       "mrr": 0.404444,
       "mttc": 3.6,
       "sample_count": 10,
-      "scenario_type": "boundary"
+      "scenario_type": "boundary",
+      "technical_score": 0.719333
     },
     {
       "binomial_standard_error": 0.02436698586202242,
@@ -339,7 +356,8 @@
       "mrr": 0.527862,
       "mttc": 3.125,
       "sample_count": 80,
-      "scenario_type": "browsing"
+      "scenario_type": "browsing",
+      "technical_score": 0.790859
     },
     {
       "binomial_standard_error": 0.03354101966249684,
@@ -349,7 +367,8 @@
       "mrr": 0.464296,
       "mttc": 3.2875,
       "sample_count": 80,
-      "scenario_type": "buying"
+      "scenario_type": "buying",
+      "technical_score": 0.743539
     },
     {
       "binomial_standard_error": 0.054772255750516606,
@@ -359,7 +378,8 @@
       "mrr": 0.715873,
       "mttc": 4.533333,
       "sample_count": 30,
-      "scenario_type": "intent_override"
+      "scenario_type": "intent_override",
+      "technical_score": 0.794095
     },
     {
       "binomial_standard_error": 0.09486832980505137,
@@ -369,7 +389,8 @@
       "mrr": 0.404444,
       "mttc": 3.6,
       "sample_count": 10,
-      "scenario_type": "boundary"
+      "scenario_type": "boundary",
+      "technical_score": 0.719333
     },
     {
       "binomial_standard_error": 0.02436698586202242,
@@ -379,7 +400,8 @@
       "mrr": 0.527862,
       "mttc": 3.125,
       "sample_count": 80,
-      "scenario_type": "browsing"
+      "scenario_type": "browsing",
+      "technical_score": 0.790859
     },
     {
       "binomial_standard_error": 0.03354101966249684,
@@ -389,7 +411,8 @@
       "mrr": 0.464296,
       "mttc": 3.2875,
       "sample_count": 80,
-      "scenario_type": "buying"
+      "scenario_type": "buying",
+      "technical_score": 0.743539
     },
     {
       "binomial_standard_error": 0.054772255750516606,
@@ -399,7 +422,8 @@
       "mrr": 0.715873,
       "mttc": 4.533333,
       "sample_count": 30,
-      "scenario_type": "intent_override"
+      "scenario_type": "intent_override",
+      "technical_score": 0.794095
     }
   ],
   "schema_version": 1
