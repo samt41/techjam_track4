@@ -31,7 +31,35 @@ SIGNIFICANCE_ALPHA = 0.05
 # One turn of MTTC is worth 0.20 * (1/10) = 0.02 of TechnicalScore, while one point of
 # HR@10 is worth 0.50 -- HR@10 is roughly 25x more sensitive per point than MTTC. The
 # D-23 exchange rate spends that budget through MRR: an HR@10 regression is forgiven
-# only when the MRR gain exceeds 0.0667 x the MTTC movement it was traded for.
+# only when the MRR gain exceeds 0.0667 x the MAGNITUDE of the MTTC movement it was
+# traded for.
+#
+# "Magnitude" is the load-bearing word, and the criterion originally omitted it.
+# mttc_delta = candidate_mttc - baseline_mttc, so an MTTC IMPROVEMENT is NEGATIVE;
+# multiplying the un-absoluted delta by the rate put the bar below zero, and the
+# comparison then read "MRR above some negative number" -- which a negative mrr_delta
+# satisfies. Measured against the pre-fix code: a candidate that regressed HR@10 by
+# 0.030 AND MRR by 0.010 while improving MTTC by 4.11 turns was adjudicated
+# verdict = win with an EMPTY failed_criteria. At that MTTC movement the bar sat at
+# -0.274, licensing an MRR regression larger than this project's entire MRR headroom.
+#
+# The `mrr_delta > 0.0` clause below is, given abs(), LOGICALLY REDUNDANT and is kept
+# deliberately: the bar 0.0667 * abs(mttc_delta) is non-negative, so clearing it already
+# implies a positive gain. Mutation-tested -- deleting that clause fails no test, while
+# deleting the abs() fails
+# test_an_mrr_gain_below_the_magnitude_bar_does_not_buy_an_hr10_regression. It stays
+# because it states the INTENT ("there must be a gain to spend") independently of the
+# sign convention of mttc_delta, so a future change to how the bar is computed cannot
+# silently reintroduce forgiveness on a regression. Do not read it as a second guard.
+#
+# mttc_delta < 0 is not an edge case: it is the DESIGNED direction of improvement for
+# the whole Phase 3 CONV workstream, so the vacuous form was the main path. CONV-03 and
+# CLAUDE.md state the principle this criterion enforces -- a recall regression cannot be
+# bought with speed.
+#
+# Deliberately NOT added, and declined by the operator: a hard HR@10 regression floor,
+# and scaling the forgiveness threshold with the SIZE of the HR@10 regression. A
+# regression of any size stays forgivable once the magnitude-scaled MRR bar is cleared.
 EXCHANGE_RATE_PER_MTTC = 0.0667
 
 # The fixed REPORT order for `failed_criteria`. Building the tuple by filtering this
@@ -73,6 +101,12 @@ class AdjudicationRow:
     ci_lower: float
     ci_upper: float
     standard_error: float
+    # DESCRIPTIVE ONLY. Derived from two measured quantities (a zero SE AND a zero
+    # delta), it is never used to fabricate or override any other field on this row. It
+    # exists so a reader of the report can see which arms agreed with the baseline on
+    # every session, which is the only thing the old degenerate branch was entitled to
+    # say.
+    is_degenerate: bool
     permutation_p: float
     holm_p: float
     minimum_detectable_difference: float
@@ -101,6 +135,7 @@ class AdjudicationRow:
             "ci_lower": self.ci_lower,
             "ci_upper": self.ci_upper,
             "standard_error": self.standard_error,
+            "is_degenerate": self.is_degenerate,
             "permutation_p": self.permutation_p,
             "holm_p": self.holm_p,
             "minimum_detectable_difference": self.minimum_detectable_difference,
@@ -199,21 +234,38 @@ def adjudicate(
             )
         )
 
-    # Two arms that agree on every session collapse delta, SE, both CI bounds and the
-    # MDD to zero simultaneously, and a naive `abs(delta) >= mdd` detectability check
-    # then evaluates 0 >= 0 as True -- a rig without this guard reports a DETECTABLE
-    # difference between a candidate and itself (Pitfall 5). That is a plausible real
-    # outcome for a near-null ablation, not a hypothetical.
+    # DESCRIPTIVE ONLY. This tuple no longer gates any computation: it is reported on
+    # each row so a reader can see which arms agreed with the baseline on every session,
+    # and nothing downstream branches on it.
+    #
+    # It is conditioned on the DELTA as well as the SE because a zero SE alone does not
+    # mean what "degenerate" claims. The bootstrap SE is exactly zero for ANY
+    # exactly-uniform per-session improvement -- the delta is then invariant under which
+    # sessions are resampled -- so the SE-only form also captured real, large effects. A
+    # measured example: a uniform rank-2 -> rank-1 promotion over 200 sessions has SE 0.0
+    # at a delta of +0.15, fifteen times the ship floor.
+    #
+    # Pitfall 5 (a naive `abs(delta) >= mdd` reading 0 >= 0 as True, and so reporting a
+    # DETECTABLE difference between a candidate and itself) is handled where it belongs,
+    # in classify_verdict: with an empty-of-nothing failed_criteria the row falls through
+    # clause 3 to clause 4 and returns NO_DIFFERENCE. That is the correct answer for two
+    # identical arms and it is now reached through the general rule rather than through a
+    # special case that asserted its own conclusion.
     degenerate = tuple(
-        result.standard_error <= ZERO_VARIANCE_TOLERANCE for result in bootstraps
+        result.standard_error <= ZERO_VARIANCE_TOLERANCE
+        and abs(result.delta) <= ZERO_VARIANCE_TOLERANCE
+        for result in bootstraps
     )
 
     # --- D-20 step 2: paired permutation, same pair, a separate RNG stream ---
+    # Run UNCONDITIONALLY, once per candidate. The former short-circuit appended a
+    # literal 1.0 for degenerate arms; the permutation is cheap and returns an honest
+    # Phipson-Smyth answer for identical arms anyway -- every sign-flip assignment of two
+    # identical arms yields a statistic tied with the observed one, so the measured
+    # p-value is exactly (resamples + 1) / (resamples + 1) = 1.0. Same number, now
+    # arrived at by measurement rather than by assertion.
     permutation_p_values = []
     for index, candidate in enumerate(candidates):
-        if degenerate[index]:
-            permutation_p_values.append(1.0)
-            continue
         permutation_p_values.append(
             paired_permutation(
                 baseline.sessions,
@@ -230,6 +282,17 @@ def adjudicate(
     # --- D-20 step 3: Holm across the candidates only ---
     # The family is exactly these candidates against the common baseline (D-19).
     # Per-scenario results are descriptive and are NEVER folded in here.
+    #
+    # WR-05, decided: a genuinely degenerate arm REMAINS in the Holm family. The family
+    # is a property of the experimental DESIGN -- how many arms were submitted for
+    # comparison -- so shrinking it after seeing which arms turned out degenerate is a
+    # data-dependent family definition. That is anti-conservative, and it is precisely
+    # the selection sin the winner's-curse correction below exists to price. What WR-05
+    # actually objected to was a SYNTHETIC p-value entering the family; the permutation
+    # above is now measured for every arm, so the 1.0 that a degenerate arm contributes
+    # is a real answer. An operator who knows in advance that a retained record is not a
+    # hypothesis says so BEFORE the run, via `--include` in arena/run_arena.py, which is
+    # the a-priori mechanism that makes post-hoc exclusion unnecessary.
     holm_p_values = holm_bonferroni(tuple(permutation_p_values))
 
     # --- D-20 step 4: winner's-curse correction, at the family's k ---
@@ -241,6 +304,14 @@ def adjudicate(
     # uncorrected gain that a later reader could promote by mistake. With a single
     # candidate expected_max_of_k(1) is 0.0, so no selection happened and no correction
     # is applied -- which is correct.
+    #
+    # A degenerate arm is counted in k for the same design reason it stays in the Holm
+    # family, and the cost of getting this wrong is concrete: the floor-ordering
+    # tripwire in tests/test_arena_adjudication.py adjudicates a real arm alongside a
+    # deliberately identical "null" arm and depends on k == 2. Excluding the null arm
+    # post hoc would set k = 1, expected_max_of_k(1) == 0.0 would remove the correction
+    # entirely, and the tripwire would then pass on the RAW delta -- silently disabling
+    # the single ordering guarantee this phase exists to provide.
     candidate_count = len(candidates)
     correction_k = candidate_count
     expected_maximum = expected_max_of_k(correction_k)
@@ -261,57 +332,60 @@ def adjudicate(
         hit_rate_delta, mrr_delta, mttc_delta = metric_deltas[index]
         is_degenerate = degenerate[index]
 
-        if is_degenerate:
-            holm_p = 1.0
-            detectable_difference = 0.0
-            corrected_delta = bootstrap.delta
-            clears_practical_floor = False
-            exchange_rate_ok = True
-            # Stated explicitly rather than left to fall out of the general path: plan
-            # 01-09 asserts `verdict == "win"` if and only if `failed_criteria` is empty,
-            # so a short-circuit leaving the tuple empty while returning a non-win verdict
-            # would violate that identity against the committed leaderboard. The general
-            # path agrees exactly -- holm_p 1.0 fails significance, a 0.0 delta fails the
-            # floor, and two identical arms have hit_rate_delta == 0.0 so the
-            # exchange-rate criterion correctly does not appear.
-            failed_criteria = ("holm_significance", "practical_floor")
-        else:
-            holm_p = holm_p_values[index]
-            detectable_difference = minimum_detectable_difference(
-                bootstrap.standard_error
-            )
-            corrected_delta = bootstrap.delta - winners_curse_correction(
-                bootstrap.standard_error,
-                correction_k,
-            )
-            # --- D-20 step 5: the floor is tested against the CORRECTED delta ---
-            # Applying it to the raw delta is the specific anti-pattern this whole
-            # ordering exists to prevent: at the 0.022-0.030 selection inflation
-            # PROJECT.md warns about, a candidate could clear 0.01 on selection bias
-            # alone -- more than the entire remaining recall headroom this project has.
-            clears_practical_floor = corrected_delta >= PRACTICAL_FLOOR
-            # D-23: an HR@10 regression is disqualifying unless the exchange-rate math
-            # clears. No regression means nothing to trade, so the check passes.
-            exchange_rate_ok = hit_rate_delta >= 0.0 or (
-                mrr_delta > EXCHANGE_RATE_PER_MTTC * mttc_delta
-            )
-            failures = {
-                "holm_significance": holm_p < SIGNIFICANCE_ALPHA,
-                "practical_floor": clears_practical_floor,
-                "hr10_exchange_rate": exchange_rate_ok,
-            }
-            # Filtered from the constant, so the order is fixed by CRITERION_ORDER and
-            # never by the order the checks happened to run in.
-            failed_criteria = tuple(
-                name for name in CRITERION_ORDER if not failures[name]
-            )
+        # ONE path, for every arm. There is no degenerate branch: the governing rule is
+        # that no emitted field on any row may be a fabricated constant, and the branch
+        # that used to sit here set holm_p, the MDD, clears_practical_floor,
+        # exchange_rate_ok and failed_criteria to literals while leaving corrected_delta
+        # holding the real delta -- a row that contradicted itself, and that inverted the
+        # verdict on a genuine +0.15 effect.
+        #
+        # Two identical arms are still adjudicated correctly here, by measurement:
+        # delta 0.0, standard_error 0.0, measured permutation_p 1.0, holm_p 1.0,
+        # mdd = 2.801585218112968 * 0.0 = 0.0,
+        # corrected_delta = 0.0 - 0.0 * expected_max_of_k(k) = 0.0,
+        # clears_practical_floor = (0.0 >= 0.01) = False, and exchange_rate_ok = True
+        # because hit_rate_delta == 0.0. So failed_criteria is
+        # ("holm_significance", "practical_floor") and classify_verdict returns
+        # NO_DIFFERENCE at clause 4 -- identical to what the branch asserted, and now
+        # derived. Plan 01-09's identity (win if and only if failed_criteria is empty)
+        # therefore still holds without being hand-maintained in a second place.
+        holm_p = holm_p_values[index]
+        detectable_difference = minimum_detectable_difference(bootstrap.standard_error)
+        corrected_delta = bootstrap.delta - winners_curse_correction(
+            bootstrap.standard_error,
+            correction_k,
+        )
+        # --- D-20 step 5: the floor is tested against the CORRECTED delta ---
+        # Applying it to the raw delta is the specific anti-pattern this whole
+        # ordering exists to prevent: at the 0.022-0.030 selection inflation
+        # PROJECT.md warns about, a candidate could clear 0.01 on selection bias
+        # alone -- more than the entire remaining recall headroom this project has.
+        clears_practical_floor = corrected_delta >= PRACTICAL_FLOOR
+        # D-23: an HR@10 regression is disqualifying unless the exchange-rate math
+        # clears. No regression means nothing to trade, so the check passes.
+        # The third clause -- comparing against the MAGNITUDE of the MTTC movement --
+        # is the one that does the work; dropping abs() restores the vacuous form
+        # documented above the constant. The `mrr_delta > 0.0` clause is redundant
+        # given that, and is retained as an explicit statement of intent; see the
+        # comment above EXCHANGE_RATE_PER_MTTC.
+        exchange_rate_ok = hit_rate_delta >= 0.0 or (
+            mrr_delta > 0.0 and mrr_delta > EXCHANGE_RATE_PER_MTTC * abs(mttc_delta)
+        )
+        # This mapping holds PASSES, not failures: every value is True when the
+        # criterion was SATISFIED. It was previously named for the opposite, in the
+        # most safety-critical function in the rig, so a future `if passed[name]`
+        # read in the obvious sense would have inverted every verdict in the report.
+        passed = {
+            "holm_significance": holm_p < SIGNIFICANCE_ALPHA,
+            "practical_floor": clears_practical_floor,
+            "hr10_exchange_rate": exchange_rate_ok,
+        }
+        # Filtered from the constant, so the order is fixed by CRITERION_ORDER and
+        # never by the order the checks happened to run in.
+        failed_criteria = tuple(name for name in CRITERION_ORDER if not passed[name])
 
-        # The single verdict call site. The rule lives in one place so the degenerate
-        # branch is adjudicated by the SAME logic as every other row -- a deliberate
-        # consistency check rather than a hard-coded answer. With holm_p 1.0,
-        # delta 0.0 and mdd 0.0: clause 2 fails, `abs(0.0) < 0.0` is False so clause 3
-        # fails, and clause 4 returns NO_DIFFERENCE, which is the correct answer reached
-        # through the general rule.
+        # The single verdict call site. The rule lives in one place, and now every row
+        # reaches it the same way.
         verdict = classify_verdict(
             holm_p=holm_p,
             delta=bootstrap.delta,
@@ -328,6 +402,7 @@ def adjudicate(
                 ci_lower=bootstrap.lower,
                 ci_upper=bootstrap.upper,
                 standard_error=bootstrap.standard_error,
+                is_degenerate=is_degenerate,
                 permutation_p=permutation_p_values[index],
                 holm_p=holm_p,
                 minimum_detectable_difference=detectable_difference,
