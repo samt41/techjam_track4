@@ -1,0 +1,548 @@
+{
+  "abstractions": [
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 210,
+      "token": "single_fibre",
+      "value": "100% acrylic"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 2838,
+      "token": "single_fibre",
+      "value": "100% cotton"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 145,
+      "token": "unspecified_fibre",
+      "value": "100% fabric"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 2484,
+      "token": "single_fibre",
+      "value": "100% leather"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 174,
+      "token": "single_fibre",
+      "value": "100% manmade"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 149,
+      "token": "single_fibre",
+      "value": "100% nylon"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 2433,
+      "token": "single_fibre",
+      "value": "100% polyester"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 128,
+      "token": "single_fibre",
+      "value": "100% rayon"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 195,
+      "token": "napped_hide",
+      "value": "100% suede"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 1366,
+      "token": "single_fibre",
+      "value": "100% synthetic"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 239,
+      "token": "single_fibre",
+      "value": "100% textile"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 264,
+      "token": "mixed_fibre",
+      "value": "60% cotton, 40% polyester"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 165,
+      "token": "stretch_blend",
+      "value": "95% cotton, 5% spandex"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 351,
+      "token": "stretch_blend",
+      "value": "95% polyester, 5% spandex"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 143,
+      "token": "stretch_blend",
+      "value": "95% rayon, 5% spandex"
+    },
+    {
+      "attribute": "retail_origin",
+      "document_frequency": 160,
+      "token": "house_label",
+      "value": "an amazon brand"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 332,
+      "token": "prong_strap",
+      "value": "buckle closure"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 2195,
+      "token": "disc_fastener",
+      "value": "button closure"
+    },
+    {
+      "attribute": "fabric_structure",
+      "document_frequency": 122,
+      "token": "plain_woven",
+      "value": "canvas"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 215,
+      "token": "single_fibre",
+      "value": "cotton"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 225,
+      "token": "mixed_fibre",
+      "value": "cotton blend"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 158,
+      "token": "whitener_restricted",
+      "value": "do not bleach"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 1172,
+      "token": "cinch_tie",
+      "value": "drawstring closure"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 537,
+      "token": "professional_care",
+      "value": "dry clean only"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 245,
+      "token": "wipe_only",
+      "value": "dry cloth clean"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 587,
+      "token": "stretch_entry",
+      "value": "elastic closure"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 270,
+      "token": "foam_tread",
+      "value": "ethylene vinyl acetate sole"
+    },
+    {
+      "attribute": "fabric_structure",
+      "document_frequency": 115,
+      "token": "napped_knit",
+      "value": "fleece"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 185,
+      "token": "pliant_tread",
+      "value": "flexible sole"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 209,
+      "token": "delicate_care",
+      "value": "hand wash"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 4986,
+      "token": "delicate_care",
+      "value": "hand wash only"
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 134,
+      "token": "low_lift",
+      "value": "heel measures approximately 0.75\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 144,
+      "token": "low_lift",
+      "value": "heel measures approximately 1 inches\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 324,
+      "token": "low_lift",
+      "value": "heel measures approximately 1\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 179,
+      "token": "low_lift",
+      "value": "heel measures approximately 1.25\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 191,
+      "token": "mid_lift",
+      "value": "heel measures approximately 1.5\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 140,
+      "token": "mid_lift",
+      "value": "heel measures approximately 2\""
+    },
+    {
+      "attribute": "elevation",
+      "document_frequency": 101,
+      "token": "high_lift",
+      "value": "heel measures approximately 3\""
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 157,
+      "token": "metal_catch",
+      "value": "hook and eye closure"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 125,
+      "token": "gripping_tape",
+      "value": "hook and loop closure"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 13832,
+      "token": "overseas_origin",
+      "value": "imported"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 136,
+      "token": "eyelet_threading",
+      "value": "lace up closure"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 279,
+      "token": "single_fibre",
+      "value": "leather"
+    },
+    {
+      "attribute": "inner_facing",
+      "document_frequency": 174,
+      "token": "hide_facing",
+      "value": "leather lining"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 616,
+      "token": "hide_tread",
+      "value": "leather sole"
+    },
+    {
+      "attribute": "outer_facing",
+      "document_frequency": 106,
+      "token": "hide_shell",
+      "value": "leather upper"
+    },
+    {
+      "attribute": "construction",
+      "document_frequency": 468,
+      "token": "staple_tee_build",
+      "value": "lightweight, classic fit, double-needle sleeve and bottom hem"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 162,
+      "token": "air_finish",
+      "value": "line dry"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 8899,
+      "token": "home_launderable",
+      "value": "machine wash"
+    },
+    {
+      "attribute": "laundering",
+      "document_frequency": 173,
+      "token": "home_launderable",
+      "value": "machine washable"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 200,
+      "token": "overseas_origin",
+      "value": "made in china"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 171,
+      "token": "domestic_origin",
+      "value": "made in the usa"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 187,
+      "token": "mixed_origin",
+      "value": "made in the usa and imported"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 377,
+      "token": "mixed_origin",
+      "value": "made in the usa or imported"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 130,
+      "token": "domestic_origin",
+      "value": "made in us"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 308,
+      "token": "domestic_origin",
+      "value": "made in usa"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 263,
+      "token": "mixed_origin",
+      "value": "made in usa or imported"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 267,
+      "token": "engineered_tread",
+      "value": "man made sole"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 951,
+      "token": "engineered_tread",
+      "value": "manmade sole"
+    },
+    {
+      "attribute": "fabric_structure",
+      "document_frequency": 168,
+      "token": "open_weave",
+      "value": "mesh"
+    },
+    {
+      "attribute": "spectacle_body",
+      "document_frequency": 130,
+      "token": "alloy_body",
+      "value": "metal frame"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 236,
+      "token": "open_front",
+      "value": "no closure closure"
+    },
+    {
+      "attribute": "optics",
+      "document_frequency": 312,
+      "token": "unfiltered_glare",
+      "value": "non-polarized"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 124,
+      "token": "single_fibre",
+      "value": "nylon"
+    },
+    {
+      "attribute": "spectacle_body",
+      "document_frequency": 213,
+      "token": "resin_body",
+      "value": "plastic frame"
+    },
+    {
+      "attribute": "viewing_element",
+      "document_frequency": 196,
+      "token": "resin_pane",
+      "value": "plastic lens"
+    },
+    {
+      "attribute": "forepart_lift",
+      "document_frequency": 139,
+      "token": "slight_forepart",
+      "value": "platform measures approximately 0.5\""
+    },
+    {
+      "attribute": "forepart_lift",
+      "document_frequency": 120,
+      "token": "slight_forepart",
+      "value": "platform measures approximately 0.75\""
+    },
+    {
+      "attribute": "optics",
+      "document_frequency": 203,
+      "token": "glare_filtering",
+      "value": "polarized"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 285,
+      "token": "single_fibre",
+      "value": "polyester"
+    },
+    {
+      "attribute": "inner_facing",
+      "document_frequency": 200,
+      "token": "synthetic_facing",
+      "value": "polyester lining"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 157,
+      "token": "mixed_fibre",
+      "value": "polyester,cotton"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 201,
+      "token": "stretch_blend",
+      "value": "polyester,spandex"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 144,
+      "token": "elastomer_tread",
+      "value": "polyurethane sole"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 7126,
+      "token": "slip_entry",
+      "value": "pull on closure"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 216,
+      "token": "slip_entry",
+      "value": "pull-on closure"
+    },
+    {
+      "attribute": "timekeeping",
+      "document_frequency": 125,
+      "token": "battery_regulated",
+      "value": "quartz movement"
+    },
+    {
+      "attribute": "substance",
+      "document_frequency": 127,
+      "token": "elastomer_material",
+      "value": "rubber"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 134,
+      "token": "vulcanised_tread",
+      "value": "rubber outsole"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 5616,
+      "token": "vulcanised_tread",
+      "value": "rubber sole"
+    },
+    {
+      "attribute": "collar_height",
+      "document_frequency": 287,
+      "token": "ankle_exposed",
+      "value": "shaft measures approximately low-top from arch"
+    },
+    {
+      "attribute": null,
+      "document_frequency": 177,
+      "token": null,
+      "value": "shaft measures approximately not_applicable from arch"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 464,
+      "token": "press_stud",
+      "value": "snap closure"
+    },
+    {
+      "attribute": "fibre_content",
+      "document_frequency": 464,
+      "token": "colourway_dependent_mix",
+      "value": "solid colors: 100% cotton; heather grey: 90% cotton, 10% polyester; all other heathers: 50% cotton, 50% polyester"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 187,
+      "token": "napped_tread",
+      "value": "suede sole"
+    },
+    {
+      "attribute": "underfoot",
+      "document_frequency": 1362,
+      "token": "engineered_tread",
+      "value": "synthetic sole"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 525,
+      "token": "knot_entry",
+      "value": "tie closure"
+    },
+    {
+      "attribute": "optics",
+      "document_frequency": 278,
+      "token": "ray_shielding",
+      "value": "uv protection coating coating"
+    },
+    {
+      "attribute": "fastening",
+      "document_frequency": 2460,
+      "token": "toothed_fastener",
+      "value": "zipper closure"
+    },
+    {
+      "attribute": "sourcing",
+      "document_frequency": 213,
+      "token": "overseas_origin",
+      "value": "\u8fdb\u53e3"
+    }
+  ],
+  "catalog_sha256": "da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67",
+  "df_floor": 100,
+  "rationale": "A document-frequency floor alone does not keep the target's own catalog text out of the authoring prompt for Attribute.FEATURE. Measured on the frozen 50,000-product catalog: 136,232 distinct feature values, of which 11,522 clear DF>=2 and 90 clear DF>=100, and the high-DF survivors are verbatim catalog boilerplate -- \"imported\" on 13,832 products, \"machine wash\" on 8,899, \"rubber sole\" on 5,616. So any DF floor at or below 100 admits literal spans of the target's own searchable_text into the prompt. The feature bucket cannot simply be dropped instead: feature is 50.5% of all control-card constraints. This table is therefore the mechanism that keeps \"no catalog text reaches the authoring prompt\" a data-flow property a test can assert, rather than a prompt-discipline instruction a future author could quietly violate. Every admitted feature gist pair is an (attribute, token) drawn from this table, never the catalog string, and neither half of the pair may appear as a substring of its own source value after normalization -- an echoing abstraction is not an abstraction.",
+  "schema_version": 1
+}
