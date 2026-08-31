@@ -17,9 +17,11 @@
 
 ## How to read this report
 
-Three numbers below legitimately differ from figures quoted elsewhere in
-`.planning/`, and one correction is deliberately absent. Each is stated here so that
-an apparent inconsistency reads as what it is.
+Seven items below could be misread as inconsistencies: three numbers that legitimately
+differ from figures quoted elsewhere in `.planning/`, one correction that is
+deliberately absent, and three properties of this report that a reader would otherwise
+have to infer. Each is stated here so that an apparent inconsistency reads as what it
+is.
 
 **1. Per-bucket sigma comes from the bucket's own observed rate.** Every
 per-scenario row computes its binomial sigma from that bucket's OWN observed `p` and
@@ -57,6 +59,57 @@ sigma; they are not primary hypotheses. Folding four scenarios into the family w
 inflate it fourfold, destroy power on the one comparison that decides anything, and
 add power to a Boundary bucket of n=10 that can detect nothing regardless. The
 omission is deliberate, not an oversight.
+
+**5. The per-scenario TechnicalScore must be n-weighted, not averaged.** Each
+per-scenario TechnicalScore is computed from that bucket's OWN HR@10, MRR and MTTC, so
+it is the score that bucket would have scored in isolation. Combining the four back into
+the overall score is legitimate but only under SAMPLE-SIZE weighting. Every term is
+n-weighted-linear across a partition of the sessions: HR@10 and MRR are means, the mean
+MTTC over all sessions is the n-weighted mean of the bucket MTTCs, and
+`Efficiency = clip((11 - mean(MTTC)) / 10, 0, 1)` is affine in that mean, its clip
+inactive because an achievable MTTC lies in `[1, 11]`. So the n-weighted combination
+reproduces the overall TechnicalScore to within 6-dp rounding -- on the anchor,
+`0.7688401` against `0.76884`, a `1e-07` discrepancy that is rounding and nothing else.
+
+An UNWEIGHTED average of the four buckets does NOT reproduce it, and that is the
+misreading this note exists to prevent: on the anchor a flat mean of the four gives
+`0.761956` against the true `0.76884`, understating the score by `0.006884`. The four
+buckets are n=10, n=80, n=80 and n=30, so a flat average silently gives the n=10
+Boundary bucket eight times the influence its evidence supports. The overall figure is
+always the correct one to quote. As in item 4, these per-scenario rows are descriptive
+non-inferiority gates and are never Holm-corrected, and a bucket's score should not be
+compared across buckets of unequal size without reading its sigma column first.
+
+**6. A degenerate arm still counts toward the Holm family and `correction_k`.** An arm
+whose delta and standard error are both zero remains in the family, because the family
+size is a property of the experimental DESIGN, and shrinking it after seeing which arms
+turned out degenerate would be a data-dependent family definition. `--include` is the
+a-priori mechanism for a retained record that belongs in the report without joining the
+family. Two `assumptions` keys state this in machine-readable form so the claim can be
+checked against the payload rather than taken on trust: `holm_family_size` and
+`holm_family_includes_degenerate_arms`. Every value on every adjudication row is now
+MEASURED: no field is a hard-coded constant on any path, including the zero-variance
+one, where the permutation p and the MDD were previously asserted by a special case. The
+payload field `is_degenerate` on each adjudication row is descriptive only and feeds no
+decision. Deliberate choice, recorded here so it is not read as an oversight: the
+rendered "Pairwise adjudication" table stays at its existing fourteen columns and is NOT
+widened to show `is_degenerate`. Widening it was the alternative and would have been
+mechanically safe. It was rejected because this disclosure already sends the reader to
+the machine-readable payload keys, the report's own header declares
+`experiments/baselines/leaderboard.json` the source of truth, and a fifteenth column on
+an already-fourteen-column table costs legibility for an auditor who can read the field
+straight from the payload. The per-scenario breakout is the only rendered table widened.
+
+**7. The 95% interval uses the `(R + 1)` order-statistic convention.** The lower and
+upper bounds are the `floor(0.025 * (R + 1))`-th and `ceil(0.975 * (R + 1))`-th order
+statistics of the sorted replicates, which at `R = 10,000` are indices `249` and `9750`.
+The two bounds are mirror images of one another, and the resulting nominal coverage is
+at or above 95% at every admissible resample count. The previous report's bounds were
+computed one index differently and gave 94.99% coverage with asymmetric tails, so a
+reader comparing this report against the previous one will see the CI move slightly and
+nothing else move with it. `standard_error`, the MDD, sigma-hat, `E[max k]` and the
+corrected delta are all unchanged, because only the interval indices moved and the
+resampling stream itself did not.
 
 **Verdict vocabulary.** The `verdict` column holds exactly four values, and a reader
 who guesses at them will mis-read the adjudication table.
@@ -125,28 +178,28 @@ Computed from retained session outcomes alone; no agent was invoked.
 Each sigma is the bucket's own binomial standard error, unrounded. A row that
 is not decision-grade cannot resolve a one-session swing from noise on its own.
 
-| Candidate | Scenario | n | HR@10 | MRR | MTTC | binomial sigma | Decision-grade? |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| `synthetic-promote-10` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
-| `synthetic-promote-10` | `browsing` | 80 | `0.950000` | `0.570764` | `3.125000` | `0.024367` | yes |
-| `synthetic-promote-10` | `buying` | 80 | `0.900000` | `0.512490` | `3.287500` | `0.033541` | yes |
-| `synthetic-promote-10` | `intent_override` | 30 | `0.900000` | `0.738095` | `4.533333` | `0.054772` | no |
-| `fallback-lexical` | `boundary` | 10 | `0.900000` | `0.428175` | `3.100000` | `0.094868` | no |
-| `fallback-lexical` | `browsing` | 80 | `0.975000` | `0.488844` | `2.675000` | `0.017455` | yes |
-| `fallback-lexical` | `buying` | 80 | `0.900000` | `0.497376` | `3.162500` | `0.033541` | yes |
-| `fallback-lexical` | `intent_override` | 30 | `0.866667` | `0.708466` | `4.800000` | `0.062063` | no |
-| `exploration-tail-only` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
-| `exploration-tail-only` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
-| `exploration-tail-only` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
-| `exploration-tail-only` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
-| `anchor-legacy` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
-| `anchor-legacy` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
-| `anchor-legacy` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
-| `anchor-legacy` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
-| `baseline-auto-disabled` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.094868` | no |
-| `baseline-auto-disabled` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.024367` | yes |
-| `baseline-auto-disabled` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.033541` | yes |
-| `baseline-auto-disabled` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.054772` | no |
+| Candidate | Scenario | n | HR@10 | MRR | MTTC | TechnicalScore | binomial sigma | Decision-grade? |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `synthetic-promote-10` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.719333` | `0.094868` | no |
+| `synthetic-promote-10` | `browsing` | 80 | `0.950000` | `0.570764` | `3.125000` | `0.803729` | `0.024367` | yes |
+| `synthetic-promote-10` | `buying` | 80 | `0.900000` | `0.512490` | `3.287500` | `0.757997` | `0.033541` | yes |
+| `synthetic-promote-10` | `intent_override` | 30 | `0.900000` | `0.738095` | `4.533333` | `0.800762` | `0.054772` | no |
+| `fallback-lexical` | `boundary` | 10 | `0.900000` | `0.428175` | `3.100000` | `0.736453` | `0.094868` | no |
+| `fallback-lexical` | `browsing` | 80 | `0.975000` | `0.488844` | `2.675000` | `0.800653` | `0.017455` | yes |
+| `fallback-lexical` | `buying` | 80 | `0.900000` | `0.497376` | `3.162500` | `0.755963` | `0.033541` | yes |
+| `fallback-lexical` | `intent_override` | 30 | `0.866667` | `0.708466` | `4.800000` | `0.769873` | `0.062063` | no |
+| `exploration-tail-only` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.719333` | `0.094868` | no |
+| `exploration-tail-only` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.790859` | `0.024367` | yes |
+| `exploration-tail-only` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.743539` | `0.033541` | yes |
+| `exploration-tail-only` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.794095` | `0.054772` | no |
+| `anchor-legacy` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.719333` | `0.094868` | no |
+| `anchor-legacy` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.790859` | `0.024367` | yes |
+| `anchor-legacy` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.743539` | `0.033541` | yes |
+| `anchor-legacy` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.794095` | `0.054772` | no |
+| `baseline-auto-disabled` | `boundary` | 10 | `0.900000` | `0.404444` | `3.600000` | `0.719333` | `0.094868` | no |
+| `baseline-auto-disabled` | `browsing` | 80 | `0.950000` | `0.527862` | `3.125000` | `0.790859` | `0.024367` | yes |
+| `baseline-auto-disabled` | `buying` | 80 | `0.900000` | `0.464296` | `3.287500` | `0.743539` | `0.033541` | yes |
+| `baseline-auto-disabled` | `intent_override` | 30 | `0.900000` | `0.715873` | `4.533333` | `0.794095` | `0.054772` | no |
 
 ## Pairwise adjudication
 
@@ -155,7 +208,7 @@ baseline it was measured against.
 
 | Candidate | Baseline | dTS | 95% CI | perm p | Holm p | MDD | sigma-hat | k | E[max k] | corrected dTS | clears floor | verdict | failed criteria |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| `fallback-lexical` | `c23c99876ee0` | `0.006110` | `[-0.018886, 0.031239]` | `0.645335` | `1.000000` | `0.035987` | `0.012845` | 2 | `0.564190` | `-0.001137` | no | not detectable | `holm_significance, practical_floor` |
+| `fallback-lexical` | `c23c99876ee0` | `0.006110` | `[-0.018892, 0.031311]` | `0.645335` | `1.000000` | `0.035987` | `0.012845` | 2 | `0.564190` | `-0.001137` | no | not detectable | `holm_significance, practical_floor` |
 | `exploration-tail-only` | `c23c99876ee0` | `0.0` | `[0.0, 0.0]` | `1.000000` | `1.000000` | `0.0` | `0.0` | 2 | `0.564190` | `0.0` | no | no difference | `holm_significance, practical_floor` |
 
 Compare this report with retained rows in `experiments/RUNS.md`.

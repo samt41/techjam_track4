@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -187,6 +188,72 @@ class LeaderboardPayloadTest(unittest.TestCase):
             boundary["binomial_standard_error"], 0.09486832980505137, places=12
         )
         self.assertNotEqual(boundary["binomial_standard_error"], 0.094868)
+
+    def test_scenario_rows_carry_a_technical_score(self) -> None:
+        # SC1: TechnicalScore is a column per scenario, not only overall. Asserted
+        # against technical_score(metric_summary(<that bucket's sessions>)) recomputed
+        # from the sessions rather than against the row's own numbers, so the row cannot
+        # satisfy this by being internally consistent with a wrong grouping.
+        sessions = _mixed_bucket_sessions()
+        payload = build_leaderboard(
+            (_entry("mixed", sessions),), (), baseline_fingerprint=None
+        )
+        rows = payload["scenario_breakout"]
+        self.assertEqual(
+            sorted(rows[0]),
+            [
+                "binomial_standard_error",
+                "decision_grade",
+                "fingerprint",
+                "hit_rate_at_10",
+                "mrr",
+                "mttc",
+                "sample_count",
+                "scenario_type",
+                "technical_score",
+            ],
+        )
+        for row in rows:
+            bucket = tuple(
+                item for item in sessions if item.scenario_type == row["scenario_type"]
+            )
+            with self.subTest(scenario=row["scenario_type"]):
+                self.assertEqual(
+                    row["technical_score"], technical_score(metric_summary(bucket))
+                )
+
+    def test_the_scenario_technical_score_is_bucket_local(self) -> None:
+        # The bucket score is computed from the bucket's OWN metrics, so recombining the
+        # four into the overall score requires SAMPLE-SIZE weighting. Every term is
+        # n-weighted-linear across a partition -- HR@10 and MRR are means, mean MTTC is a
+        # mean, and Efficiency is affine in it with an inactive clip -- so n-weighting
+        # reproduces the overall score up to 6-dp rounding, while a FLAT average does
+        # not. Both directions are asserted: the equality is what makes the column
+        # coherent, and the inequality is the misreading HOW_TO_READ item 5 warns about.
+        entry = _anchor_entry()
+        payload = build_leaderboard((entry,), (), baseline_fingerprint=None)
+        rows = payload["scenario_breakout"]
+        self.assertEqual(len(rows), 4)
+        self.assertNotEqual(
+            len({row["sample_count"] for row in rows}),
+            1,
+            "buckets must differ in size or the weighting distinction is vacuous",
+        )
+        overall = technical_score(metric_summary(entry.sessions))
+        total = sum(row["sample_count"] for row in rows)
+        n_weighted = (
+            sum(row["sample_count"] * row["technical_score"] for row in rows) / total
+        )
+        flat = sum(row["technical_score"] for row in rows) / len(rows)
+        # Rounding only: each bucket score and the overall score are each 6-dp rounded.
+        self.assertAlmostEqual(n_weighted, overall, places=6)
+        # The flat average is wrong by far more than rounding, and materially so -- it
+        # exceeds the 0.01 practical floor's own order of magnitude.
+        self.assertNotAlmostEqual(flat, overall, places=6)
+        self.assertGreater(abs(flat - overall), 0.001)
+        # Non-vacuity guard: still the same score to within a loose bound, so the test
+        # cannot pass on a nonsense value.
+        self.assertLess(abs(flat - overall), 0.05)
 
     def test_decision_grade_is_false_below_forty_samples(self) -> None:
         payload = build_leaderboard(
@@ -387,6 +454,30 @@ class LeaderboardMarkdownTest(unittest.TestCase):
         self.assertEqual(len(separators), 4)
         for line in separators:
             self.assertIn("---:", line)
+
+    def test_the_scenario_table_renders_a_technical_score_column(self) -> None:
+        # SC1 in the rendered view. The column sits between MTTC and binomial sigma so
+        # the metric quartet reads in the same order as the Candidates table.
+        rendered = render_markdown(self._payload())
+        section = rendered[
+            rendered.index("## Per-scenario breakout") : rendered.index(
+                "## Pairwise adjudication"
+            )
+        ]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
+        header, separator = lines[0], lines[1]
+        self.assertIn("TechnicalScore", header)
+        self.assertIn("| MTTC | TechnicalScore | binomial sigma |", header)
+
+        def cells(line: str) -> list[str]:
+            return [part.strip() for part in line.strip().strip("|").split("|")]
+
+        self.assertEqual(len(cells(header)), 9)
+        self.assertEqual(len(cells(separator)), 9)
+        self.assertEqual(cells(separator)[6], "---:")
+        for line in lines[2:]:
+            with self.subTest(row=line):
+                self.assertEqual(len(cells(line)), 9)
 
     def test_the_render_ends_with_exactly_one_newline(self) -> None:
         rendered = render_markdown(self._payload())
@@ -612,6 +703,34 @@ class CommittedLeaderboardTest(unittest.TestCase):
             self.assertAlmostEqual(
                 row["binomial_standard_error"], expected, places=12
             )
+
+    def test_the_committed_payload_carries_a_per_scenario_technical_score(self) -> None:
+        # SC1 asserted against the COMMITTED artifact, which is what a judge reads.
+        rows = self.payload["scenario_breakout"]
+        self.assertEqual(len(rows), 20)
+        # Reported as the set of offending rows rather than row by row, so a missing key
+        # surfaces as ONE failure naming every bucket that lacks it.
+        missing = [
+            (row["fingerprint"][:12], row["scenario_type"])
+            for row in rows
+            if "technical_score" not in row
+        ]
+        self.assertEqual(missing, [])
+        anchor = self._anchor()
+        anchor_rows = [
+            row for row in rows if row["fingerprint"] == anchor["fingerprint"]
+        ]
+        self.assertEqual(len(anchor_rows), 4)
+        implausible = [
+            (row["scenario_type"], row["technical_score"])
+            for row in anchor_rows
+            if not (
+                isinstance(row["technical_score"], float)
+                and math.isfinite(row["technical_score"])
+                and 0.0 < row["technical_score"] < 1.0
+            )
+        ]
+        self.assertEqual(implausible, [])
 
     def test_the_committed_adjudication_was_generated_at_production_scale(self) -> None:
         rows = self.payload["adjudication"]

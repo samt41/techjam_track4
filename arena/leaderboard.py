@@ -51,9 +51,11 @@ _SCIENTIFIC_NOTATION_BELOW = 1e-4
 # inconsistencies into three demonstrations of statistical care; leaving them unstated
 # would make a careful report look careless.
 HOW_TO_READ = """\
-Three numbers below legitimately differ from figures quoted elsewhere in
-`.planning/`, and one correction is deliberately absent. Each is stated here so that
-an apparent inconsistency reads as what it is.
+Seven items below could be misread as inconsistencies: three numbers that legitimately
+differ from figures quoted elsewhere in `.planning/`, one correction that is
+deliberately absent, and three properties of this report that a reader would otherwise
+have to infer. Each is stated here so that an apparent inconsistency reads as what it
+is.
 
 **1. Per-bucket sigma comes from the bucket's own observed rate.** Every
 per-scenario row computes its binomial sigma from that bucket's OWN observed `p` and
@@ -91,6 +93,57 @@ sigma; they are not primary hypotheses. Folding four scenarios into the family w
 inflate it fourfold, destroy power on the one comparison that decides anything, and
 add power to a Boundary bucket of n=10 that can detect nothing regardless. The
 omission is deliberate, not an oversight.
+
+**5. The per-scenario TechnicalScore must be n-weighted, not averaged.** Each
+per-scenario TechnicalScore is computed from that bucket's OWN HR@10, MRR and MTTC, so
+it is the score that bucket would have scored in isolation. Combining the four back into
+the overall score is legitimate but only under SAMPLE-SIZE weighting. Every term is
+n-weighted-linear across a partition of the sessions: HR@10 and MRR are means, the mean
+MTTC over all sessions is the n-weighted mean of the bucket MTTCs, and
+`Efficiency = clip((11 - mean(MTTC)) / 10, 0, 1)` is affine in that mean, its clip
+inactive because an achievable MTTC lies in `[1, 11]`. So the n-weighted combination
+reproduces the overall TechnicalScore to within 6-dp rounding -- on the anchor,
+`0.7688401` against `0.76884`, a `1e-07` discrepancy that is rounding and nothing else.
+
+An UNWEIGHTED average of the four buckets does NOT reproduce it, and that is the
+misreading this note exists to prevent: on the anchor a flat mean of the four gives
+`0.761956` against the true `0.76884`, understating the score by `0.006884`. The four
+buckets are n=10, n=80, n=80 and n=30, so a flat average silently gives the n=10
+Boundary bucket eight times the influence its evidence supports. The overall figure is
+always the correct one to quote. As in item 4, these per-scenario rows are descriptive
+non-inferiority gates and are never Holm-corrected, and a bucket's score should not be
+compared across buckets of unequal size without reading its sigma column first.
+
+**6. A degenerate arm still counts toward the Holm family and `correction_k`.** An arm
+whose delta and standard error are both zero remains in the family, because the family
+size is a property of the experimental DESIGN, and shrinking it after seeing which arms
+turned out degenerate would be a data-dependent family definition. `--include` is the
+a-priori mechanism for a retained record that belongs in the report without joining the
+family. Two `assumptions` keys state this in machine-readable form so the claim can be
+checked against the payload rather than taken on trust: `holm_family_size` and
+`holm_family_includes_degenerate_arms`. Every value on every adjudication row is now
+MEASURED: no field is a hard-coded constant on any path, including the zero-variance
+one, where the permutation p and the MDD were previously asserted by a special case. The
+payload field `is_degenerate` on each adjudication row is descriptive only and feeds no
+decision. Deliberate choice, recorded here so it is not read as an oversight: the
+rendered "Pairwise adjudication" table stays at its existing fourteen columns and is NOT
+widened to show `is_degenerate`. Widening it was the alternative and would have been
+mechanically safe. It was rejected because this disclosure already sends the reader to
+the machine-readable payload keys, the report's own header declares
+`experiments/baselines/leaderboard.json` the source of truth, and a fifteenth column on
+an already-fourteen-column table costs legibility for an auditor who can read the field
+straight from the payload. The per-scenario breakout is the only rendered table widened.
+
+**7. The 95% interval uses the `(R + 1)` order-statistic convention.** The lower and
+upper bounds are the `floor(0.025 * (R + 1))`-th and `ceil(0.975 * (R + 1))`-th order
+statistics of the sorted replicates, which at `R = 10,000` are indices `249` and `9750`.
+The two bounds are mirror images of one another, and the resulting nominal coverage is
+at or above 95% at every admissible resample count. The previous report's bounds were
+computed one index differently and gave 94.99% coverage with asymmetric tails, so a
+reader comparing this report against the previous one will see the CI move slightly and
+nothing else move with it. `standard_error`, the MDD, sigma-hat, `E[max k]` and the
+corrected delta are all unchanged, because only the interval indices moved and the
+resampling stream itself did not.
 
 **Verdict vocabulary.** The `verdict` column holds exactly four values, and a reader
 who guesses at them will mis-read the adjudication table.
@@ -311,8 +364,26 @@ def build_leaderboard(
             # an analysis quantity asserted at places=12 by plans 01-03 and 01-09
             # (0.09486832980505137 and friends), not a figure the evaluator also emits,
             # so there is no output-rounding convention to match.
+            # The per-bucket composite is added HERE rather than inside
+            # arena.metrics.ScenarioSummary.as_record(), and the placement is
+            # load-bearing. arena/metrics.py is a transcription of the evaluator's own
+            # metric chain (its module comment says so, and D-06/D-08 make the
+            # cross-agreement between the two independent paths the phase's validation
+            # evidence). The evaluator emits NO per-scenario composite, so adding one
+            # there would make the transcription claim false and would bury a
+            # leaderboard presentation choice inside the module whose agreement with
+            # the evaluator is what is being validated. This module is the output
+            # boundary, where the other output-only concerns -- efficiency rounding and
+            # fingerprint truncation -- already live.
+            #
+            # No second round() here: technical_score already rounds its own result to
+            # 6 dp, exactly as the candidate table's technical_score does.
             scenarios.append(
-                {"fingerprint": entry.fingerprint, **scenario.as_record()}
+                {
+                    "fingerprint": entry.fingerprint,
+                    **scenario.as_record(),
+                    "technical_score": technical_score(scenario.summary),
+                }
             )
 
     observed_resamples = tuple(sorted({row.resamples for row in rows}))
@@ -464,21 +535,36 @@ def render_markdown(payload: dict[str, object]) -> str:
 
     scenario_rows = tuple(
         "| `{name}` | `{scenario}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
-        " `{sigma}` | {grade} |".format(
+        " `{technical_score}` | `{sigma}` | {grade} |".format(
             name=names.get(item["fingerprint"], item["fingerprint"]),
             scenario=item["scenario_type"],
             count=item["sample_count"],
             hit_rate=_cell(item["hit_rate_at_10"]),
             mrr=_cell(item["mrr"]),
             mttc=_cell(item["mttc"]),
+            technical_score=_cell(item["technical_score"]),
             sigma=_cell(item["binomial_standard_error"]),
             grade=_cell(item["decision_grade"]),
         )
         for item in payload["scenario_breakout"]
     )
+    # Nine entries, wrapped one per line: at nine the single-line spelling runs to 118
+    # characters, past the width this file holds elsewhere. TechnicalScore sits between
+    # MTTC and binomial sigma so the metric quartet reads in the same order as the
+    # Candidates table above.
     scenario_table = _table(
-        ("Candidate", "Scenario", "n", "HR@10", "MRR", "MTTC", "binomial sigma", "Decision-grade?"),
-        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---"),
+        (
+            "Candidate",
+            "Scenario",
+            "n",
+            "HR@10",
+            "MRR",
+            "MTTC",
+            "TechnicalScore",
+            "binomial sigma",
+            "Decision-grade?",
+        ),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---"),
         scenario_rows,
     )
 
