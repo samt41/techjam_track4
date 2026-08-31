@@ -98,7 +98,7 @@ Plans:
 
 **Gap-closure Wave 2** *(blocked on 01-10)*
 
-- [ ] 01-14-PLAN.md — Leaderboard auditability: fail closed on a drifted reconstruction, and disclose the Holm-family composition (MEAS-14)
+- [x] 01-14-PLAN.md — Leaderboard auditability: fail closed on a drifted reconstruction, and disclose the Holm-family composition (MEAS-14)
 
 **Gap-closure Wave 3** *(blocked on all of the above)*
 
@@ -213,7 +213,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 13/15 | In Progress|  |
+| 1. Measurement Rig Core | 14/15 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
