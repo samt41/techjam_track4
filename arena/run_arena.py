@@ -54,9 +54,46 @@ def _existing_file(value: str, label: str) -> Path:
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     # Built by iterating the allow-list rather than by naming each flag inline, so a
     # new candidate knob cannot reach the Agent without appearing in _OVERRIDE_FLAGS.
-    # An unset flag is OMITTED rather than recorded as None: it must leave the
-    # fingerprint identical to a run that never mentioned it, otherwise one
-    # configuration fingerprints two ways.
+    # An unset flag is OMITTED, and this filter is now the only rule: every override
+    # flag in the run subparser defaults to None, so the recorded mapping describes the
+    # INVOCATION rather than the effective configuration.
+    #
+    # The measured defect this replaces (01-VERIFICATION.md): --exploration defaulted
+    # to "disabled" and --lexical-mode to "auto", never None, so argparse injected both
+    # and the filter below omitted nothing. The default-everything configuration
+    # fingerprinted 25e5f553460050d9 through the CLI, carrying
+    # {"exploration": "disabled", "lexical_mode": "auto"}, and af7bdf3a928ec07f
+    # programmatically, carrying {}. One configuration, two identities, in the module
+    # whose entire job is to give a configuration exactly one.
+    #
+    # Omitting is safe rather than lossy: starter/agent.py:18-25 supplies exactly the
+    # same values as its own constructor defaults (exploration="disabled",
+    # lexical_mode=LexicalMode.AUTO, artifact_path=None), so an omitted override builds
+    # a byte-identical Agent. Two invocations that differ only in whether the operator
+    # typed a default-valued flag are the one case where two digests are the honest
+    # answer -- the record says what the operator asked for.
+    #
+    # The rejected alternative was to canonicalise instead, filling ALLOWED_OVERRIDES
+    # with the agent defaults inside candidate_overrides(). That would change a
+    # COMMITTED record's derived digest: experiments/baselines/synthetic-promote-10
+    # stores overrides {} beside the fingerprint
+    # 6eec1db14d0cc75b9d5365410c7d3253b15da54d96bb3839c6870ecc6c0bcec3 derived from it,
+    # so filling defaults would break
+    # test_every_record_derives_the_fingerprint_it_stores. This argparse change touches
+    # no committed record, because every record carries its own overrides mapping in
+    # summary.json and is reconstructed from that.
+    #
+    # This is a SEMANTICS change and not only a bug fix: what an omitted flag means to
+    # a fingerprint differs before and after this edit. experiments/baselines/run-a
+    # stores {"exploration": "disabled", "lexical_mode": "auto"} because the pre-fix
+    # CLI injected those argparse defaults; run-b stores an explicit
+    # "exploration": "disabled" and run-c an explicit "lexical_mode": "auto" for the
+    # same reason. All three keep deriving exactly the digest they store, and each
+    # one's documented invocation typed both flags, so re-running it still mints the
+    # committed digest. What a reader must NOT assume is that a future flag-free
+    # invocation of the same configuration matches one of those records: it records {}
+    # and mints a different digest while configuring a byte-identical Agent.
+    # experiments/RUNS.md discloses that; it is not duplicated here.
     overrides = {
         flag: getattr(args, flag)
         for flag in _OVERRIDE_FLAGS
@@ -164,12 +201,12 @@ def main() -> None:
     run_parser.add_argument(
         "--exploration",
         choices=("disabled", "tail-only"),
-        default="disabled",
+        default=None,
     )
     run_parser.add_argument(
         "--lexical-mode",
         choices=("auto", "fts5", "fallback"),
-        default="auto",
+        default=None,
     )
     run_parser.add_argument("--artifact-path", default=None)
 
