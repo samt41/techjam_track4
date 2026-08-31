@@ -610,13 +610,20 @@ def check_scenario_mix(rows: tuple[dict, ...]) -> None:
     if unknown:
         raise RegistryError(f"corpus carries unknown scenario types: {unknown}")
     total = len(rows)
-    for scenario, share in SCENARIO_MIX_TARGET:
-        observed = counts.get(scenario, 0) / total
-        if abs(observed - share) > _MIX_TOLERANCE:
-            raise RegistryError(
-                f"scenario {scenario} is {observed:.4f} of the corpus but the"
-                f" official mix is {share:.4f} (tolerance {_MIX_TOLERANCE})"
-            )
+    # Every offending scenario is named at once rather than the first one found: a
+    # mix is a single allocation, so raising on the first deviation would make the
+    # operator fix one share, regenerate a corpus, and rediscover the next.
+    offenders = [
+        f"{scenario} is {counts.get(scenario, 0) / total:.4f} of the corpus,"
+        f" official mix {share:.4f}"
+        for scenario, share in SCENARIO_MIX_TARGET
+        if abs(counts.get(scenario, 0) / total - share) > _MIX_TOLERANCE
+    ]
+    if offenders:
+        raise RegistryError(
+            "scenario mix departs from the official 40/40/15/5 by more than"
+            f" {_MIX_TOLERANCE} (D-30): " + "; ".join(offenders)
+        )
 
 
 def check_pairing(rows: tuple[dict, ...]) -> None:
