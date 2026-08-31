@@ -21,6 +21,7 @@ from arena.metrics import (
 from arena.store import (
     ArenaStoreError,
     load_sessions,
+    publish,
     resolve_run_directory,
     sha256_file,
     validate_run_id,
@@ -393,6 +394,58 @@ class StoreTest(unittest.TestCase):
             sha256_file(Path("evaluator/local_evaluator.py")),
             "84ea899707452de249ca62abee77c4b40ab7a3139b5cc798ac30c9f521f91b30",
         )
+
+
+class PublishFailureTest(unittest.TestCase):
+    def test_a_non_directory_oserror_does_not_delete_the_destination(self) -> None:
+        # The exact scenario in which the pre-fix handler called shutil.rmtree on
+        # whatever sat at destination (T-01-28): the replace failed for a reason
+        # that has nothing to do with a stale corpse.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            working = root / "working"
+            working.mkdir()
+            destination = root / "committed-record"
+            destination.write_text("committed", encoding="utf-8")
+            with patch("arena.store.os.replace", side_effect=OSError("denied")):
+                with self.assertRaises(ArenaStoreError) as caught:
+                    publish(working, destination)
+            self.assertTrue(destination.exists())
+            self.assertEqual(destination.read_text(encoding="utf-8"), "committed")
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+
+    def test_a_stale_destination_is_cleared_and_the_publish_retried(self) -> None:
+        # run_candidate's crashed-corpse recovery. Only the outcome is asserted:
+        # POSIX replaces an empty directory outright while Windows raises and takes
+        # the clear-and-retry arm, and pinning either would pin a platform.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            working = root / "working"
+            working.mkdir()
+            (working / "fresh.txt").write_text("fresh", encoding="utf-8")
+            destination = root / "record"
+            destination.mkdir()
+            (destination / "stale.txt").write_text("stale", encoding="utf-8")
+            publish(working, destination)
+            self.assertEqual(
+                sorted(item.name for item in destination.iterdir()),
+                ["fresh.txt"],
+            )
+
+    def test_a_failed_retry_reports_the_destination_and_preserves_the_cause(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            working = root / "working"
+            working.mkdir()
+            destination = root / "record"
+            destination.mkdir()
+            with patch("arena.store.os.replace", side_effect=OSError("denied")):
+                with self.assertRaises(ArenaStoreError) as caught:
+                    publish(working, destination)
+            self.assertIn(str(destination), str(caught.exception))
+        self.assertIsInstance(caught.exception.__cause__, OSError)
 
 
 if __name__ == "__main__":
