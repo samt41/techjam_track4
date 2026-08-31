@@ -82,7 +82,7 @@ for the researcher and planner, per CONTEXT.md § Claude's Discretion:
 
 - Escalating to a true third model family (Cloudflare Workers AI) — triggered only if the intra-vendor affinity gap clears its MDD
 - A human-authored probe subset as a gold standard
-- CR-01 / CR-02 fixes from `01-REVIEW.md` — Phase 3 gate
+- ~~CR-01 / CR-02 fixes from `01-REVIEW.md`~~ — superseded during this session: commit `f6c91e8` closed CR-01, CR-02, CR-03, WR-03, WR-04 and WR-05. Open review debt now begins at WR-06. See D-45.
 - De-duplicating `_SampleMappingAgent` — Phase 8 cleanup (Phase 1 D-07)
 - Using `expanded_confirm.v1` before Phase 5 — structurally forbidden by D-27
 - A dense/embedding semantic-equivalence check for faithfulness — excluded by the runtime-purity constraint; revisit only under V2-02

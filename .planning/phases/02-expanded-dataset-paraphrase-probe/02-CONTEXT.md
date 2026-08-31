@@ -302,26 +302,28 @@ evaluator.
   - **no Holm, no winner's-curse correction**, with the omission stated in the
     report text so it reads as deliberate.
 
-- **D-45: The WR-04 same-corpus guard is a hard requirement of this phase, but
-  verify its committed state before planning work against it.** WR-04 ("nothing
-  checks that two compared arms measured the same catalog and dataset") is a
-  warning only while one corpus exists. This phase makes five corpora live, so a
-  silent cross-corpus join becomes an available and catastrophic error:
-  `adjudicate` must refuse unless `dataset_sha256` **and** `catalog_sha256`
-  match.
+- **D-45: The WR-04 same-corpus guard already exists — inherit it, do not
+  rebuild it.** WR-04 ("nothing checks that two compared arms measured the same
+  catalog and dataset") is a warning only while one corpus exists; this phase
+  makes five corpora live, which turns a silent cross-corpus join into an
+  available and catastrophic error.
 
-  **As of 2026-08-31 that guard, plus fixes for CR-01, CR-02, CR-03, WR-01,
-  WR-03 and WR-05, exist as uncommitted working-tree changes in `arena/` and
-  `tests/` (384 tests green).** They were applied outside this discussion.
-  Planning must therefore start by checking `git status` and `git log` for
-  `arena/adjudication.py`: if those changes have been committed, WR-04 is
-  **closed** and this phase inherits it — do not re-implement it. If they were
-  discarded, WR-04 is in scope here.
+  **Commit `f6c91e8` (2026-08-31, "Close immediate phase one review gaps") closed
+  it, along with CR-01, CR-02, CR-03, WR-03, WR-05 and the invalid
+  override-value path.** `adjudicate` now refuses any candidate whose
+  `catalog_sha256` or `dataset_sha256` differs from the baseline's, and refuses
+  duplicate candidate fingerprints; `build_leaderboard` rejects duplicate entry
+  fingerprints; `SessionOutcome.validate()` checks `scenario_type`, boolean
+  `hit`, and integer rank/turn fields; `CandidateSpec.validate()` checks
+  override *values*. 384 tests pass. Per the resolution note now at the top of
+  `01-REVIEW.md`, unresolved review debt begins at **WR-06**.
 
-  CR-01 (fingerprint collision collapsing rows) cannot fire on this phase's
-  record set either way: one candidate × five corpora yields five distinct
-  `dataset_sha256` values and therefore five distinct fingerprints. CR-01/CR-02
-  remain a Phase 3 gate per `PROJECT.md` regardless of their current state.
+  Consequences for planning: this phase inherits the guard and must not
+  re-implement it — but it **must** exercise it, since Phase 2 is the first
+  point where five distinct `dataset_sha256` values exist and the guard's
+  refusal path becomes reachable in practice. Add a test that a cross-corpus
+  pairing is refused. Nothing in this phase's record set can trigger CR-01
+  regardless: one candidate × five corpora yields five distinct fingerprints.
 
 - **D-46: Pairing metadata rides inside the sample rows.** Each generated sample
   carries `pair_id` and `arm` (`control` | `probe_sonnet` | `probe_haiku`).
@@ -422,8 +424,9 @@ constrains them:
   still binding. D-04 (committed evidence), D-08 (sole evaluator seam), D-12
   (JSON truth / Markdown view), D-24 (content-seeded resampling) are load-bearing
   here.
-- `.planning/phases/01-measurement-rig-core/01-REVIEW.md` § WR-04 — the
-  same-dataset pairing gap D-45 closes; § CR-01, CR-02 — deferred to Phase 3
+- `.planning/phases/01-measurement-rig-core/01-REVIEW.md` — read the
+  **Resolution update** at the top first: CR-01, CR-02, CR-03, WR-03, WR-04 and
+  WR-05 are closed by commit `f6c91e8`; open debt begins at WR-06 (see D-45)
 - `arena/evaluator_bridge.py` — the seam D-47 widens
 - `arena/candidate.py` — `CandidateSpec`, already carrying `dataset_sha256`, so
   corpus provenance is half-built
