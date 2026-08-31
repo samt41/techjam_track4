@@ -220,3 +220,15 @@ re-export) — were implemented and machine-checked. T-02-08 remains `accept`:
 |---|---|---|
 | 1 | `e78873c` | `feat(02-01): Widen the evaluator seam to eight names and make its guard recursive` |
 | 2 | `568ddc8` | `refactor(02-01): Promote _STOPWORDS to public STOPWORDS` |
+| — | `9134d2e` | `docs(02-01): Complete evaluator seam widening and boundary guard recursion plan` |
+
+## Self-Check: PASSED
+
+All claimed files exist on disk (`arena/datasets/__init__.py`,
+`arena/evaluator_bridge.py`, `tests/test_arena_boundary.py`,
+`starter/shopping_agent/constraint_extractor.py`, this SUMMARY), and all three
+claimed commits are present on `worktree-agent-a70f0c4fafcc72f81` above base
+`c2bdc50`. `git show --stat e78873c` confirms the D-47 one-commit requirement:
+the seam, its guard, and the `arena/datasets/` stub landed together. No commit in
+this plan deleted a tracked file. Working tree clean; `STATE.md` and `ROADMAP.md`
+were not modified (orchestrator-owned).
