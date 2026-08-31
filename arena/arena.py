@@ -16,6 +16,7 @@ from arena.store import (
     BASELINES_ROOT,
     SESSIONS_FILENAME,
     SUMMARY_FILENAME,
+    ArenaStoreError,
     publish,
     resolve_run_directory,
     sha256_file,
@@ -31,6 +32,23 @@ from starter.shopping_agent.search_backend import LexicalMode
 # paths produced the record. D-06 keeps experiments/run_public.py frozen, so both
 # paths exist simultaneously and their agreement is the validation evidence.
 PROVENANCE = "arena.arena.run_candidate via `python -m arena.run_arena run`"
+
+# Exactly the keys run_candidate writes into `summary` before the harness-result splat.
+# SPEC_NAME_FIELD is taken from the imported constant rather than spelled as a literal
+# so the guard and the writer cannot drift onto different field names.
+_PROVENANCE_KEYS = frozenset({
+    "run_id",
+    "fingerprint",
+    SPEC_NAME_FIELD,
+    "code_revision",
+    "code_revision_dirty",
+    "overrides",
+    "catalog_sha256",
+    "dataset_sha256",
+    "elapsed_seconds",
+    "provenance",
+    "provenance_complete",
+})
 
 
 class _SampleMappingAgent:
@@ -142,6 +160,25 @@ def run_candidate(
             # first would strand a completed 200-session run at its final step.
             agent.close()
         elapsed_seconds = perf_counter() - started
+
+        # The harness result is splatted LAST into the summary literal below, so any
+        # key it returns wins over the arena-written provenance beside it.
+        # Today evaluate() returns none of these and nothing collides; the guard is for
+        # the day it does. The sibling writer import_legacy_results._build_summary
+        # already refuses on exactly this hazard, and the asymmetry was the defect: a
+        # provenance field silently overwritten by harness output produces a record
+        # that lies about what produced it, and no downstream check would notice,
+        # because test_published_summary_carries_the_fingerprint compares the record
+        # against a spec built by the same code path. Raised BEFORE the summary is
+        # constructed, and before anything is written, so the failure is a refusal
+        # rather than a repaired record. Reordering the splat to first would also stop
+        # the overwrite, but it would silently DROP harness output on a name clash --
+        # the same class of quiet wrongness in the other direction.
+        colliding = sorted(_PROVENANCE_KEYS & set(result))
+        if colliding:
+            raise ArenaStoreError(
+                f"harness result already carries provenance keys {colliding}",
+            )
 
         sessions = tuple(
             _session_outcome(row) for row in tuple(result.pop("sessions"))
