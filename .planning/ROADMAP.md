@@ -144,7 +144,7 @@ Plans:
 **Wave 5** *(blocked on Wave 4; operator-run)*
 
 - [ ] 02-11-PLAN.md — Author and freeze `probe.v1`: 300 Sonnet pairs plus a 100-pair Haiku cross-check arm, with every gate swept over the committed file and every per-pair overlap ratio re-derived from the committed target snapshot
-- [ ] 02-14-PLAN.md — D-31/D-55 control-vs-fallback byte identity, D-36 pair pinning, and the L-3 solvability-absence AST proof (split out of 02-09 on scope grounds)
+- [x] 02-14-PLAN.md — D-31/D-55 control-vs-fallback byte identity, D-36 pair pinning, and the L-3 solvability-absence AST proof (split out of 02-09 on scope grounds)
 
 **Wave 6** *(blocked on Wave 5; operator-run)*
 
@@ -249,7 +249,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 10/14 | In Progress|  |
+| 2. Expanded Dataset & Paraphrase Probe | 11/14 | In Progress|  |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
