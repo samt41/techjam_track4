@@ -121,8 +121,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Seam widening to eight names (D-47), a recursive path-anchored boundary scan (L-1), the `arena/datasets/` package stub, and the public `STOPWORDS` promotion (D-54)
-- [ ] 02-02-PLAN.md — The D-53 corpus-baselines table: a reporting surface separate from `LEADERBOARD.md`
+- [x] 02-01-PLAN.md — Seam widening to eight names (D-47), a recursive path-anchored boundary scan (L-1), the `arena/datasets/` package stub, and the public `STOPWORDS` promotion (D-54)
+- [x] 02-02-PLAN.md — The D-53 corpus-baselines table: a reporting surface separate from `LEADERBOARD.md`
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -249,7 +249,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 0/13 | Planned | - |
+| 2. Expanded Dataset & Paraphrase Probe | 2/14 | In Progress|  |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
