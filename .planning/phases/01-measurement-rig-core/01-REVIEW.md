@@ -1,8 +1,8 @@
 ---
 phase: 01-measurement-rig-core
-reviewed: 2026-08-30T10:36:25Z
+reviewed: 2026-08-31T00:00:00Z
 depth: standard
-files_reviewed: 22
+files_reviewed: 20
 files_reviewed_list:
   - arena/__init__.py
   - arena/adjudication.py
@@ -19,781 +19,759 @@ files_reviewed_list:
   - tests/test_arena_adjudication.py
   - tests/test_arena_boundary.py
   - tests/test_arena_candidate.py
+  - tests/test_arena_import_legacy.py
   - tests/test_arena_leaderboard.py
   - tests/test_arena_metrics.py
   - tests/test_arena_runner.py
   - tests/test_arena_statistics.py
-  - .gitignore
-  - experiments/LEADERBOARD.md
-  - experiments/RUNS.md
 findings:
   critical: 3
-  warning: 13
-  info: 6
-  total: 22
+  warning: 10
+  info: 5
+  total: 18
 status: issues_found
 ---
 
 # Phase 01: Code Review Report
 
-**Reviewed:** 2026-08-30T10:36:25Z
+**Reviewed:** 2026-08-31
 **Depth:** standard
-**Files Reviewed:** 22
+**Files Reviewed:** 20
 **Status:** issues_found
 
 ## Summary
 
-The rig is unusually well-documented and the statistical primitives in
-`arena/statistics.py` are, taken individually, correct: Holm's running maximum is
-present, the Phipson-Smyth `+1/+1` is present in both terms, the MDD multiplier is
-computed rather than hard-coded, Simpson integration matches its closed-form anchors,
-seeds are content-derived and never clock-derived, and every sort carries an explicit
-tie-break. I found no determinism violation, no unseeded RNG, no set-iteration ordering
-leak, and no path traversal or injection surface.
+The statistical core is in better shape than the surrounding plumbing. I attacked
+`statistics.py` hardest and could not break it: `percentile_indices` was brute-forced
+against exact-rational arithmetic for every `R` in `[40, 2_000_000]` — symmetry
+(`lower == R-1-upper`), coverage (`span >= 0.95R`) and float-vs-`Fraction` agreement hold
+at every count, with no boundary where `floor`/`ceil` drifts. The Efron-Tibshirani
+denominator, the Phipson-Smyth `+1` (and its correct *absence* in the exhaustive
+enumeration), the Holm running maximum with an index tie-break, the Simpson weighting in
+`expected_max_of_k`, and the `_delta`-recomputed-per-replicate discipline are all correct.
+The adjudication fixes from the gap-closure round are real: `abs(mttc_delta)` is
+load-bearing and covered, and the zero-variance path now measures rather than asserts —
+I re-derived every column of both committed adjudication rows from its siblings and they
+reconcile exactly.
 
-The defects are concentrated in `arena/adjudication.py`, in the *composition* of those
-primitives into the D-22/D-23 verdict rule. Two of them are demonstrable, reproducible
-false verdicts on realistic inputs, and both fail in the exact direction the phase claims
-to prevent:
+The defects are in the layers that carry those numbers to disk. Three of them corrupt a
+published number or a published identity:
 
-1. A candidate with a **+0.15 TechnicalScore** improvement (15x the ship floor) is
-   reported as `no difference`, because the zero-variance guard treats "the delta does
-   not move under resampling" as "there is no delta". The emitted row is internally
-   contradictory: `corrected_delta = 0.15` beside `clears_practical_floor = false`.
-2. A candidate that **regresses HR@10 by 3 points and regresses MRR** is adjudicated
-   `win`, because the D-23 exchange-rate criterion becomes vacuous whenever MTTC
-   improves. The criterion that exists to make an HR@10 regression disqualifying does
-   not fire.
+1. `build_leaderboard` keys per-entry metrics by fingerprint, so two entries sharing one
+   fingerprint silently print each other's metrics — reproduced.
+2. `adjudicate` refuses a candidate that collides with the baseline but not one that
+   collides with another candidate, so a duplicated `--candidate` inflates the Holm family
+   and `correction_k` — reproduced (`k=2`, `holm_p=1.0` for a single hypothesis).
+3. `SessionOutcome.validate()` admits internally inconsistent rows, so a record can
+   publish `hit_rate_at_10 = 1.0` beside a curve `HR@10 = 0.0` — reproduced.
 
-Both were executed against the checked-in code, not inferred; the reproducers are in the
-findings. Neither is covered by the 339-test suite, because every adjudication fixture in
-`tests/test_arena_adjudication.py` is built to have non-uniform per-session effects and a
-positive `mttc_delta`.
+Below that, a cluster of provenance and durability gaps: a non-atomic two-file write to
+git-tracked artifacts (the same defect that was just fixed in the sibling writer), a
+`.gitignore` claim that `git check-ignore` disproves, override *values* that are never
+validated while a comment claims they are, a dead `_SampleMappingAgent`, and no check that
+two compared arms were even measured against the same dataset.
 
-Beyond those, the trust-boundary hardening is asymmetric: `arena/import_legacy_results.py`
-will silently overwrite a committed baseline record where `arena/arena.py` refuses to;
-`arena/leaderboard.py` recomputes a record's fingerprint but never checks it against the
-one the record stores (that check lives only in a test over the already-committed set);
-and `arena/run_arena.py`'s override construction contradicts its own stated invariant
-about omitting unset flags.
-
----
+Full suite re-run during review: 207 tests, all passing. Every finding below is therefore
+invisible to the current suite.
 
 ## Critical Issues
 
-### CR-01: Zero-variance guard reports a large real effect as "no difference"
+### CR-01: Two entries sharing a fingerprint collapse, so one record's row prints another record's metrics
 
-**BLOCKER**
-**File:** `arena/adjudication.py:207-209`, `arena/adjudication.py:264-277`
+**File:** `arena/leaderboard.py:296-312`, `arena/leaderboard.py:499`
 
-**Issue:** `degenerate` is defined purely as `standard_error <= ZERO_VARIANCE_TOLERANCE`.
-The comment (`adjudication.py:202-206`) justifies it with the identical-arms case, where
-delta and SE collapse *together*. But SE and delta are independent quantities. The
-bootstrap SE is zero whenever the delta is invariant to *which* sessions are resampled —
-i.e. whenever the candidate improves every session by the same amount — regardless of how
-large that delta is.
-
-When that happens the branch hard-codes `holm_p = 1.0`, `detectable_difference = 0.0`,
-`clears_practical_floor = False` and `failed_criteria = ("holm_significance",
-"practical_floor")` while `corrected_delta` keeps the *real* delta. `classify_verdict`
-then returns `NO_DIFFERENCE`. The permutation test — which would have returned the
-Phipson-Smyth floor `1/(R+1)` here — is short-circuited at `adjudication.py:214-216` and
-never runs.
-
-Reproduced against the checked-in code:
-
-```
-baseline  = sessions_from_ranks((2,)*200)   # every session hits at rank 2
-candidate = sessions_from_ranks((1,)*200)   # every session hits at rank 1
-
-delta            = 0.15000000000000002
-standard_error   = 0.0
-permutation_p    = 1.0        <- asserted, never measured
-holm_p           = 1.0
-corrected_delta  = 0.15000000000000002
-clears_practical_floor = False   <- contradicts corrected_delta on the same row
-VERDICT          = no difference
-```
-
-A uniform rank-2 -> rank-1 promotion is exactly the class of ranking change this project
-says it is hunting (`CLAUDE.md`: "0.151 points sit in ranking"). The rig would tell the
-operator to discard it. The emitted `AdjudicationRow` also violates the module's own
-auditability contract (`adjudication.py:93-95`): a reader who re-derives
-`corrected_delta >= PRACTICAL_FLOOR` by hand gets `True` while the row says `False`.
-
-No test catches this. `_WIN_BASELINE`/`_WIN_CANDIDATE`, `_FLOOR_*`, `_SMALL_*` and the
-anchor controls all have heterogeneous per-session effects, so their SE is never zero.
-
-**Fix:** The guard must be conditioned on the *delta*, not only on the SE. A zero-SE
-result with a nonzero delta is a perfectly detectable effect and should go down the
-normal path (the permutation test handles it correctly — every sign-flip that moves any
-session changes the statistic, so `p` lands at the floor).
+**Issue:** `summaries` and `scores` are dicts keyed on `entry.fingerprint`:
 
 ```python
-degenerate = tuple(
-    result.standard_error <= ZERO_VARIANCE_TOLERANCE
-    and abs(result.delta) <= ZERO_VARIANCE_TOLERANCE
-    for result in bootstraps
-)
+summaries = {entry.fingerprint: metric_summary(entry.sessions) for entry in entries}
+scores   = {fingerprint: technical_score(summary) for fingerprint, summary in summaries.items()}
 ```
 
-The `abs(delta) >= mdd` reading `0 >= 0 == True` that Pitfall 5 warns about only arises
-when both are zero, so this narrower guard still covers the case it was written for. Add
-a regression test with the uniform-promotion fixture above asserting the verdict is
-**not** `NO_DIFFERENCE`.
+A fingerprint is *not* unique per entry. It hashes name + revision + dirty flag +
+overrides + the two digests — deliberately, so one configuration has one identity. Two
+retained records of the same configuration therefore share it. That happens in at least
+three ordinary ways: re-running one configuration under a second `run_id` to measure
+run-to-run variation (nothing in `run_candidate` prevents it), passing the same directory
+twice to `--candidate`, or passing a record to both `--candidate` and `--include`.
 
----
+When it happens, the dict collapses to the **last** entry's summary and both rows print
+it. Reproduced with two entries of one configuration carrying different sessions:
 
-### CR-02: The HR@10 exchange-rate criterion is vacuous when MTTC improves, producing a `win` on a double regression
+```
+row: run-x 30d5052e 0.83 0.5     <- run-x's real mrr is 0.541667, ts is higher
+row: run-y 30d5052e 0.83 0.5
+curve rows: [('30d5052e', 0.083333), ('30d5052e', 0.0)]
+```
 
-**BLOCKER**
-**File:** `arena/adjudication.py:295-297`
+The candidate table prints identical (wrong) metrics for both, while `hit_rate_curve` and
+`scenario_breakout` are computed from `entry.sessions` directly and print each entry's
+*real* numbers — so the two tables in one report contradict each other, and the row order
+is derived from the collapsed score as well. `render_markdown` compounds it: `names` is
+also fingerprint-keyed (line 499), and the candidate table prints no `run_id`, so a reader
+cannot even tell the two rows apart. This is precisely the class the phase exists to
+prevent: a confident, auditable-looking, false number.
 
-**Issue:**
+**Fix:** stop keying per-entry derived data on a value that is per-*configuration*. Compute
+alongside the entry, and refuse an ambiguous report explicitly:
 
 ```python
-exchange_rate_ok = hit_rate_delta >= 0.0 or (
-    mrr_delta > EXCHANGE_RATE_PER_MTTC * mttc_delta
-)
-```
-
-`mttc_delta = candidate_mttc - baseline_mttc`, so an MTTC *improvement* is negative. When
-`mttc_delta < 0` the right-hand side is negative and the condition is satisfied by any
-`mrr_delta` above a negative threshold — including a negative one. Nothing requires
-`mrr_delta > 0`, yet the constant's own docstring (`adjudication.py:31-35`) says "an
-HR@10 regression is forgiven only when the **MRR gain** exceeds 0.0667 x the MTTC
-movement". There is no gain in the passing case.
-
-Reproduced against the checked-in code (100 sessions, baseline all rank 3 / turn 8;
-candidate drops 3 sessions to misses and pulls 60 others forward to turn 1):
-
-```
-hit_rate_delta = -0.030000000000000027   <- HR@10 regressed
-mrr_delta      = -0.010000000000000009   <- MRR regressed too
-mttc_delta     = -4.109999999999999      <- MTTC improved, so the RHS is negative
-exchange_ok    = True
-failed         = ()
-verdict        = win
-```
-
-`clears_practical_floor` passes here because the 0.20-weighted efficiency term alone
-carries the delta over 0.01. So the single criterion whose entire job is to stop an HR@10
-regression from shipping does not fire, and the rig returns `win` — with an empty
-`failed_criteria`, which the committed leaderboard test
-(`tests/test_arena_leaderboard.py:508`) treats as the definition of a win.
-
-The existing tests only exercise `mttc_delta > 0` (`_TRADE_UNDERPAID` / `_TRADE_PAID`
-both add misses without pulling other sessions forward), so the negative-`mttc_delta`
-half of the branch is untested.
-
-**Fix:** Require an actual MRR gain, and compare TechnicalScore-equivalent magnitudes
-rather than raw units, so the criterion cannot be satisfied by an MTTC term the practical
-floor has already counted:
-
-```python
-exchange_rate_ok = hit_rate_delta >= 0.0 or (
-    mrr_delta > 0.0
-    and mrr_delta > EXCHANGE_RATE_PER_MTTC * abs(mttc_delta)
-)
-```
-
-Add fixtures for both sign branches of `mttc_delta`. Independently, consider whether the
-criterion should scale with the *size* of the HR@10 regression — today a `-0.10` HR@10
-regression is forgiven on the same terms as a `-0.005` one.
-
----
-
-### CR-03: `import_legacy_results` silently overwrites an existing committed baseline record
-
-**BLOCKER**
-**File:** `arena/import_legacy_results.py:146-150`
-
-**Issue:**
-
-```python
-destination.mkdir(parents=True, exist_ok=True)
-sessions_path = destination / _SESSIONS_FILENAME
-summary_path = destination / _SUMMARY_FILENAME
-_write_jsonl(sessions_path, sessions)
-_write_json(summary_path, summary)
-```
-
-There is no existence check and no atomic publish. `--output experiments/baselines/run-a`
-overwrites the measured 200-session record for `baseline-auto-disabled` — the record that
-is the **baseline of every delta in the committed leaderboard** — with provenance-free
-legacy data carrying `provenance_complete: false`, `code_revision: "unknown_revision"`
-and `catalog_sha256: "unknown"`. The write is also non-atomic and split across two files,
-so an interruption between them leaves a record whose `sessions.jsonl` and `summary.json`
-describe different runs, which nothing downstream detects.
-
-This is asymmetric with the sibling writer: `arena/arena.py:110-111` explicitly refuses
-(`FileExistsError`) and publishes atomically through a temporary directory
-(`arena/store.py:100-119`) for exactly this reason. The migration path, which by
-construction writes *lower*-provenance data, is the one without the guard.
-
-The module's opening comment says it deliberately imports nothing from `arena/`. That is
-a fine rule, but it does not require dropping the safety property — the check is three
-lines of stdlib.
-
-**Fix:**
-
-```python
-if destination.exists():
-    raise ValueError(f"refusing to overwrite an existing record: {destination}")
-destination.mkdir(parents=True, exist_ok=False)
-```
-
-Better: stage both files into a sibling temporary directory and `os.replace` the
-directory into place, mirroring `arena/store.publish`. Also add an `--force` flag if
-re-import is genuinely wanted, so clobbering is explicit.
-
----
-
-## Warnings
-
-### WR-01: The CLI always injects `exploration` and `lexical_mode` defaults into the fingerprinted overrides, contradicting its own stated invariant
-
-**WARNING**
-**File:** `arena/run_arena.py:60-64`, `arena/run_arena.py:164-174`
-
-**Issue:** The comment claims "An unset flag is OMITTED rather than recorded as None: it
-must leave the fingerprint identical to a run that never mentioned it, otherwise one
-configuration fingerprints two ways." The filter is `if getattr(args, flag) is not None` —
-but `--exploration` defaults to `"disabled"` and `--lexical-mode` defaults to `"auto"`,
-never `None`. Only `--artifact-path` (default `None`) is actually omitted. Confirmed on
-the committed records: every CLI-produced summary carries
-`overrides = {"exploration": ..., "lexical_mode": ...}`.
-
-Consequences:
-
-- The default-everything configuration fingerprints one way through the CLI
-  (`{"exploration": "disabled", "lexical_mode": "auto"}`) and a different way through
-  `build_candidate_spec(..., overrides={})` or `import_legacy_results` (`{}`). Two
-  fingerprints, one configuration — the failure this module is built around.
-- The half-implemented rule is itself a hazard: passing `--artifact-path` with its
-  effective default value produces a different fingerprint from omitting it, for an
-  identical agent.
-- The `adjudicate` guard at `arena/adjudication.py:168-170` ("a candidate must not share
-  the baseline's fingerprint") can therefore be passed by two specs describing the same
-  configuration.
-
-**Fix:** Pick one rule and enforce it. Simplest and most robust: set every override flag's
-argparse `default=None`, record only what the operator actually passed, and let the Agent
-constructor supply its own defaults — then the fingerprint describes the *invocation*
-consistently across every entry path. Otherwise, canonicalise in `candidate_overrides()`
-by filling every `ALLOWED_OVERRIDES` key with its Agent default, so `{}` and
-`{"exploration": "disabled", "lexical_mode": "auto"}` collapse to one digest. Either way,
-fix the comment.
-
----
-
-### WR-02: A record's stored fingerprint is never checked against the one the reader derives
-
-**WARNING**
-**File:** `arena/leaderboard.py:155-175`
-
-**Issue:** `_spec_from_payload` rebuilds a `CandidateSpec` from `summary.json` and every
-downstream consumer uses `spec.fingerprint` — as the leaderboard identity, as the
-`baseline_fingerprint` in the report, as the champion tie-break key, and as the RNG seed
-via `pair_seed`. But the record's own `record["fingerprint"]`, written by
-`arena/arena.py:152`, is never read and never compared.
-
-`experiments/RUNS.md:59-64` records that this exact divergence shipped once already
-("a record's stored fingerprint differed from the one the report derived for it") and
-that it silently changed the CI, p, MDD and sigma-hat. The remediation was
-`SPEC_NAME_FIELD` plus `spec_name_from_record` — which fixes *that* instance — and
-`test_every_record_derives_the_fingerprint_it_stores`
-(`tests/test_arena_leaderboard.py:535-563`), which only runs over records that are
-already committed. Any *new* record with a drifted reconstruction (a missing field
-defaulting to `"unknown"`, an override value that round-trips as a non-string) is
-reported under a fingerprint that appears nowhere in its own `summary.json`, and the
-operator finds out only after committing it.
-
-**Fix:** Fail closed in the code path, not only in the suite:
-
-```python
-spec.validate()
-stored = record.get("fingerprint")
-if stored is not None and stored != spec.fingerprint:
-    raise ArenaStoreError(
-        f"{run_directory.name} stores fingerprint {stored} but derives {spec.fingerprint}"
+if len({entry.fingerprint for entry in entries}) != len(entries):
+    duplicated = sorted(
+        fingerprint
+        for fingerprint in {entry.fingerprint for entry in entries}
+        if sum(1 for entry in entries if entry.fingerprint == fingerprint) > 1
     )
-return spec
+    raise ArenaStoreError(
+        f"two entries share one fingerprint, so their rows cannot be told apart: {duplicated}"
+    )
+computed = tuple(
+    (entry, metric_summary(entry.sessions)) for entry in entries
+)
+scored = tuple(
+    (entry, summary, technical_score(summary)) for entry, summary in computed
+)
+ordered = sorted(scored, key=lambda item: (-item[2], item[0].fingerprint))
 ```
 
-(`stored is None` remains legal for the rescued anchor-legacy record, which stores none.)
+Then iterate `ordered` and use the tuple-local `summary`/`score` rather than a dict lookup,
+and key `names` in `render_markdown` on `(fingerprint, run_id)` or add a `run_id` column so
+the display is unambiguous even if the guard is later relaxed.
 
 ---
 
-### WR-03: `adjudicate` rejects a candidate matching the baseline but not duplicate candidates
+### CR-02: `adjudicate` guards against a baseline fingerprint collision but not a candidate-vs-candidate one, inflating the Holm family and `correction_k`
 
-**WARNING**
-**File:** `arena/adjudication.py:167-170`; `arena/run_arena.py:99-119`; `arena/leaderboard.py:219-235`
+**File:** `arena/adjudication.py:200-205`, `arena/adjudication.py:296`, `arena/adjudication.py:315-316`
 
-**Issue:** The guard only compares each candidate against the baseline. Passing the same
-record twice (`--candidate X --candidate X`, or the same configuration under two run ids)
-is accepted and:
+**Issue:** The entry guard checks only one direction:
 
-- doubles the Holm family size, weakening every genuine comparison (`total` at
-  `arena/statistics.py:237`),
-- inflates `correction_k`, inflating the winner's-curse subtraction on every row,
-- and in `build_leaderboard`, `summaries` (line 219), `scores` (line 222) and `names`
-  (line 385) are all keyed by fingerprint, so the duplicates silently collapse into one
-  entry in those maps while `ordered` still yields two rows.
+```python
+for candidate in candidates:
+    if candidate.spec.fingerprint == baseline_fingerprint:
+        raise ValueError("a candidate must not share the baseline's fingerprint")
+```
 
-Nothing in `run_arena._adjudicate` deduplicates `--candidate` / `--include`, and the same
-directory can legitimately appear in both lists.
+Nothing rejects two candidates with the same fingerprint, and `run_arena._adjudicate`
+(`--candidate` is `action="append"`) passes whatever the operator typed. Reproduced with
+the same arm twice:
 
-**Fix:** In `adjudicate`, after the baseline check:
+```
+k: [2, 2]  holm: [1.0, 1.0]  perm: [1.0, 1.0]
+holm_family_size: 2
+```
+
+One hypothesis, submitted twice, is reported as a family of two. Two reported numbers are
+then wrong on the same row:
+
+- `holm_p` is multiplied by 2 for a family that contains one real comparison, so a genuine
+  result can be pushed past `SIGNIFICANCE_ALPHA` and land on `holm_significance` in
+  `failed_criteria`, i.e. flip a `win` to `significant, below ship bar` or `not detectable`.
+- `correction_k = 2` charges `sigma * E[max of 2] = 0.5642 * sigma` of winner's-curse
+  correction against `clears_practical_floor` for a selection that never happened. At the
+  committed report's own `sigma = 0.012845`, that is 0.0072 of TechnicalScore — most of the
+  0.01 ship floor, removed for nothing.
+
+Both arms also draw the *same* `pair_seed`, so the two rows are bit-identical replicates of
+one another rather than independent evidence, and `assumptions.holm_family_size` (written
+as `len(rows)`, leaderboard.py:425) states the inflated number as if it were measured
+design.
+
+The module's own comment at `adjudication.py:286-295` argues at length that the family is
+"a property of the experimental DESIGN — how many arms were submitted for comparison". A
+directory submitted twice is one arm, not two, so the guard is incomplete on exactly the
+reading the comment adopts.
+
+**Fix:** extend the existing loop to a full uniqueness check, and reject the CLI-level
+overlap too:
 
 ```python
 fingerprints = [candidate.spec.fingerprint for candidate in candidates]
+if baseline_fingerprint in fingerprints:
+    raise ValueError("a candidate must not share the baseline's fingerprint")
 if len(set(fingerprints)) != len(fingerprints):
-    raise ValueError("candidates must have distinct fingerprints")
+    raise ValueError("each candidate must appear in the family exactly once")
 ```
 
-And in `run_arena._adjudicate`, reject a directory that appears in more than one of
-`--baseline` / `--candidate` / `--include`.
+and in `arena/run_arena.py:_adjudicate`, after resolving the directories, refuse a record
+that appears in more than one of `--baseline` / `--candidate` / `--include` (compare
+`Path.resolve()` values, not the raw strings, so `./run-a` and `run-a` collide).
 
 ---
 
-### WR-04: Bootstrap percentile indices are wrong at small R and asymmetric at every R
+### CR-03: `SessionOutcome.validate()` admits internally inconsistent and non-integer rows, so a published record can contradict itself
 
-**WARNING**
-**File:** `arena/statistics.py:154-155`
+**File:** `arena/metrics.py:37-47`, `arena/store.py:74-97`
+
+**Issue:** `validate()` checks each field's range in isolation and one relationship
+(`hit` vs `first_hit_turn`). It never checks the three relationships that make the metric
+chain coherent:
+
+- `hit` vs `best_rank` — a row with `hit=True, best_rank=None` is admitted.
+- `reciprocal_rank` vs `best_rank` — any value in `[0, 1]` is admitted for any rank.
+- `first_hit_turn` / `best_rank` integrality — the values are passed through
+  `load_sessions` (store.py:87-88) with **no coercion at all**, unlike the four fields
+  beside them.
+
+Reproduced, from a `sessions.jsonl` row that `load_sessions` accepts without complaint:
+
+```
+inconsistent row accepted: SessionOutcome(hit=True, first_hit_turn=1, best_rank=None, reciprocal_rank=1.0)
+hr: 1.0   curve: {1: 0.0, 3: 0.0, 5: 0.0, 10: 0.0}
+```
+
+`metric_summary.hit_rate_at_10` reads `hit`; `hit_rate_curve` reads `best_rank`. The
+leaderboard prints both, in adjacent tables, for the same candidate: `HR@10 = 1.0` in
+Candidates and `HR@10 = 0.0` in the HitRate@K curve. `tests/test_arena_metrics.py:157`
+exists precisely to assert those two agree — but only for the anchor, so nothing enforces
+it as an invariant.
+
+Also reproduced: `"first_hit_turn": 2.5` and `"best_rank": true` are both accepted
+(`1 <= True <= 10` is `True` because `bool` is an `int`), yielding a fractional MTTC of
+2.5 and a rank that round-trips back to disk as JSON `true`:
+
+```
+mttc: 2.5
+round-trip bytes: b'{"best_rank": true, "first_hit_turn": 2.5, ...}'
+```
+
+An unconstrained `reciprocal_rank` is the worst of the three: a record with
+`best_rank=10, reciprocal_rank=1.0` on every session inflates MRR by 0.9, i.e.
+TechnicalScore by 0.27 — twenty-seven times the ship floor — while passing every check on
+the read path. This is reachable without hand-editing: `import_legacy_results` projects
+`SESSION_FIELDS` verbatim (import_legacy_results.py:96) out of an untracked,
+provenance-free `results.json`, and `_project_sessions` validates nothing but presence.
+
+The comment at `store.py:79-80` states the opposite of what the code does: *"Every field
+is explicitly coerced and then validated before it can reach a statistic."* Two of the six
+fields are neither coerced nor type-checked.
+
+**Fix:** make `validate()` enforce the relationships, and coerce the two integer fields at
+the boundary:
+
+```python
+def validate(self) -> None:
+    if not self.sample_id:
+        raise ValueError("sample_id must not be empty")
+    for name, value in (("best_rank", self.best_rank), ("first_hit_turn", self.first_hit_turn)):
+        # bool is an int, and a float rank is not a rank: reject both by type.
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError(f"{name} must be an integer or null")
+    if self.best_rank is not None and not 1 <= self.best_rank <= MAX_SLATE_RANK:
+        raise ValueError(f"best_rank must be between 1 and {MAX_SLATE_RANK}")
+    if self.first_hit_turn is not None and not 1 <= self.first_hit_turn <= MAX_TURNS:
+        raise ValueError(f"first_hit_turn must be between 1 and {MAX_TURNS}")
+    if self.hit != (self.first_hit_turn is not None):
+        raise ValueError("hit must agree with first_hit_turn presence")
+    # The three relationships the metric chain assumes and never checked.
+    if self.hit != (self.best_rank is not None):
+        raise ValueError("hit must agree with best_rank presence")
+    expected = 0.0 if self.best_rank is None else 1.0 / self.best_rank
+    if abs(self.reciprocal_rank - expected) > 1e-12:
+        raise ValueError("reciprocal_rank must equal 1 / best_rank, or 0 for a miss")
+```
+
+and correct the false comment in `load_sessions`. `evaluator/local_evaluator.py:269-275`
+emits exactly these invariants, so no legitimate harness row is rejected — I checked the
+committed records against the stricter rule in reasoning and they conform.
+
+## Warnings
+
+### WR-01: `CandidateSpec.validate()` validates override keys but never values, and `exploration` fails open
+
+**File:** `arena/candidate.py:52-74`, `arena/arena.py:109-113`, `arena/run_arena.py:201-211`
+
+**Issue:** `validate()` rejects unknown *keys* against `ALLOWED_OVERRIDES` and never looks
+at a value. Downstream, `starter/shopping_agent/coordinator.py:87` reads
+`self._exploration_enabled = exploration != "disabled"`, so every value that is not the
+exact string `"disabled"` **enables** exploration: `"Disabled"`, `"disabled "`,
+`"tail_only"`, `"bogus"`. Each mints its own fingerprint. A record therefore exists whose
+hashed overrides say `exploration: "Disabled"` while the agent that ran had exploration on
+— the fingerprint describes a configuration that was not applied.
+
+The comment at `arena/arena.py:109-112` claims this cannot happen: *"an unknown or
+unapplied override is rejected here, so a fingerprint can never describe a configuration
+that did not run."* It is false for values. The only thing standing between a caller and
+that record is `argparse`'s `choices=` in `run_arena.py:203, 208` — an allow-list of
+admissible *values* living in the CLI rather than beside `ALLOWED_OVERRIDES`, so
+`build_candidate_spec` (a public function the test suite itself calls directly) has no
+protection. `lexical_mode` is accidentally safe because `LexicalMode(...)` raises;
+`exploration` and `artifact_path` are not.
+
+**Fix:** move the value allow-list into `arena/candidate.py` next to the key allow-list and
+have both `validate()` and argparse consume it:
+
+```python
+ALLOWED_OVERRIDE_VALUES: dict[str, frozenset[str] | None] = {
+    "exploration": frozenset({"disabled", "tail-only"}),
+    "lexical_mode": frozenset({"auto", "fts5", "fallback"}),
+    "artifact_path": None,  # a path, not an enumeration
+}
+# inside validate(), after the key checks:
+for key, value in self.overrides:
+    allowed = ALLOWED_OVERRIDE_VALUES.get(key)
+    if allowed is not None and value not in allowed:
+        raise ValueError(f"override {key} must be one of {sorted(allowed)}, got {value!r}")
+```
+
+and in `run_arena.py`, build `choices=sorted(ALLOWED_OVERRIDE_VALUES["exploration"])`.
+
+---
+
+### WR-02: `write_leaderboard` is a non-atomic two-file write to git-tracked artifacts, and renders after the JSON is already overwritten
+
+**File:** `arena/leaderboard.py:685-695`
 
 **Issue:**
 
 ```python
-lower=deltas[int(0.025 * resamples)],
-upper=deltas[int(0.975 * resamples) - 1],
+write_json(json_path, payload)
+markdown_path.write_text(render_markdown(payload), encoding="utf-8")
 ```
 
-`_require_resamples` (line 101-103) admits `resamples >= 1`, but the index arithmetic is
-only meaningful well above that. Measured on the checked-in code:
+Both targets are committed (`experiments/baselines/leaderboard.json` and
+`experiments/LEADERBOARD.md`). `leaderboard.json` is destroyed and rewritten *before*
+`render_markdown` has even been called, so any renderer failure — a `KeyError` on a payload
+from a different schema version, a `TypeError` from `_cell(None)` on a field that becomes
+nullable, a `float(value)` on a string — leaves a new JSON beside a stale Markdown, with
+the old JSON gone. An interruption between the two writes does the same. Nothing detects
+it at write time; `tests/test_arena_leaderboard.py:768` only notices afterwards, and by
+then the pre-write state is unrecoverable.
 
-```
-R=1   lower=0.101250  upper=0.101250
-R=2   lower=0.090000  upper=0.090000   <- "97.5th percentile" is the MINIMUM replicate
-R=3   lower=0.045000  upper=0.090000
-```
+This is the same defect class that plan 01-xx just closed in the sibling writer:
+`import_legacy_results.py:168-183` stages both files and publishes them with one directory
+rename precisely because *"Two files must land together or not at all."* The asymmetry is
+the finding — and this writer's targets are committed, whereas that one's were not yet.
 
-At `R=2`, `int(0.975*2) - 1 == 0`, so `upper` is `deltas[0]`. The interval silently
-degenerates to a point at the low end, and for any distribution with `min < max` the
-reported upper bound is below the true median. The two bounds are also asymmetric at
-every R: at `R=10_000` `lower` is order statistic 251 (2.51%) while `upper` is 9750
-(97.50%), giving 94.99% nominal coverage rather than 95%.
-
-Production always runs at `R=10_000`, so the practical impact today is the 0.01%
-coverage shortfall. But `resamples` is a public keyword argument the suite already uses
-at 200 and 500, and a future caller at a smaller R gets a silently wrong interval with no
-error.
-
-**Fix:** Raise the floor and make the indices symmetric:
+**Fix:** render first, then write, and stage each file so a partial write is not observable:
 
 ```python
-_MINIMUM_RESAMPLES = 40  # below this a 95% percentile interval has no resolution
-
-def _require_resamples(resamples: int) -> None:
-    if resamples < _MINIMUM_RESAMPLES:
-        raise ValueError(f"resample count must be at least {_MINIMUM_RESAMPLES}")
-...
-lower_index = max(0, int(math.floor(0.025 * resamples)))
-upper_index = min(resamples - 1, int(math.ceil(0.975 * resamples)) - 1)
+def write_leaderboard(payload, *, json_path=LEADERBOARD_JSON_PATH, markdown_path=LEADERBOARD_MARKDOWN_PATH):
+    # Rendered BEFORE anything is written: a renderer failure must not consume the JSON.
+    rendered = render_markdown(payload)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    for path, text in (
+        (json_path, json.dumps(payload, indent=2, sort_keys=True) + "\n"),
+        (markdown_path, rendered),
+    ):
+        staging = path.with_name(f".{path.name}.partial")
+        staging.write_text(text, encoding="utf-8", newline="\n")
+        os.replace(staging, path)
+    return (json_path, markdown_path)
 ```
 
 ---
 
-### WR-05: Degenerate arms consume Holm family budget and `correction_k` on an asserted, never-measured p-value
+### WR-03: the staging-directory `.gitignore` claim is false — an interrupted arena run is stageable and committable
 
-**WARNING**
-**File:** `arena/adjudication.py:212-216`, `arena/adjudication.py:233`, `arena/adjudication.py:244-246`
+**File:** `arena/arena.py:131-134`, `arena/import_legacy_results.py:168-175`
 
-**Issue:** A degenerate candidate never runs `paired_permutation`; `1.0` is appended
-directly. That synthetic value is then fed into `holm_bonferroni` alongside the real
-p-values, so it increments `total` and inflates the multiplier applied to every genuine
-comparison. It also counts toward `correction_k`, inflating the winner's-curse
-subtraction on rows that had nothing to do with it.
+**Issue:** The comment asserts a mitigation that does not exist:
 
-This is live in the committed report: `run-c` is byte-identical to the baseline `run-a`
-(verified: `sessions.jsonl` are the same bytes), so the `fallback-lexical` row was
-Holm-adjusted at `m=2` and corrected at `k=2` because of an arm that could not have been
-a selection option — its delta is exactly `0.0`. Both directions are conservative, so no
-false positive results, but the rig is throwing away power it was designed to protect,
-and `run_arena.py:186-191` already establishes the pattern (`--include`) for arms that
-belong in the report without joining the family.
+> The `.{run_id}-` prefix is not cosmetic: it puts the in-progress directory under
+> .gitignore's `experiments/.*-/` rule, so an interrupted run cannot be staged and
+> mistaken for a completed record (T-01-19).
 
-**Fix:** Either run the permutation for degenerate arms too (it is cheap and gives an
-honest p at the floor), or exclude zero-delta/zero-variance arms from both the Holm
-family and `correction_k` while still emitting their descriptive row. Whichever is
-chosen, state it in the `assumptions` block so a reader can see which arms formed the
-family.
+It fails on two counts. First, depth: a gitignore pattern containing a slash is anchored,
+and `*` does not cross `/`, so `experiments/.*-/` matches only a direct child of
+`experiments/`. The staging directory lives at `experiments/baselines/.{run_id}-XXXX/`,
+one level deeper, and `!experiments/baselines/` re-includes that whole subtree. Second,
+the name: `tempfile.TemporaryDirectory` appends random characters *after* the prefix, so
+the directory is `.run-x-ab12cd`, which does not end in `-` as the rule requires.
 
----
+Verified directly:
 
-### WR-06: `SessionOutcome.validate()` does not tie `best_rank` to `hit` or to `reciprocal_rank`
+```
+$ git check-ignore -v experiments/baselines/.run-x-ab12cd/summary.json ; echo exit=$?
+exit=1
+$ git status --porcelain --untracked-files=all
+?? experiments/baselines/.run-x-ab12cd/summary.json
+```
 
-**WARNING**
-**File:** `arena/metrics.py:37-47`
+Consequence: a run killed hard (not raising — `TemporaryDirectory` cleans up on an
+exception) leaves a half-written record inside the committed baseline directory that
+`git add -A` will commit. It also breaks
+`tests/test_arena_leaderboard.py:776` immediately, which iterates every `is_dir()` under
+`experiments/baselines/` and reads `summary.json` unconditionally — a staging corpse
+without that file raises `FileNotFoundError` rather than the guard's own message.
 
-**Issue:** The only cross-field check is `hit != (first_hit_turn is not None)`.
-`best_rank` and `reciprocal_rank` are validated only for range. So a session row with
-`best_rank=5, first_hit_turn=None, hit=False` validates cleanly, and then:
-
-- `metric_summary` counts it as a **miss** (`hit_rate_at_10`),
-- `hit_rate_curve` counts it as a **hit at depth 5 and 10** (`metrics.py:150-153`).
-
-The report would print an HR@10 in the Candidates table that disagrees with `HR@10` in
-the HitRate@K curve table for the same row, with no error anywhere. Likewise
-`reciprocal_rank=1.0` with `best_rank=10` validates, and MRR carries 30% of
-TechnicalScore.
-
-`arena/store.load_sessions` (line 74-97) is the untrusted boundary here — it parses
-arbitrary JSONL, including the hand-rescued `anchor-legacy` record and anything an
-operator edits. The module comment at `store.py:79-80` claims "Every field is explicitly
-coerced and then validated before it can reach a statistic", which is only half true.
-
-**Fix:**
+**Fix:** either add an anchored rule that actually matches — `experiments/baselines/.*/`
+— or, better, stage outside the published tree and make the invariant structural:
 
 ```python
-if (self.best_rank is not None) != self.hit:
-    raise ValueError("best_rank must agree with hit")
-expected = 0.0 if self.best_rank is None else 1.0 / self.best_rank
-if abs(self.reciprocal_rank - expected) > 1e-12:
-    raise ValueError("reciprocal_rank must equal 1/best_rank, or 0 for a miss")
+with tempfile.TemporaryDirectory(prefix=f".{run_id}-", dir=root.parent) as temporary:
 ```
 
-Verify against the committed `anchor-legacy` sessions before tightening; if that record
-violates it, that is itself worth knowing.
+paired with `experiments/.*/` in `.gitignore`. Also make the leaderboard test skip
+directories lacking `summary.json` so a corpse produces one legible failure rather than a
+crash. If the current placement is kept, correct the comment — it currently states a
+protection that `git check-ignore` disproves.
 
 ---
 
-### WR-07: `_SampleMappingAgent` is dead weight — the harness already emits `sample_id`
+### WR-04: nothing checks that two compared arms measured the same catalog and dataset
 
-**WARNING**
-**File:** `arena/arena.py:36-72`, `arena/arena.py:129-132`, `arena/arena.py:146-148`
+**File:** `arena/adjudication.py:194-207`, `arena/run_arena.py:134-165`
 
-**Issue:** The class docstring says its job is to "record reset-call order [so] the join
-maps that UUID back to the public sample id". But `evaluator/local_evaluator.py:269-276`
-already puts `sample_id` on every session row, and `run_candidate` reads it directly at
-`arena/arena.py:176` (`sample_id=str(row["sample_id"])`). `session_to_sample` is written
-on every `reset` and **never read** by any production code path — only by
-`tests/test_arena_runner.py`, which tests the dead attribute against itself.
+**Issue:** `_require_paired` (statistics.py:107-117) enforces identical `sample_id`
+ordering, which is the pairing invariant. Nothing enforces the *provenance* invariant:
+that both arms were evaluated against the same catalog and the same dataset.
+`CandidateSpec` carries `catalog_sha256` and `dataset_sha256` — the whole point of
+recording them — and no consumer ever compares them across arms. `adjudicate` receives
+two `CandidateArm`s each holding a full `spec` and reads only `.fingerprint` and `.name`.
 
-So the wrapper contributes nothing but an extra indirection layer, a mutable dict that
-grows with the sample count, and a 21-line docstring justifying a duplication of
-`experiments/run_public.py:31-56` that is not needed here. The tests it carries
-(`SampleMappingTest`, 5 methods) assert properties of machinery that does not affect any
-output — including `test_mapping_is_written_during_and_read_only_after`, whose "read only
-after" property is trivially true because nothing ever reads it.
+So two records built on different dataset revisions with the same 200 sample ids adjudicate
+cleanly, and the resulting delta — a difference of two scores measured on different data —
+is published with a bootstrap CI, a permutation p, an MDD and a verdict, all of which are
+meaningless. Nothing warns. The committed report happens to be safe (run-a/b/c share a
+digest), and the one record carrying `"unknown"` for both digests, `anchor-legacy`, is
+correctly routed through `--include` rather than adjudicated — but that is operator
+discipline, not an enforced invariant, and `--include` is not what stops it.
 
-**Fix:** Delete `_SampleMappingAgent` and pass the `Agent` to `evaluate` directly, keeping
-`agent.close()` in the `finally` (the close-before-publish ordering asserted by
-`test_agent_is_closed_before_publish` still holds). Delete `SampleMappingTest`. If the
-wrapper is being kept as a seam for Phase 3, say so in the docstring instead of claiming a
-correctness role it does not have.
-
----
-
-### WR-08: `publish` deletes the destination on any `OSError`, and blindly retries when it does not exist
-
-**WARNING**
-**File:** `arena/store.py:114-119`
-
-**Issue:**
+**Fix:** assert digest agreement where the arms meet, and refuse an unverifiable arm
+explicitly:
 
 ```python
-try:
-    os.replace(working, destination)
-except OSError:
-    if destination.exists():
-        shutil.rmtree(destination)
-    os.replace(working, destination)
-```
-
-Two problems. First, the `except` catches *every* `OSError` — cross-device link, ACL
-denial, path-too-long, antivirus lock — and responds by recursively deleting whatever is
-at `destination`. The docstring's premise ("a destination present now is a corpse from an
-earlier crashed run") holds only for `run_candidate`, which pre-checked at
-`arena/arena.py:110`; the function is a module-level public helper with no such
-precondition, and even in `run_candidate` there is a multi-minute TOCTOU window between
-the check and the publish (337-462 s per the committed `elapsed_seconds`). A completed
-committed record under `experiments/baselines/` is exactly what would be destroyed.
-
-Second, when `destination` does not exist the code re-issues the identical `os.replace`
-that just failed, so the original cause is re-raised from the wrong line with no context
-about the first attempt.
-
-**Fix:** Narrow the trigger and preserve the cause:
-
-```python
-try:
-    os.replace(working, destination)
-except OSError as error:
-    if not destination.is_dir():
-        raise ArenaStoreError(f"could not publish to {destination}: {error}") from error
-    shutil.rmtree(destination)
-    try:
-        os.replace(working, destination)
-    except OSError as retry_error:
-        raise ArenaStoreError(
-            f"could not publish to {destination} after clearing it: {retry_error}"
-        ) from retry_error
+for candidate in candidates:
+    if candidate.spec.fingerprint == baseline_fingerprint:
+        raise ValueError("a candidate must not share the baseline's fingerprint")
+    for field in ("catalog_sha256", "dataset_sha256"):
+        mine = getattr(candidate.spec, field)
+        theirs = getattr(baseline.spec, field)
+        if mine != theirs:
+            raise ValueError(
+                f"{candidate.spec.name} was measured against a different {field}"
+                f" ({mine} vs baseline {theirs}); a paired delta across two datasets"
+                " is not a comparison"
+            )
+        if mine == "unknown":
+            raise ValueError(
+                f"{candidate.spec.name} cannot state which {field} it measured;"
+                " route a provenance-free record through --include, never --candidate"
+            )
 ```
 
 ---
 
-### WR-09: Evaluator output is splatted over the provenance keys with no collision guard
+### WR-05: `assumptions.resample_count` fabricates `RESAMPLE_COUNT` in exactly the two cases where it does not know
 
-**WARNING**
-**File:** `arena/arena.py:151-167`
-
-**Issue:** `**result` is the **last** entry in the summary dict literal, so any key the
-harness returns wins over the arena-written provenance fields — `fingerprint`,
-`candidate_name`, `code_revision`, `catalog_sha256`, `dataset_sha256`,
-`provenance_complete`. Today `evaluate` returns none of those, so nothing collides. But
-the sibling writer, `arena/import_legacy_results._build_summary`
-(`import_legacy_results.py:107-111`), explicitly *refuses* to write when the payload
-already carries a provenance key — the same hazard, guarded in one path and not the
-other. A provenance field silently overwritten by harness output is a record that lies
-about what produced it, and no downstream check would notice
-(`test_published_summary_carries_the_fingerprint` compares the record to a spec built by
-the same code path).
-
-**Fix:** Put `**result` first, or assert non-collision:
-
-```python
-_PROVENANCE_KEYS = frozenset({
-    "run_id", "fingerprint", SPEC_NAME_FIELD, "code_revision", "code_revision_dirty",
-    "overrides", "catalog_sha256", "dataset_sha256", "elapsed_seconds",
-    "provenance", "provenance_complete",
-})
-colliding = sorted(_PROVENANCE_KEYS & set(result))
-if colliding:
-    raise ArenaStoreError(f"harness result carries provenance keys {colliding}")
-```
-
----
-
-### WR-10: `resample_count` reports the module constant when rows disagree
-
-**WARNING**
-**File:** `arena/leaderboard.py:294-300`
+**File:** `arena/leaderboard.py:389-395`
 
 **Issue:**
 
 ```python
 observed_resamples = tuple(sorted({row.resamples for row in rows}))
-resample_count = (
-    observed_resamples[0] if len(observed_resamples) == 1 else RESAMPLE_COUNT
-)
+resample_count = observed_resamples[0] if len(observed_resamples) == 1 else RESAMPLE_COUNT
 ```
 
-The comment says this "Describes what actually produced these rows rather than what the
-constant says" and that "A committed report generated at a test resample count is exactly
-the failure T-01-20 guards against". But the fallback does precisely the opposite: if the
-rows disagree, the report prints `10000` — a value **no row was generated at** — and the
-`assumptions.resample_count` field, which is the audit trail for T-01-20, becomes a
-fabrication. The `len == 0` case (an empty adjudication, which
-`test_an_empty_adjudication_renders_the_none_fallback` exercises) also silently claims
-10,000 replicates for a report that ran none.
+The comment directly above states the field's whole purpose: *"Describes what actually
+produced these rows rather than what the constant says. A committed report generated at a
+test resample count is exactly the failure T-01-20 guards against, and it is only visible
+if the number is recorded."* The fallback breaks that contract in both branches it covers:
 
-**Fix:** Report what is true, or fail:
+- `rows == ()` — the field reports `10000` for a report that resampled nothing. Compare
+  `holm_family_size` twelve lines below, which the comment explicitly justifies as *"Zero
+  is the honest answer for a report that adjudicated nothing."* The two adjacent fields
+  answer the same question with opposite honesty conventions.
+- rows disagree — the one case where the field could actually catch a mixed-provenance
+  report is the case where it silently prints the production constant instead.
+
+**Fix:** report the truth, or refuse:
 
 ```python
 if len(observed_resamples) > 1:
-    raise ValueError(f"adjudication rows disagree on resample count: {observed_resamples}")
+    raise ArenaStoreError(
+        f"adjudication rows disagree on resample count {observed_resamples};"
+        " one report must describe one resampling budget"
+    )
 resample_count = observed_resamples[0] if observed_resamples else None
 ```
 
+`None` serializes as JSON `null`, and `render_markdown` prints it as `None` in the
+metadata line — legible, and honest for a report with no adjudication.
+
 ---
 
-### WR-11: `code_revision_dirty()` runs git with no `cwd` and no `timeout`
+### WR-06: `_SampleMappingAgent` is dead code whose docstring describes a join that never happens
 
-**WARNING**
-**File:** `arena/candidate.py:132-145`
+**File:** `arena/arena.py:54-91`, `arena/arena.py:147-150`
 
-**Issue:** `subprocess.run(("git", "status", "--porcelain"), ...)` inherits the process
-working directory. The dirty flag is part of the fingerprint payload
-(`candidate.py:85-96`), so a run launched from a different directory — a sibling
-repository, a nested worktree, or anywhere outside a repo — records a provenance flag
-describing the **wrong tree**, and the fingerprint that claims to identify the code that
-ran is derived from it. The out-of-repo case fails closed to `True` (correct), but the
-wrong-repo case fails *silently* to whatever that repo's state is.
+**Issue:** The wrapper's only purpose is `session_to_sample`, and the docstring explains
+the join in detail: *"recording each reset maps that UUID back to the public sample id.
+The join happens only AFTER evaluate() returns."* No join happens. `run_candidate` never
+reads `agent.session_to_sample`; it builds outcomes from `row["sample_id"]` in the harness
+result (arena.py:183-184). Verified across the repository:
 
-There is also no `timeout=`. `git status` on a large or lock-contended tree can block
-indefinitely, hanging `build_candidate_spec` before any evaluation starts, with no
-diagnostic.
-
-**Fix:**
-
-```python
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-
-result = subprocess.run(
-    ("git", "status", "--porcelain"),
-    capture_output=True,
-    text=True,
-    check=True,
-    cwd=_REPOSITORY_ROOT,
-    timeout=30,
-)
+```
+$ grep -rn "session_to_sample" arena/ experiments/
+arena/arena.py:75, arena/arena.py:82          <- written, never read
+experiments/run_public.py:44, :48, :228       <- written AND read
 ```
 
-and add `subprocess.TimeoutExpired` to the caught tuple so a timeout still fails closed.
-`experiments/analyze_public.code_revision()` should be checked for the same two gaps,
-since `current_revision()` pairs the two values.
+`run_public.py` needs it because it passes a real `trace` and must attribute JSONL trace
+events to samples; `arena/arena.py` passes `trace=None` (line 146), so there is nothing to
+attribute. The evaluator already emits `sample_id` on every session row
+(`evaluator/local_evaluator.py:270`), which is what `_session_outcome` consumes.
+
+Cost of keeping it: ~38 lines of a hand-copy of `run_public.py:31-56` (the module comment
+argues the duplication is deliberate — but the duplication is of code that has no
+consumer), plus a real hazard. The wrapper forwards exactly `reset`/`respond`/`close`, so
+if the harness ever calls another `Agent` method the arena path breaks while the frozen
+`run_public.py` path does not; and its `SampleMappingTest` class (five tests) asserts
+behaviour that no production path depends on.
+
+**Fix:** delete `_SampleMappingAgent`, pass the `Agent` straight to `evaluate`, and delete
+`SampleMappingTest`. If the wrapper is instead being kept for a Phase 3 tracing plan, say
+so and correct the docstring — the current text asserts a join that a reader will look for
+and not find.
 
 ---
 
-### WR-12: Leaderboard artifacts are written non-atomically to CWD-relative paths
+### WR-07: `publish` deletes the destination before knowing the retry can succeed, and `rmtree` failure escapes as a bare `OSError`
 
-**WARNING**
-**File:** `arena/leaderboard.py:36-37`, `arena/leaderboard.py:556-566`; `arena/store.py:56-71`
+**File:** `arena/store.py:125-138`
 
-**Issue:** `LEADERBOARD_JSON_PATH` and `LEADERBOARD_MARKDOWN_PATH` are relative
-(`experiments/baselines/leaderboard.json`, `experiments/LEADERBOARD.md`), so
-`write_leaderboard` resolves them against the process CWD. Running
-`python -m arena.run_arena adjudicate` from anywhere but the repository root silently
-creates a second `experiments/` tree instead of updating the committed one, and the
-operator sees two printed paths that look right.
+**Issue:** Building on the disclosed residual risk (that a directory at `destination`
+cannot be distinguished from a completed record), two exposures are additional rather than
+covered by that disclosure:
 
-Separately, both writes are bare `write_text`, and the JSON and Markdown are written
-sequentially (`leaderboard.py:564-565`). An interruption between them leaves the
-committed Markdown view describing a different payload than the committed JSON source of
-truth — the exact drift `test_the_committed_markdown_matches_the_committed_payload`
-exists to detect, but only after the fact. This matters more than for a run record
-because these two files are committed evidence.
+1. `shutil.rmtree(destination)` fires **before** the second `os.replace` is attempted. If
+   the retry also fails — the same ACL denial, antivirus lock or cross-device condition
+   that plausibly caused the first failure — the committed record is already gone and the
+   working directory is then removed by `TemporaryDirectory`'s cleanup on scope exit. Both
+   copies are lost. `tests/test_arena_metrics.py:435` exercises exactly this path (it
+   patches `os.replace` to always raise) and asserts only the message, silently accepting
+   the destruction.
+2. `shutil.rmtree` can raise mid-delete. That `OSError` propagates out of `publish`
+   unwrapped, so a caller catching `ArenaStoreError` misses it, and the destination is left
+   *partially* deleted — a committed record with some files removed, which is worse than
+   either outcome the docstring contemplates.
 
-**Fix:** Resolve the defaults against `Path(__file__).resolve().parents[1]`, and write
-both files to `.tmp` siblings then `os.replace` them into place (a shared
-`store.write_text_atomic` helper would serve both `write_json` and the Markdown write).
+The docstring's closing sentence is false for both: *"every other failure — a cross-device
+link, an ACL denial, a path-too-long, an antivirus lock — is reported by name with its
+cause attached and nothing is removed."* In case 2 something is removed, and the failure is
+not reported by name.
 
----
-
-### WR-13: The `failures` mapping in `adjudicate` holds passes, not failures
-
-**WARNING**
-**File:** `arena/adjudication.py:298-307`
-
-**Issue:**
+**Fix:** rename the corpse aside instead of deleting it, so no retry failure can be
+destructive, and wrap the cleanup:
 
 ```python
-failures = {
-    "holm_significance": holm_p < SIGNIFICANCE_ALPHA,
-    "practical_floor": clears_practical_floor,
-    "hr10_exchange_rate": exchange_rate_ok,
-}
-failed_criteria = tuple(name for name in CRITERION_ORDER if not failures[name])
+        quarantine = destination.with_name(f".{destination.name}-superseded")
+        try:
+            if quarantine.exists():
+                shutil.rmtree(quarantine)
+            os.replace(destination, quarantine)
+        except OSError as clear_error:
+            raise ArenaStoreError(
+                f"could not clear {destination} before publishing: {clear_error}"
+            ) from clear_error
+        try:
+            os.replace(working, destination)
+        except OSError as retry_error:
+            os.replace(quarantine, destination)  # put it back; lose nothing
+            raise ArenaStoreError(
+                f"could not publish to {destination} after clearing it: {retry_error}"
+            ) from retry_error
+        shutil.rmtree(quarantine)
 ```
 
-Every value in `failures` is `True` when the criterion **passed**. The logic is correct,
-but the name inverts its meaning inside the single most safety-critical function in the
-rig — the one whose output the whole leaderboard's `win`/no-win identity rests on
-(`tests/test_arena_leaderboard.py:508`). A future edit that reads `if failures[name]` in
-the obvious sense inverts every verdict in the report, and the failure would be a silent
-change in `failed_criteria` content, not a crash.
-
-**Fix:** Rename to `passed` (and `failed_criteria = tuple(name for name in CRITERION_ORDER
-if not passed[name])`). Zero behavioural change, removes a live foot-gun.
+This also gives the positive corpse marker the disclosure says is needed: a
+`.{name}-superseded` directory is unambiguously evidence that a publish moved something
+aside, and an operator can inspect it rather than reconstruct it.
 
 ---
+
+### WR-08: `HOW_TO_READ` states a sigma-hat range that the committed report's own only real row falls outside
+
+**File:** `arena/leaderboard.py:67-76`, `arena/leaderboard.py:78-87`
+
+**Issue:** Item 2 tells the reader that sigma-hat is *"typically 0.002 to 0.008 on this
+data"*; item 3 tells them a realistic candidate yields *"an MDD of roughly 0.0104 —
+detectable at n=200"* and that the paired SE is *"roughly 0.0037"*. The only non-degenerate
+adjudication row in the very report those paragraphs preface reads:
+
+```
+fallback-lexical: standard_error 0.012845110588600097
+                  minimum_detectable_difference 0.0359866719500484
+```
+
+1.6x above the top of the stated range, and 3.5x the quoted MDD. The block's stated job is
+to convert apparent inconsistencies into demonstrations of care; here it manufactures one.
+A judge who reads item 2 and then the sigma-hat column sees the guide contradicted by the
+table it introduces on the same page. (Item 3 is scoped to a specific synthetic candidate
+and is defensible as written; item 2's "typically ... on this data" is not.)
+
+**Fix:** either widen the claim to the measured range and name where the wide value comes
+from — a lexical-backend swap moves individual sessions far more than a rank promotion
+does, so its paired SE is legitimately larger — or drop the numeric range and keep only the
+methodological point (that sigma-hat is the paired-difference SE, not the absolute binomial
+SE). A range asserted in prose that the payload can falsify is a maintenance trap; if it is
+kept, add a test that reads `leaderboard.json` and fails when any row's `standard_error`
+falls outside the range the prose states.
+
+---
+
+### WR-09: `import_legacy_results` never validates `--output`, yet `destination.name` becomes a hashed identity field
+
+**File:** `arena/import_legacy_results.py:134-163`, `arena/import_legacy_results.py:191-193`
+
+**Issue:** The sibling writer routes its destination through `validate_run_id` and
+`resolve_run_directory` (arena.py:124-127) — an allow-list plus a resolved-path containment
+check described as defence in depth for T-01-06. This entry point applies neither:
+`--output` is an unchecked `Path`, `destination.parent.mkdir(parents=True)` will create
+any tree, and `summary["run_id"] = destination.name` (line 117) writes whatever the last
+path component happened to be.
+
+That value is not inert. `arena/leaderboard.py:210` reads it back as `run_id`, and
+`spec_name_from_record(record, run_id)` (candidate.py:117-125) falls back to it for
+`CandidateSpec.name` when the record carries no `candidate_name` — which is exactly the
+rescued-anchor case this CLI produces. So an arbitrary, unvalidated path component becomes
+part of the record's hashed identity. `--output experiments/baselines/` (trailing slash)
+silently names the record `baselines`; `--output ../elsewhere/x` writes outside the
+baseline root entirely.
+
+**Fix:** apply the same boundary the sibling applies. The module deliberately imports
+nothing from `arena`, so inline the two checks rather than importing them:
+
+```python
+_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")  # mirrors arena/store.py:17
+
+if not _RUN_ID_RE.fullmatch(destination.name):
+    raise ValueError(
+        f"import destination name is not a usable run id: {destination.name!r}"
+    )
+```
+
+placed before `_build_summary` so a bad name cannot reach the hashed payload.
+
+---
+
+### WR-10: the evaluator digest pin is duplicated across two test modules, and only one discloses the line-ending caveat
+
+**File:** `tests/test_arena_metrics.py:391-396`, `tests/test_arena_boundary.py:15`
+
+**Issue:** `84ea899707452de249ca62abee77c4b40ab7a3139b5cc798ac30c9f521f91b30` appears twice.
+`test_arena_boundary.py` owns it as a named constant with a careful comment and a failure
+message that explicitly anticipates *"or this checkout normalizes line endings
+differently"*. `test_arena_metrics.py` repeats the bare literal inside an assertion whose
+comment says only *"Also a standing check that the immutable scoring harness is
+unmodified."*
+
+The pin is the CRLF working-tree digest, verified:
+
+```
+worktree sha:       84ea899707452de249ca62abee77c4b40ab7a3139b5cc798ac30c9f521f91b30  (312 CRLF pairs)
+LF-normalized sha:  79a5ea06f9a1b8c5036f30efa85dc1f36b8f6b06eb8feb8f545dfa767bc45564
+$ git ls-files --eol evaluator/local_evaluator.py
+i/lf    w/crlf
+```
+
+The index stores LF, so any checkout without `core.autocrlf=true` — every Linux/macOS
+machine, and any Windows machine without that setting — fails both tests with a message
+claiming the immutable evaluator was modified. `test_arena_boundary.py` at least tells the
+reader why; `test_arena_metrics.py` reads as a genuine tamper alarm. And a deliberate
+re-pin in the module that owns the constant leaves the duplicate stale, so the guard fires
+on the wrong thing.
+
+**Fix:** import the single owner rather than repeating the literal, and normalize the
+comparison so the guard tests bytes-that-matter rather than checkout configuration:
+
+```python
+from tests.test_arena_boundary import EVALUATOR_SHA256
+...
+def test_sha256_file_matches_the_immutable_evaluator_digest(self) -> None:
+    # sha256_file hashes worktree bytes, so the pin is line-ending dependent by
+    # construction; test_arena_boundary owns the constant and states why.
+    self.assertEqual(sha256_file(Path("evaluator/local_evaluator.py")), EVALUATOR_SHA256)
+```
+
+and add a `.gitattributes` entry (`evaluator/local_evaluator.py -text` or `* text=auto
+eol=lf`) so the immutable file checks out identically everywhere and the pin becomes
+platform-independent.
 
 ## Info
 
-### IN-01: `_cell` breaks the report's stated 6-dp convention for exact zeros
+### IN-01: `Path.write_text` without `newline="\n"` makes every record platform-dependent
 
-**INFO (non-blocking)**
-**File:** `arena/leaderboard.py:346-347`
+**File:** `arena/store.py:56-71`, `arena/import_legacy_results.py:62-73`, `arena/leaderboard.py:694`
 
-`if number == 0.0: return "0.0"` produces the ragged committed output visible in
-`experiments/LEADERBOARD.md`: `` `0.006110` `` beside `` `0.0` `` and `` `[0.0, 0.0]` ``
-in the same table, while the `HOW_TO_READ` block promises "Six decimal places
-throughout". Return `"0.000000"` and let the scientific-notation branch keep its
-`abs(number) < 1e-4 and number != 0.0` guard.
+**Issue:** `Path.write_text` opens in text mode with `newline=None`, which translates `\n`
+to `os.linesep`. Verified: on this machine `write_text("a\nb\n")` produces
+`b'a\r\nb\r\n'`. So `sessions.jsonl`, `summary.json`, `leaderboard.json` and
+`LEADERBOARD.md` are CRLF on Windows and LF on POSIX. `write_sessions`' comment claims
+*"the fingerprint and byte-reproducibility assertions downstream compare these files byte
+for byte"* — true within one platform, false across two. `core.autocrlf=true` normalizes
+the index here, and every read path uses `read_text` (which translates back), so nothing
+currently breaks; but WR-10 shows what happens when a digest is taken over these bytes.
+The frozen `experiments/run_public.py:283-293` has the same pattern, so this is a
+pre-existing convention rather than new drift.
 
-### IN-02: Dead `return` after `parser.error()`, and a redundant exception class
+**Fix:** pass `newline="\n"` in all four writers, and add `* text=auto eol=lf` to
+`.gitattributes` so the committed records are LF everywhere.
 
-**INFO (non-blocking)**
-**File:** `arena/run_arena.py:82-84`, `arena/run_arena.py:139-141`
+### IN-02: `expected_max_of_k` validates `panels` only after the `k == 1` early return
 
-`argparse.ArgumentParser.error` raises `SystemExit`, so both `return` statements are
-unreachable. Also `FileExistsError` is a subclass of `OSError`, already covered by the
-same tuple.
+**File:** `arena/statistics.py:351-356`
 
-### IN-03: `expected_max_of_k(1, panels=<odd>)` returns before validating `panels`
+**Issue:** `expected_max_of_k(1, panels=1999)` returns `0.0`; `expected_max_of_k(2,
+panels=1999)` raises. Argument validation that depends on which branch the function takes
+means a caller cannot rely on a bad argument being reported.
 
-**INFO (non-blocking)**
-**File:** `arena/statistics.py:295-300`
+**Fix:** move the `if panels % 2:` check above the `if k == 1:` return, next to the `k < 1`
+check.
 
-The `k == 1` early return precedes the `panels % 2` check, so an invalid panel count is
-silently accepted at `k=1` and rejected at `k>=2`.
-`test_rejects_invalid_arguments` only covers `k=2`. Move the `panels`/`bound` validation
-above the `k == 1` short-circuit.
+### IN-03: `result.pop("sessions")` raises a bare `KeyError` past the CLI's exception filter
 
-### IN-04: The degenerate branch's `holm_p = 1.0` override is dead
+**File:** `arena/arena.py:183-185`, `arena/run_arena.py:119`
 
-**INFO (non-blocking)**
-**File:** `arena/adjudication.py:265`
+**Issue:** Every other contract violation in `run_candidate` raises `ValueError` or
+`ArenaStoreError`, both of which `_run` catches and converts to `parser.error`. A harness
+result without a `"sessions"` key produces an uncaught `KeyError` and a raw traceback,
+after the evaluation has already run.
 
-`holm_bonferroni` caps every adjusted value at `1.0` (`statistics.py:254`), and the input
-for a degenerate row is `1.0`, so `holm_p_values[index]` is already exactly `1.0`. The
-override never changes the value. Harmless, but it obscures the fact that the degenerate
-row *is* in the Holm family (see WR-05).
+**Fix:** check with the same discipline as the collision guard immediately above:
 
-### IN-05: `_session_outcome` does not coerce the integer fields
+```python
+if "sessions" not in result:
+    raise ArenaStoreError("harness result carries no sessions")
+```
 
-**INFO (non-blocking)**
-**File:** `arena/arena.py:179-180`
+### IN-04: `best_rank` is bounded by `MAX_TURNS`, conflating a turn budget with a slate depth
 
-`sample_id`, `scenario_type`, `hit` and `reciprocal_rank` are all explicitly coerced;
-`first_hit_turn` and `best_rank` are passed through raw. A float `3.0` would satisfy
-`1 <= x <= 10` in `validate()` and then serialize into `sessions.jsonl` as `3.0` rather
-than `3`, breaking byte-comparison against a record written from an int. `store.py:87-88`
-has the same gap. Coerce with `None if row[k] is None else int(row[k])`.
+**File:** `arena/metrics.py:40-41`
 
-### IN-06: The rendered adjudication table omits `is_champion`
+**Issue:** `best_rank` is a rank within a slate, bounded by the evaluator's `TOP_K = 10`;
+`first_hit_turn` is bounded by `MAX_TURNS = 10`. They are numerically equal today and
+independent in principle, so validating both against `MAX_TURNS` means a future change to
+the turn budget silently moves the rank bound. The message also hardcodes `"between 1 and
+10"` rather than interpolating the constant, so it would lie after any re-tune.
 
-**INFO (non-blocking)**
-**File:** `arena/leaderboard.py:442-502`
+**Fix:** add `MAX_SLATE_RANK = 10  # evaluator/local_evaluator.py:16 (TOP_K)`, use it for
+`best_rank`, and interpolate both constants into their messages.
 
-`is_champion` is in the JSON but not in the Markdown. Since the champion is the row whose
-selection drives `correction_k`, and the committed report's champion
-(`fallback-lexical`) carries the verdict `not detectable`, a reader of the Markdown alone
-cannot see which row was selected. One extra column would close the loop with the
-`E[max k]` audit columns beside it.
+### IN-05: `--output-root` writes the Markdown outside the root it names
 
----
+**File:** `arena/run_arena.py:131-132`
 
-## Not defects (checked and cleared)
+**Issue:** `markdown_path = output_root.parent / "LEADERBOARD.md"`. The comment says this
+lets *"a test or a dry run point the whole report at a temporary tree"*, but the Markdown
+half lands in the root's **parent**: `--output-root /tmp/arena-scratch` writes
+`/tmp/LEADERBOARD.md`, and `--output-root baselines` writes `./LEADERBOARD.md`. Only the
+default value happens to produce the intended pair. Confirmed by inspection of the four
+plausible roots.
 
-Recorded so a later reviewer does not re-open them:
+**Fix:** keep both artifacts inside the named root and derive nothing from `.parent`:
 
-- `efficiency()` returning unrounded is correct and deliberate; `leaderboard.py:268`
-  rounds at the output boundary and `technical_score` consumes the unrounded value,
-  matching `local_evaluator.py:279-280, 286`.
-- Holm's running maximum (`statistics.py:254`) is present and correctly placed inside the
-  `min(1.0, ...)`; the textbook `(0.01, 0.04, 0.03) -> (0.03, 0.06, 0.06)` case verifies.
-- The Phipson-Smyth `+1` appears in both numerator and denominator for the Monte-Carlo
-  path and correctly does **not** appear in `exact_paired_sign_flip_p_value`.
-- Composite Simpson in `expected_max_of_k` is assembled correctly
-  (`[f(-b), f(b)]` + alternating 4/2 interior weights, `* width / 3`), uses `math.fsum`,
-  and matches `1/sqrt(pi)` and `3/(2 sqrt(pi))` to 12 places.
-- `pair_seed` is SHA-256 over content, order-sensitive by design, and never touches the
-  clock or `PYTHONHASHSEED`; `test_reproducible_across_processes` covers it.
-- No set-iteration ordering leak: every set-derived output is passed through `sorted()`
-  (`candidate.py:60`, `metrics.py:179`, `leaderboard.py:294`).
-- `.gitignore`'s `!experiments/baselines/` negation is correctly placed after
-  `experiments/*/`, and `experiments/*/` does not match the nested record directories
-  (verified: `git check-ignore` clears `experiments/baselines/run-a/summary.json`, and
-  all 11 record files are tracked).
-- `resolve_run_directory` traversal defence is sound; the regex rejects `..`, leading
-  separators, drive letters and `:`, and `is_relative_to` backs it up.
-- Moving the `tempfile.TemporaryDirectory` out from under itself in `run_candidate` is
-  safe: `TemporaryDirectory._rmtree`'s error handler swallows `FileNotFoundError`.
+```python
+json_path = output_root / LEADERBOARD_JSON_PATH.name
+markdown_path = output_root / LEADERBOARD_MARKDOWN_PATH.name
+```
+
+then move the committed Markdown to `experiments/baselines/LEADERBOARD.md`, or add an
+explicit `--markdown-path` flag rather than inferring one path from another.
 
 ---
 
-_Reviewed: 2026-08-30T10:36:25Z_
+_Reviewed: 2026-08-31_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
