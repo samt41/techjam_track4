@@ -177,6 +177,14 @@ Two things a reviewer should look at:
 - The **unpaired expanded corpora** call (decision 1) changes what `check_pairing` covers. If the intent was in fact 1,000 paired sessions rather than 2,000 unpaired ones, that contradicts D-25's target column and should be settled before `expanded_dev.v1` is generated — it is cheap to change now and expensive after the corpus is frozen.
 - **`DatasetEntry` has one `generator_model_resolved` field but the probe corpus has two generators.** The primary (Sonnet) id is recorded; the cross-check (Haiku) id lives only in the committed, digest-pinned response log. If the affinity finding needs the cross-check id in the registry, 02-08's entry shape needs a field.
 
+## Self-Check: PASSED
+
+- `arena/datasets/generate.py` — FOUND
+- `docs/STATUS.md` — FOUND
+- `.planning/phases/02-expanded-dataset-paraphrase-probe/02-09-SUMMARY.md` — FOUND
+- `876c728`, `3ccb68d`, `8380414`, `b7baebc` — all FOUND in `git log`
+- Working tree clean; 634 tests green on the final run.
+
 ---
 *Phase: 02-expanded-dataset-paraphrase-probe*
 *Completed: 2026-09-01*
