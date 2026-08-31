@@ -138,8 +138,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 02-09-PLAN.md — The corpus generator: D-31 control arm, D-36 pair pinning, the five-gate authoring loop, the asymmetric D-35 solvability rule (L-3), and the CLI whose publish sequence emits the per-pair divergence log and the probe target snapshot
-- [ ] 02-10-PLAN.md — `run_arena.py`: registry-name `--dataset` resolution plus the `contrast` and `corpus-baselines` subcommands
+- [x] 02-09-PLAN.md — The corpus generator: D-31 control arm, D-36 pair pinning, the five-gate authoring loop, the asymmetric D-35 solvability rule (L-3), and the CLI whose publish sequence emits the per-pair divergence log and the probe target snapshot
+- [x] 02-10-PLAN.md — `run_arena.py`: registry-name `--dataset` resolution plus the `contrast` and `corpus-baselines` subcommands
 
 **Wave 5** *(blocked on Wave 4; operator-run)*
 
@@ -249,7 +249,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Measurement Rig Core | 15/15 | Complete    | 2026-08-31 |
-| 2. Expanded Dataset & Paraphrase Probe | 8/14 | In Progress|  |
+| 2. Expanded Dataset & Paraphrase Probe | 10/14 | In Progress|  |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
 | 5. Go/No-Go Checkpoint | 0/TBD | Not started | - |
