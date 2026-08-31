@@ -91,10 +91,10 @@ Plans:
 
 **Gap-closure Wave 1**
 
-- [ ] 01-10-PLAN.md — Adjudication verdict repair: the D-23 exchange-rate sign inversion, the value-fabricating zero-variance branch, the `failures` rename, and the Holm-family decision (MEAS-07)
-- [ ] 01-11-PLAN.md — Symmetric `(R+1)` bootstrap percentile indices and a resample floor, with nominal coverage pinned (MEAS-04)
-- [ ] 01-12-PLAN.md — Record safety: narrowed `publish` deletion and a refuse-then-stage-then-rename legacy import (MEAS-03, MEAS-16)
-- [ ] 01-13-PLAN.md — Fingerprint identity: CLI records the invocation, and harness output cannot overwrite provenance (MEAS-14)
+- [x] 01-10-PLAN.md — Adjudication verdict repair: the D-23 exchange-rate sign inversion, the value-fabricating zero-variance branch, the `failures` rename, and the Holm-family decision (MEAS-07)
+- [x] 01-11-PLAN.md — Symmetric `(R+1)` bootstrap percentile indices and a resample floor, with nominal coverage pinned (MEAS-04)
+- [x] 01-12-PLAN.md — Record safety: narrowed `publish` deletion and a refuse-then-stage-then-rename legacy import (MEAS-03, MEAS-16)
+- [x] 01-13-PLAN.md — Fingerprint identity: CLI records the invocation, and harness output cannot overwrite provenance (MEAS-14)
 
 **Gap-closure Wave 2** *(blocked on 01-10)*
 
@@ -213,7 +213,7 @@ Phases execute in numeric order: 1 → 2 → {3, 4 in parallel} → 5 → 8, wit
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Measurement Rig Core | 9/9 | Complete   | 2026-08-30 |
+| 1. Measurement Rig Core | 13/15 | In Progress|  |
 | 2. Expanded Dataset & Paraphrase Probe | 0/TBD | Not started | - |
 | 3. Ranking Precision & Conversational Efficiency | 0/TBD | Not started | - |
 | 4. Semantic Asset & Candidate Spikes | 0/TBD | Not started | - |
