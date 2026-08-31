@@ -16,39 +16,52 @@ The arena. Nothing downstream can be trusted without it — research established
 independently that at n=200 the binomial SE is σ ≈ 0.019 HR@10, and that
 selecting the best of k candidates manufactures 0.022-0.030 of apparent gain.
 
-- [ ] **MEAS-01**: Leaderboard reports TechnicalScore with HR@10, MRR, and MTTC
+- [x] **MEAS-01**: Leaderboard reports TechnicalScore with HR@10, MRR, and MTTC
       broken out as separate columns, overall and per scenario
-- [ ] **MEAS-02**: HR@1 / @3 / @5 / @10 curve computed and reported for every run
-- [ ] **MEAS-03**: Per-scenario MRR and MTTC recovered from existing retained
+
+- [x] **MEAS-02**: HR@1 / @3 / @5 / @10 curve computed and reported for every run
+- [x] **MEAS-03**: Per-scenario MRR and MTTC recovered from existing retained
       trace data without re-running the agent
-- [ ] **MEAS-04**: Candidate comparison uses paired tests joined on `sample_id`
+
+- [x] **MEAS-04**: Candidate comparison uses paired tests joined on `sample_id`
       (bootstrap and permutation), never independent-sample tests
-- [ ] **MEAS-05**: Holm-Bonferroni correction applied across competing candidates
-- [ ] **MEAS-06**: Minimum detectable difference reported beside every
+
+- [x] **MEAS-05**: Holm-Bonferroni correction applied across competing candidates
+- [x] **MEAS-06**: Minimum detectable difference reported beside every
       leaderboard row, so "no significant difference" is visibly distinct from
       "we could not have detected one"
-- [ ] **MEAS-07**: A practical-significance floor of ≥0.01 TechnicalScore gates
+
+- [x] **MEAS-07**: A practical-significance floor of ≥0.01 TechnicalScore gates
       any claimed win, independent of the p-value
-- [ ] **MEAS-08**: Winner's-curse correction applied to a selected champion's
+
+- [x] **MEAS-08**: Winner's-curse correction applied to a selected champion's
       reported gain before it is believed or published
-- [ ] **MEAS-09**: Per-scenario non-inferiority gates state their bucket-size
+
+- [x] **MEAS-09**: Per-scenario non-inferiority gates state their bucket-size
       caveat (Boundary n=10, σ ≈ 0.086; Intent Override n=30, σ ≈ 0.050)
+
 - [ ] **MEAS-10**: Expanded evaluation sessions generated from the frozen
       catalog, always taking the evaluator's authored-card branch
+
 - [ ] **MEAS-11**: Paraphrase probe built as matched control/probe pairs — same
       target, two card phrasings — so target difficulty cannot confound the
       vocabulary-generalization signal
+
 - [ ] **MEAS-12**: Probe authoring is anti-circular: the target's literal catalog
       text never appears in the authoring prompt, lexical overlap is measured as
       an acceptance gate, and the probe is frozen before any candidate iterates
       against it
+
 - [ ] **MEAS-13**: Probe cross-checked against a second model family to detect
       self-preference bias
-- [ ] **MEAS-14**: Candidates declared through a fingerprinted, hashable spec so
+
+- [x] **MEAS-14**: Candidates declared through a fingerprinted, hashable spec so
       any run is reproducible and attributable
-- [ ] **MEAS-15**: Arena code never imports from, and never modifies,
+
+- [x] **MEAS-15**: Arena code never imports from, and never modifies,
       `evaluator/` — `evaluate()` is called as an opaque function
-- [ ] **MEAS-16**: Statistics engine validated against the retained historical
+
+- [x] **MEAS-16**: Statistics engine validated against the retained historical
       rows in `experiments/RUNS.md` before any new candidate exists
 
 ### Ranking Precision (MRR)
@@ -57,13 +70,17 @@ Where the headroom is: +0.119 available versus +0.040 in recall.
 
 - [ ] **RANK-01**: `DialogueAct.SLATE_FEEDBACK` is consumed as negative evidence
       in the belief posterior, not merely used to rotate the slate
+
 - [ ] **RANK-02**: Negative evidence is bounded, decaying, and scoped to the
       specific `parent_asin` — never propagated to attribute-level weights
+
 - [ ] **RANK-03**: A frozen linear reranker orders the top fused candidates on
       engineered features, with coefficients fit offline and baked in as
       constants
+
 - [ ] **RANK-04**: Fusion uses dev-set-tuned normalized weights rather than
       untuned RRF k=60, or measurement shows RRF is not costing points
+
 - [ ] **RANK-05**: Every ranking change reports HR@10, MRR, and MTTC jointly and
       is checked against the breakeven rule ΔMRR > 0.0667 × ΔMTTC
 
@@ -71,8 +88,10 @@ Where the headroom is: +0.119 available versus +0.040 in recall.
 
 - [ ] **CONV-01**: A confidence-based commitment trigger skips the clarifying
       question when top-1 posterior mass already dominates
+
 - [ ] **CONV-02**: The commitment trigger is gated behind the strict-population
       computation so it cannot fire on a confidently wrong candidate
+
 - [ ] **CONV-03**: Turn-count reduction is measured against recall — HR@10 is 25×
       more sensitive per point than MTTC, so a recall regression cannot be
       bought with speed
@@ -81,9 +100,11 @@ Where the headroom is: +0.119 available versus +0.040 in recall.
 
 - [ ] **SEM-01**: An offline LLM-generated synonym/concept asset replaces the
       hand-written six-entry `_EXPANSIONS` table
+
 - [ ] **SEM-02**: The asset passes an antonym/negation audit before it is frozen
 - [ ] **SEM-03**: The asset is checksummed and version-pinned, and the build step
       that produces it is separate from and not required by agent runtime
+
 - [ ] **SEM-04**: With the asset in place the agent remains stdlib-only,
       network-free, byte-deterministic, and reports zero tokens at inference
 
@@ -94,8 +115,10 @@ to be *measured*, with their true cost disclosed — not adopted by default.
 
 - [ ] **SPIKE-01**: ONNX cross-encoder reranker spiked and measured, with its
       dependency footprint and per-turn CPU latency measured locally
+
 - [ ] **SPIKE-02**: Runtime LLM constraint extraction spiked with a deterministic
       fallback beneath it, measured on both the network-on and network-off paths
+
 - [ ] **SPIKE-03**: Any spike that wins on measured score is evaluated against
       its Feasibility cost before being promoted to the shipping candidate
 
@@ -103,15 +126,20 @@ to be *measured*, with their true cost disclosed — not adopted by default.
 
 - [ ] **HARD-01**: `Agent(...)` constructs successfully when the artifact
       directory is absent, building it lazily rather than raising
+
 - [ ] **HARD-02**: Memory is bounded across an 800-session run — session state,
       turn history, and product cache no longer grow monotonically
+
 - [ ] **HARD-03**: A soft per-turn deadline degrades to the best-so-far slate
       rather than risking a timeout scored as a miss
+
 - [ ] **HARD-04**: The network-disabled path is verified by an actual
       blocked-network end-to-end run with explicit short timeouts, against a
       silent-blackhole failure mode rather than a fast DNS failure
+
 - [ ] **HARD-05**: `requirements.txt` is present per the recommended submission
       layout, even though the dependency set is empty
+
 - [ ] **HARD-06**: Artifact build cost is reduced, or explicitly justified in the
       Feasibility narrative with measured numbers
 
@@ -122,16 +150,21 @@ All five are mandatory. Two were absent from the repository's own gap analysis.
 - [ ] **DELIV-01**: The GitHub repository is public
 - [ ] **DELIV-02**: Code is meaningfully commented across all components
       (currently ~2.3% density)
+
 - [ ] **DELIV-03**: README covers project overview, setup and installation,
       reproduction steps, a limitations reflection, and team contributions
+
 - [ ] **DELIV-04**: A demo video, ≤3 minutes, is uploaded to YouTube as public
       and linked from Devpost — opening with a live multi-turn transcript before
       any architecture explanation
+
 - [ ] **DELIV-05**: Devpost description covers how the solution addresses the
       problem, development tools, APIs, libraries and frameworks, and datasets
       and assets used
+
 - [ ] **DELIV-06**: Latency, token usage, estimated model cost, network
       requirement, and fallback behavior are disclosed explicitly
+
 - [ ] **DELIV-07**: One demonstrated multi-turn session is packaged as a readable
       artifact from `Agent.turn_history()`
 
@@ -144,11 +177,14 @@ its own budget, not as cleanup.
       blind-spot finding — that the evaluator's fallback branch makes the
       simulated customer quote the target's own catalog text — supported by the
       paraphrase probe as its proof
+
 - [ ] **POS-02**: The Impact case is scoped to cost, compliance, and
       auditability with quantified claims, not generic "better shopping"
+
 - [ ] **POS-03**: Feasibility claims assert only what hardening has actually
       delivered — no "resource usage is proportionate" while a 580 MB artifact
       is a hard construction dependency
+
 - [ ] **POS-04**: A go/no-go checkpoint record exists, stopping score-improvement
       work once winner's-curse-corrected marginal gain falls below ~0.005
       TechnicalScore
@@ -162,9 +198,11 @@ Acknowledged, deferred, not in this roadmap.
 - **V2-01**: SPLADE-distilled term-importance weights frozen into the existing
   `lexical_postings` table — mechanism sound, integration nonstandard, MEDIUM
   confidence on magnitude
+
 - **V2-02**: A dense embedding retrieval route via small local ONNX models
 - **V2-03**: Deeper profile-conditioned prior — the anonymous profile is
   deliberately thin and headroom is unclear
+
 - **V2-04**: Soft price-proximity scoring — low expected value
 
 ### Presentation
@@ -197,18 +235,18 @@ maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MEAS-01 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-02 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-03 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-04 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-05 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-06 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-07 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-08 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-09 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-14 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-15 | Phase 1: Measurement Rig Core | Pending |
-| MEAS-16 | Phase 1: Measurement Rig Core | Pending |
+| MEAS-01 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-02 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-03 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-04 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-05 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-06 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-07 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-08 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-09 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-14 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-15 | Phase 1: Measurement Rig Core | Complete |
+| MEAS-16 | Phase 1: Measurement Rig Core | Complete |
 | MEAS-10 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
 | MEAS-11 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
 | MEAS-12 | Phase 2: Expanded Dataset & Paraphrase Probe | Pending |
@@ -247,8 +285,10 @@ maps to exactly one phase.
 | POS-03 | Phase 8: Deliverables Finalization & Submission | Pending |
 
 **Coverage:**
+
 - v1 requirements: 48 total (MEAS 16, RANK 5, CONV 3, SEM 4, SPIKE 3, HARD 6,
   DELIV 7, POS 4)
+
 - Mapped to phases: 48
 - Unmapped: 0 ✓
 
