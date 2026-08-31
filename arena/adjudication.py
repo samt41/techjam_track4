@@ -31,7 +31,27 @@ SIGNIFICANCE_ALPHA = 0.05
 # One turn of MTTC is worth 0.20 * (1/10) = 0.02 of TechnicalScore, while one point of
 # HR@10 is worth 0.50 -- HR@10 is roughly 25x more sensitive per point than MTTC. The
 # D-23 exchange rate spends that budget through MRR: an HR@10 regression is forgiven
-# only when the MRR gain exceeds 0.0667 x the MTTC movement it was traded for.
+# only when the MRR gain exceeds 0.0667 x the MAGNITUDE of the MTTC movement it was
+# traded for.
+#
+# "Gain" and "magnitude" are both load-bearing words, and the criterion originally
+# honoured neither. mttc_delta = candidate_mttc - baseline_mttc, so an MTTC
+# IMPROVEMENT is NEGATIVE; multiplying the un-absoluted delta by the rate put the bar
+# below zero, and the comparison then read "MRR above some negative number" -- which a
+# negative mrr_delta satisfies. Measured against the pre-fix code: a candidate that
+# regressed HR@10 by 0.030 AND MRR by 0.010 while improving MTTC by 4.11 turns was
+# adjudicated verdict = win with an EMPTY failed_criteria. At that MTTC movement the
+# bar sat at -0.274, licensing an MRR regression larger than this project's entire MRR
+# headroom.
+#
+# mttc_delta < 0 is not an edge case: it is the DESIGNED direction of improvement for
+# the whole Phase 3 CONV workstream, so the vacuous form was the main path. CONV-03 and
+# CLAUDE.md state the principle this criterion enforces -- a recall regression cannot be
+# bought with speed.
+#
+# Deliberately NOT added, and declined by the operator: a hard HR@10 regression floor,
+# and scaling the forgiveness threshold with the SIZE of the HR@10 regression. A
+# regression of any size stays forgivable once the magnitude-scaled MRR bar is cleared.
 EXCHANGE_RATE_PER_MTTC = 0.0667
 
 # The fixed REPORT order for `failed_criteria`. Building the tuple by filtering this
@@ -292,10 +312,19 @@ def adjudicate(
             clears_practical_floor = corrected_delta >= PRACTICAL_FLOOR
             # D-23: an HR@10 regression is disqualifying unless the exchange-rate math
             # clears. No regression means nothing to trade, so the check passes.
+            # The second clause requires a REAL MRR gain, and the third compares it
+            # against the MAGNITUDE of the MTTC movement; neither substitutes for the
+            # other, and dropping either one restores the vacuous form documented above
+            # the constant.
             exchange_rate_ok = hit_rate_delta >= 0.0 or (
-                mrr_delta > EXCHANGE_RATE_PER_MTTC * mttc_delta
+                mrr_delta > 0.0
+                and mrr_delta > EXCHANGE_RATE_PER_MTTC * abs(mttc_delta)
             )
-            failures = {
+            # This mapping holds PASSES, not failures: every value is True when the
+            # criterion was SATISFIED. It was previously named for the opposite, in the
+            # most safety-critical function in the rig, so a future `if passed[name]`
+            # read in the obvious sense would have inverted every verdict in the report.
+            passed = {
                 "holm_significance": holm_p < SIGNIFICANCE_ALPHA,
                 "practical_floor": clears_practical_floor,
                 "hr10_exchange_rate": exchange_rate_ok,
@@ -303,7 +332,7 @@ def adjudicate(
             # Filtered from the constant, so the order is fixed by CRITERION_ORDER and
             # never by the order the checks happened to run in.
             failed_criteria = tuple(
-                name for name in CRITERION_ORDER if not failures[name]
+                name for name in CRITERION_ORDER if not passed[name]
             )
 
         # The single verdict call site. The rule lives in one place so the degenerate
