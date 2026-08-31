@@ -5,6 +5,12 @@ from pathlib import Path
 
 from arena.adjudication import CandidateArm, adjudicate
 from arena.arena import build_candidate_spec, run_candidate
+from arena.datasets.registry import (
+    CORPUS_ROOT,
+    REGISTRY_PATH,
+    RegistryError,
+    resolve_dataset,
+)
 from arena.leaderboard import (
     LEADERBOARD_JSON_PATH,
     LEADERBOARD_MARKDOWN_PATH,
@@ -26,6 +32,30 @@ from arena.store import (
 # does not accept would mint a fingerprint describing a configuration that was
 # silently ignored, which invalidates every comparison built on it.
 _OVERRIDE_FLAGS = ("exploration", "lexical_mode", "artifact_path")
+
+# Printed verbatim by argparse.RawDescriptionHelpFormatter, which is why this is a
+# module constant rather than an inline string. The default formatter re-wraps a
+# description through textwrap.fill, and that would be free to break
+# `--exploration disabled --lexical-mode auto` across two lines -- turning the one
+# thing an operator is meant to copy verbatim into something that cannot be copied.
+_RUN_DESCRIPTION = """\
+Evaluate one candidate and publish a provenance-carrying record.
+
+--dataset accepts a registry name from data/datasets.json (for example probe.v1) as
+well as a filesystem path. A registry name is re-hashed at resolution time and refused
+if the file on disk no longer matches its frozen digest (D-43, Pitfall 6); a plain path
+is used as given.
+
+L-11, and it decides whether a re-run reproduces a committed record. Reproducing the
+override mapping stored by experiments/baselines/run-a requires typing
+
+    --exploration disabled --lexical-mode auto
+
+explicitly. An override flag left unset is OMITTED from the recorded mapping and
+therefore from the fingerprint, so a flag-free invocation records {} and mints a
+DIFFERENT digest while configuring a byte-identical Agent. The full reasoning is the
+comment block at the top of _run() in arena/run_arena.py and is not duplicated here.
+"""
 
 
 def _record_directory(value: str) -> Path:
@@ -49,6 +79,28 @@ def _existing_file(value: str, label: str) -> Path:
     if not path.is_file():
         raise ValueError(f"{label} does not exist: {path}")
     return path
+
+
+def _resolve_dataset(value: str) -> Path:
+    """Resolve a registry name or a filesystem path, on _existing_file's contract.
+
+    The same "reject an unusable input at the boundary, with a message naming it"
+    rationale as _record_directory above, extended by the one thing a bare path
+    cannot express: whether the file being measured is still the file whose digest
+    was frozen. registry.resolve_dataset re-hashes a registered corpus and raises
+    RegistryError on drift, so a corpus that changed under a committed digest fails
+    HERE, loudly, rather than producing a measurement that silently describes
+    different bytes (Pitfall 6). An unregistered value falls through to a plain path
+    check whose message matches _existing_file's shape, so an operator typo reads the
+    same whichever door it comes through.
+
+    The two roots are passed explicitly from this module's globals rather than left
+    to resolve_dataset's own defaults, which bind at def time. Reading them at call
+    time is what lets a test point the whole resolution at a temporary tree, exactly
+    as _adjudicate derives its report paths from --output-root instead of taking the
+    module constants.
+    """
+    return resolve_dataset(value, registry_path=REGISTRY_PATH, root=CORPUS_ROOT)
 
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -102,7 +154,10 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
 
     try:
         catalog_path = _existing_file(args.catalog, "catalog")
-        dataset_path = _existing_file(args.dataset, "dataset")
+        # --catalog deliberately stays on _existing_file: the catalog is the
+        # organizer's file and is not registry-managed, so there is no frozen digest
+        # for it to have drifted from.
+        dataset_path = _resolve_dataset(args.dataset)
         spec = build_candidate_spec(
             args.name,
             catalog_path=catalog_path,
@@ -116,7 +171,19 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
             dataset_path=dataset_path,
             output_root=Path(args.output_root),
         )
-    except (ValueError, FileExistsError, OSError, ArenaStoreError) as error:
+    # RegistryError is named explicitly and this tuple is NOT widened into a
+    # catch-all: a drifted digest is an operator error and must read as one through
+    # parser.error, while a broad catch here would swallow a guard failure into the
+    # same message and make a bug indistinguishable from a typo (T-02-34). Note that
+    # RegistryError subclasses RuntimeError rather than ValueError, so it is not
+    # already covered by the entry above it.
+    except (
+        ValueError,
+        FileExistsError,
+        OSError,
+        ArenaStoreError,
+        RegistryError,
+    ) as error:
         parser.error(str(error))
         return
     print(destination)
@@ -173,14 +240,14 @@ def _adjudicate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
             json_path=json_path,
             markdown_path=markdown_path,
         )
-    except (ValueError, OSError, ArenaStoreError) as error:
+    except (ValueError, OSError, ArenaStoreError, RegistryError) as error:
         parser.error(str(error))
         return
     print(written_json)
     print(written_markdown)
 
 
-def main() -> None:
+def main(argv: tuple[str, ...] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run and adjudicate arena candidates",
     )
@@ -189,11 +256,21 @@ def main() -> None:
     run_parser = subparsers.add_parser(
         "run",
         help="Evaluate one candidate and publish a provenance-carrying record",
+        description=_RUN_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     run_parser.add_argument("--run-id", required=True)
     run_parser.add_argument("--name", required=True)
     run_parser.add_argument("--catalog", default="data/catalog.jsonl")
-    run_parser.add_argument("--dataset", default="data/public_set.jsonl")
+    run_parser.add_argument(
+        "--dataset",
+        default="data/public_set.jsonl",
+        help=(
+            "a registry name from data/datasets.json (for example probe.v1) or a"
+            " filesystem path; a registry name is re-hashed at resolution time and"
+            " refused if it no longer matches its frozen digest"
+        ),
+    )
     # D-04, deliberately differing from experiments/run_public.py's `experiments`:
     # arena records live in their own root so the two code paths cannot collide on a
     # run id, and so the committed baseline set is one directory.
@@ -228,7 +305,13 @@ def main() -> None:
     adjudicate_parser.add_argument("--include", action="append", default=None)
     adjudicate_parser.add_argument("--output-root", default=str(BASELINES_ROOT))
 
-    args = parser.parse_args()
+    # argv is threaded through rather than left to sys.argv, matching every other CLI
+    # in this repository (starter/shopping_agent/build_catalog_artifacts.py,
+    # experiments/run_public.py). It is what lets each subcommand be driven from a
+    # test without spawning a process, so a CLI path can be asserted at the same cost
+    # as a function call. argv=None keeps sys.argv the default for the real entry
+    # point below.
+    args = parser.parse_args(argv)
     if args.command == "run":
         _run(run_parser, args)
     else:
