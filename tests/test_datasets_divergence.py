@@ -13,7 +13,9 @@ from arena.datasets.divergence import (
     DivergenceReport,
     _ARMS,
     _CLASSIFIER_KEYWORDS,
+    bigrams,
     bucket_summary,
+    carries_content,
     contradicts,
     coverage,
     divergence_log_path,
@@ -27,6 +29,7 @@ from arena.datasets.divergence import (
     write_divergence_log,
 )
 from arena.evaluator_bridge import classify_constraint, searchable_text
+from starter.shopping_agent.constraint_extractor import STOPWORDS
 from starter.shopping_agent.text_normalization import search_terms
 
 
@@ -261,23 +264,99 @@ class DivergenceGateTest(unittest.TestCase):
 
     def test_adjacency_survives_a_repeat_earlier_in_the_target(self) -> None:
         # The case that makes L-15 bite rather than merely be true. In this
-        # target "a" occurs twice, so de-duplication drops the second one and
-        # welds "with" to "rubber" -- the verbatim span "with a" then vanishes
-        # from the target's 2-grams and a copied phrase scores clean.
+        # target "leather" occurs twice, so de-duplication drops the second one
+        # and welds "with" to "trim" -- the verbatim span "with leather" then
+        # vanishes from the target's 2-grams and a copied phrase scores clean.
         #
         # It also isolates the adjacency half: every content token of the phrase
-        # is absent from the target, so the ONLY thing failing this gate is the
-        # shared span. Building bigrams from search_terms turns this case green.
-        target = "a sturdy boot with a rubber sole"
-        measured = measure_text("made with a leathery finish", target)
+        # is absent from the target ("leather" is the pinned classifier keyword
+        # and so is not charged as content), so the ONLY thing failing this gate
+        # is the shared span. Building bigrams from search_terms turns this case
+        # green.
+        #
+        # The span is deliberately content-bearing rather than the older
+        # "with a": an all-stopword 2-gram no longer rejects, so a stopword pair
+        # here would have made this test pass for the wrong reason -- vacuously,
+        # on a gate that had stopped firing.
+        target = "leather upper on a sturdy boot with leather trim"
+        measured = measure_text("made with leather", target)
         self.assertEqual(measured.overlapping_tokens, ())
-        self.assertIn("with a", measured.shared_bigrams)
+        self.assertIn("with leather", measured.shared_bigrams)
         self.assertFalse(measured.passes)
         deduplicated = search_terms(target)
         self.assertNotIn(
-            ("with", "a"),
+            ("with", "leather"),
             set(zip(deduplicated, deduplicated[1:])),
         )
+
+    def test_an_all_stopword_shared_bigram_is_not_lexical_reuse(self) -> None:
+        # The D-34 defect measured on the 300-pair run: 202 of 310 exhausted
+        # items were rejected for lexical overlap, and 12 of those named no
+        # shared content word at all -- they failed purely on a function-word
+        # span such as "with a", which every long enough catalog listing
+        # contains. The phrase below shares that span with the target and shares
+        # no content token with it.
+        target = "a sturdy boot with a rubber sole"
+        measured = measure_text("made with a leathery finish", target)
+        self.assertEqual(measured.overlapping_tokens, ())
+        self.assertEqual(measured.shared_bigrams, ())
+        self.assertTrue(measured.passes)
+        # The span really is shared -- the exemption is what clears it, not an
+        # accident of tokenization. Without this the test would pass on a phrase
+        # that never overlapped in the first place, which proves nothing.
+        self.assertIn(("with", "a"), bigrams(target))
+        self.assertIn(("with", "a"), bigrams("made with a leathery finish"))
+
+    def test_the_stopword_exemption_needs_every_token_to_be_a_stopword(
+        self,
+    ) -> None:
+        # The other side of the same rule, on the same target, so the two
+        # results differ only in the span: ONE content word is enough to reject.
+        # A test that only showed "with a" passing would be one-sided and would
+        # stay green if the exemption were widened to any bigram containing a
+        # stopword -- which would excuse "a sole", "the rubber" and most real
+        # copied phrasing.
+        target = "a sturdy boot with a rubber sole"
+        for phrase, span in (
+            ("must have a rubber sole underneath", "rubber sole"),
+            ("nothing fancy, a sturdy make", "a sturdy"),
+            ("built with a rubber grip", "a rubber"),
+        ):
+            with self.subTest(phrase=phrase):
+                measured = measure_text(phrase, target)
+                self.assertIn(span, measured.shared_bigrams)
+                self.assertFalse(measured.passes)
+
+    def test_carries_content_is_the_rule_the_gate_applies(self) -> None:
+        # Pinned directly, because the predicate is the whole of the change and
+        # a rule only exercised through measure_text is a rule whose boundary
+        # nobody stated. The four all-stopword pairs are the ones measured on
+        # the real run.
+        for pair in (("with", "a"), ("it", "s"), ("to", "be"), ("to", "the")):
+            with self.subTest(pair=pair):
+                self.assertFalse(carries_content(pair))
+        for pair in (
+            ("rubber", "sole"),
+            ("snap", "closure"),
+            ("moisture", "wicking"),
+            ("with", "leather"),
+            ("sole", "the"),
+        ):
+            with self.subTest(pair=pair):
+                self.assertTrue(carries_content(pair))
+
+    def test_the_exemption_reads_the_shared_stopword_set(self) -> None:
+        # D-54: the exemption must consume the same STOPWORDS the content half
+        # consumes, not a second list that drifts. Passing a substitute set
+        # changes the verdict, which is how "it reads the parameter" is proven
+        # rather than asserted -- a hardcoded inner list would ignore this.
+        target = "a sturdy boot with a rubber sole"
+        phrase = "made with a leathery finish"
+        self.assertTrue(measure_text(phrase, target).passes)
+        narrowed = frozenset(STOPWORDS - {"a"})
+        rejected = measure_text(phrase, target, stopwords=narrowed)
+        self.assertIn("with a", rejected.shared_bigrams)
+        self.assertFalse(rejected.passes)
 
     def test_a_verbatim_title_phrase_scores_full_overlap(self) -> None:
         # The control-arm shape: the harness's own intent_card reuses the

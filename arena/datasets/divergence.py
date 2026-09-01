@@ -126,6 +126,31 @@ def bigrams(value: str) -> frozenset[tuple[str, str]]:
     return frozenset(zip(tokens, tokens[1:]))
 
 
+def carries_content(
+    pair: tuple[str, str], *, stopwords: frozenset[str] = STOPWORDS
+) -> bool:
+    """True when a 2-gram holds at least one word that says something about a product.
+
+    The adjacency half of D-34 asks whether a phrase copied a verbatim span of the
+    target's text. `with a`, `it s`, `to be` and `to the` are spans of English, not
+    spans of this product: every catalog listing long enough contains them, so a
+    probe phrase sharing one has demonstrated nothing about lexical reuse. Charging
+    them made the gate reject on grammar. Measured on the 300-pair run: 12 of 202
+    overlap rejections named an all-stopword 2-gram and no shared content word at
+    all -- `with a` seven times, `it s` and `to be` three each, `to the` twice.
+
+    `rubber sole`, `snap closure` and `moisture wicking` keep rejecting, and that is
+    the property this predicate has to preserve rather than merely permit: ONE
+    content word is enough, so only a pair made ENTIRELY of function words is
+    excused. The pinned classifier keyword is content here even though
+    `content_tokens` excludes it, which is deliberate -- `with leather` is copied
+    phrasing whether or not D-33 forced the phrase to carry `leather`.
+
+    Same `STOPWORDS` object the content half uses (D-54), never a second list.
+    """
+    return any(token not in stopwords for token in pair)
+
+
 def pinned_tokens(phrase: str) -> frozenset[str]:
     """Return the tokens a phrase is only carrying to hold its bucket.
 
@@ -264,9 +289,10 @@ def measure_text(
     is made of (L-15).
 
     The 2-gram half runs over the FULL probe token sequence, stopwords and
-    pinned keyword included: a shared 2-gram is a verbatim span whether or not
-    one half of it is a function word, and "rubber sole" is copied phrasing
-    however the tokens are individually classified.
+    pinned keyword included, with one exclusion: a 2-gram made ENTIRELY of
+    stopwords is not evidence of anything (see `carries_content`). "rubber sole"
+    is copied phrasing however its tokens are individually classified and still
+    rejects; "with a" is a span of English and no longer does.
     """
     target_tokens = frozenset(search_terms(target_text))
     target_bigrams = bigrams(target_text)
@@ -278,7 +304,7 @@ def measure_text(
     shared = tuple(
         pair
         for pair in zip(probe_sequence, probe_sequence[1:])
-        if pair in target_bigrams
+        if pair in target_bigrams and carries_content(pair, stopwords=stopwords)
     )
     report = DivergenceReport(
         bucket=classify_constraint(phrase),
