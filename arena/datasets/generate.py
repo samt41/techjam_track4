@@ -13,7 +13,15 @@ Two asymmetries are deliberate and are the easiest things in the phase to
   re-cleaned, re-ordered or repaired. A target whose evaluator card cannot be
   expressed as a valid authored card is dropped from the candidate pool rather
   than patched, because a patched control stops being public-set phrasing and
-  the whole control-vs-probe contrast stops meaning what it says.
+  the whole control-vs-probe contrast stops meaning what it says. The one
+  reduction D-31 does admit is `authorable_pair`'s, and it is admitted because
+  refusing it would break the same contrast from the other side: a constraint
+  whose bucket the target's gist cannot supply is removed from EVERY arm of the
+  pair at once. Each retained string is still evaluator output verbatim, and both
+  arms still disclose the same constraints in the same positions. Removing it from
+  the probe arm alone would leave the control disclosing four constraints against
+  the probe's three, and the measured delta would then be information content
+  rather than vocabulary.
 * `measure_solvability` exists for the expanded corpora and REFUSES the probe.
   See its own body for why; the short version is that a retrieval-backed filter
   deletes exactly the sessions carrying the vocabulary gap (D-35, L-3).
@@ -92,6 +100,7 @@ from arena.datasets.divergence import (
     write_divergence_log,
 )
 from arena.datasets.gist import (
+    GistPair,
     GistVocabulary,
     gist_for_target,
     load_vocabulary,
@@ -742,7 +751,7 @@ def constraint_slots(
     vocabulary: GistVocabulary,
     products: dict[str, dict[str, object]],
 ) -> tuple[ConstraintSlot, ...]:
-    """Pair every control constraint with the gist pair its phrase must denote."""
+    """Pair every AUTHORABLE control constraint with the gist pair it must denote."""
 
     product = products.get(pair.target)
     if product is None:
@@ -761,69 +770,66 @@ def constraint_slots(
             f"target {pair.target!r} has an empty attribute gist; there is"
             " nothing an author could be shown about it (D-32)"
         )
+    # Grouped once, and every list below is read in `catalogue` order -- which
+    # `gist_for_target` sorted on (attribute, value) -- so each choice is a stable
+    # tie-break rather than an insertion-order accident. Grouping also makes the
+    # supply question a lookup rather than a scan, which is what lets the
+    # omission below be expressed as "this bucket has no supply" instead of as a
+    # chain of fallbacks that quietly ends somewhere else.
+    by_bucket: dict[str, list[tuple[GistPair, str]]] = {}
+    for entry in catalogue:
+        by_bucket.setdefault(_gist_bucket(entry[0].attribute), []).append(entry)
     available = list(catalogue)
     slots: list[ConstraintSlot] = []
     for name in _SLOTS:
-        for position, phrase in enumerate(getattr(pair.card, name)):
+        emitted = 0
+        for phrase in getattr(pair.card, name):
             bucket = classify_constraint(phrase)
-            # Preference order: an unspent pair in this constraint's own bucket,
-            # then a SPENT pair back in the right bucket, then any unspent pair,
-            # then any pair at all.
+            supply = by_bucket.get(bucket)
+            if supply is None:
+                # NO SLOT IS EMITTED. This is the whole of the fix, and it is an
+                # omission rather than a fallback because the gates downstream
+                # want two things at once that no phrase can satisfy at the same
+                # time. D-33 `preserves_bucket` requires the authored phrase to
+                # classify back into `bucket`; D-35 faithfulness requires it to
+                # mean the gist pair it was shown, and the committed author
+                # prompt forbids inventing an attribute the pair does not state.
+                # When the target's gist holds nothing in `bucket` at all, a
+                # `color` slot can only be shown something like
+                # `entry_method=toothed_fastener`: naming a colour fails
+                # faithfulness, not naming one fails the bucket gate, and the
+                # item burns every one of AUTHORING_ATTEMPT_CAP attempts and
+                # takes the whole corpus run down with it. Measured on the 300-
+                # pair probe, 141 of 1,197 constraints were in exactly that
+                # flatly-unsatisfiable position.
+                #
+                # Emitting nothing is what `authorable_pair` then removes from
+                # every arm at once, so the constraint is absent symmetrically
+                # rather than only from the arm that could not author it.
+                continue
+            # Preference order, now only two branches because a third could not
+            # run: an unspent pair in this constraint's own bucket, then a SPENT
+            # pair back in the right bucket. `supply` is non-empty by
+            # construction, so `supply[0]` always answers and there is no
+            # cross-bucket branch left to reach -- which is the point. The old
+            # third and fourth branches existed solely for the buckets the gist
+            # cannot reach (`classify_constraint` can return `use_case` and
+            # `budget`; gist.py's `_GIST_ATTRIBUTES` maps to neither), and those
+            # are precisely the constraints now omitted.
             #
-            # Bucket agreement outranks novelty, and having those two the other
-            # way round is what makes a slot structurally unsatisfiable rather
-            # than merely repetitive. A slot handed a gist from the wrong bucket
-            # asks the author for two contradictory things at once: D-33
-            # `preserves_bucket` requires the phrase to classify back into
-            # `bucket`, D-35 faithfulness requires it to mean the gist, and the
-            # committed author prompt forbids inventing an attribute the pair
-            # does not state. So a `color` slot shown `entry_method=toothed_fastener`
-            # fails faithfulness if it names a colour and fails the bucket gate if
-            # it does not -- no phrase passes, and the item burns every one of
-            # AUTHORING_ATTEMPT_CAP attempts. A spent same-bucket pair is at worst
-            # a repeat; a fresh cross-bucket pair cannot be authored at all.
-            #
-            # Reuse is admitted deliberately rather than refused, and this
-            # ordering asks for MORE of it. A control card carries up to four
-            # constraints while a thin product's gist may hold two or three, so
-            # refusing reuse would drop every attribute-poor target from the pool
-            # -- and attribute-poor products are not randomly distributed, so the
-            # corpus would skew toward richly described listings. That is
-            # precisely the silent skew D-30's stratification exists to prevent,
-            # and it would be a far worse defect than a card stating one attribute
-            # twice in two different wordings. The two phrases are still forced
-            # apart by the pair-uniqueness gate in `author_arm`.
-            #
-            # The last two branches survive for the buckets the gist cannot reach
-            # at all. `classify_constraint` can return `use_case` and `budget`,
-            # and no gist attribute maps to either (gist.py's `_GIST_ATTRIBUTES`
-            # excludes them), so such a slot has no satisfiable pair anywhere in
-            # the catalogue and novelty is the only remaining tie-break.
-            #
-            # Every branch reads its candidates in `catalogue` order, which
-            # `gist_for_target` sorted on (attribute, value), so the first match
-            # is a stable tie-break rather than an insertion-order accident.
+            # Reuse is admitted deliberately rather than refused. A control card
+            # carries up to four constraints while a thin product's gist may hold
+            # two or three, so refusing reuse would drop every attribute-poor
+            # target from the pool -- and attribute-poor products are not
+            # randomly distributed, so the corpus would skew toward richly
+            # described listings. That is precisely the silent skew D-30's
+            # stratification exists to prevent, and it is a far worse defect than
+            # a card stating one attribute twice in two different wordings. The
+            # two phrases are still forced apart by the pair-uniqueness gate in
+            # `author_arm`.
             chosen = next(
-                (
-                    entry
-                    for entry in available
-                    if _gist_bucket(entry[0].attribute) == bucket
-                ),
-                None,
+                (entry for entry in supply if entry in available), supply[0]
             )
-            if chosen is None:
-                chosen = next(
-                    (
-                        entry
-                        for entry in catalogue
-                        if _gist_bucket(entry[0].attribute) == bucket
-                    ),
-                    None,
-                )
-            if chosen is None and available:
-                chosen = available[0]
-            if chosen is None:
-                chosen = catalogue[0]
             if chosen in available:
                 available.remove(chosen)
             gist_pair, payload = chosen
@@ -832,7 +838,7 @@ def constraint_slots(
                     pair_id=pair.pair_id,
                     target=pair.target,
                     slot=name,
-                    position=position,
+                    position=emitted,
                     control_phrase=phrase,
                     bucket=bucket,
                     gist_attribute=gist_pair.attribute,
@@ -840,7 +846,77 @@ def constraint_slots(
                     gist_payload=payload,
                 )
             )
+            # Numbered by EMISSION, not by the constraint's index in the control
+            # card, so positions stay contiguous through an omission. That is
+            # what keeps `control_constraints`' own `enumerate` over the reduced
+            # card in step with these ids: the committed divergence log keys on
+            # (pair_id, arm, slot, position), and a gap on one arm only would
+            # file two arms of one pair under different keys.
+            emitted += 1
+        if emitted == 0:
+            # REFUSED, not emitted short. `IntentCard.validate()` requires both
+            # lists to be non-empty, so a card that lost a whole list is not a
+            # smaller card -- it is not a card. Raising here rather than
+            # resampling later is what keeps the draw reproducible: `_run`
+            # filters the candidate pool with this same call BEFORE
+            # `sample_targets` runs, so the pool is fully determined before any
+            # random number is drawn. Topping up after the draw would make the
+            # corpus depend on which targets happened to fail.
+            wanted = sorted(
+                {classify_constraint(value) for value in getattr(pair.card, name)}
+            )
+            raise GenerateError(
+                f"target {pair.target!r} would lose every {name} constraint:"
+                f" they need a gist pair in {wanted} and its gist reaches only"
+                f" {sorted(by_bucket)}. A card with an empty {name} list is not a"
+                " card, so the target is excluded from the pool"
+            )
     return tuple(slots)
+
+
+def authorable_pair(
+    pair: PairTarget,
+    *,
+    vocabulary: GistVocabulary,
+    products: dict[str, dict[str, object]],
+) -> PairTarget:
+    """Reduce a pair's card to the constraints EVERY arm of it can carry."""
+
+    # The reduction is applied to the PAIR, once, before any arm is built, which
+    # is the only way both arms provably carry the same constraints: the control
+    # row takes its card from here, `control_constraints` enumerates the same
+    # card, and every authored arm re-derives its slots from it. Reducing inside
+    # `author_arm` instead would shorten the authored arms and leave the control
+    # disclosing constraints the probe never states -- an information asymmetry
+    # dressed as a wording contrast.
+    #
+    # Idempotent by construction, and that is load-bearing rather than tidy:
+    # `author_arm` calls `constraint_slots` again on the card this returns, and a
+    # second reduction that removed anything further would renumber the positions
+    # out from under the divergence log. It cannot, because a constraint is
+    # dropped on a property of the TARGET's gist, which this function does not
+    # touch.
+    slots = constraint_slots(pair, vocabulary=vocabulary, products=products)
+    card = IntentCard(
+        target_category=pair.card.target_category,
+        hard_constraints=tuple(
+            slot.control_phrase for slot in slots if slot.slot == "hard_constraints"
+        ),
+        soft_preferences=tuple(
+            slot.control_phrase for slot in slots if slot.slot == "soft_preferences"
+        ),
+    )
+    # Validated before it is used to build anything. Every retained string came
+    # verbatim from a card that already validated and a subset cannot introduce a
+    # duplicate, so this is an assertion on the reduction rather than a filter --
+    # a failure here means the reduction itself is wrong and must stop the run.
+    card.validate()
+    return PairTarget(
+        pair_id=pair.pair_id,
+        target=pair.target,
+        scenario_type=pair.scenario_type,
+        card=card,
+    )
 
 
 def control_constraints(
@@ -1564,7 +1640,11 @@ def _run(
         product = products[parent_asin]
         try:
             card = control_card(product)
-            constraint_slots(
+            # `authorable_pair`, not `constraint_slots`: the filter has to run the
+            # SAME call the build runs, or a target admitted here can still fail
+            # at assembly. It is what refuses a target whose card would lose a
+            # whole constraint list to the gist-supply omission.
+            authorable_pair(
                 PairTarget(
                     pair_id=pair_id_for(0, corpus_stem=stem),
                     target=parent_asin,
@@ -1597,12 +1677,20 @@ def _run(
     }
     scenario_by_pair = assign_scenarios(tuple(pair_id_by_target.values()))
     scenarios = dict(scenario_by_pair)
+    # Reduced ONCE, here, before any row or arm is built. Every downstream reader
+    # -- the control row, `control_constraints`, and each `author_arm` call --
+    # takes its card from this one tuple, so the arms cannot disagree about which
+    # constraints the pair carries.
     pairs = tuple(
-        PairTarget(
-            pair_id=pair_id_by_target[target],
-            target=target,
-            scenario_type=scenarios[pair_id_by_target[target]],
-            card=control_card(products[target]),
+        authorable_pair(
+            PairTarget(
+                pair_id=pair_id_by_target[target],
+                target=target,
+                scenario_type=scenarios[pair_id_by_target[target]],
+                card=control_card(products[target]),
+            ),
+            vocabulary=vocabulary,
+            products=products,
         )
         for target in targets
     )

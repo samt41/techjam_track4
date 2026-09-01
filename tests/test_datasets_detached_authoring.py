@@ -192,7 +192,21 @@ def catalog_lines(count: int = 24) -> str:
             # Two feature strings and two structured details, which is what makes
             # `intent_card` yield four distinct cleaned constraints -- the shape
             # `IntentCard.validate()` requires and a thinner product cannot give.
-            "features": ["cushioned midsole", "quick lace hardware"],
+            #
+            # Both feature strings are KEYS IN THE COMMITTED D-52 ABSTRACTION
+            # TABLE, and that is a requirement rather than a detail. `intent_card`
+            # puts the recovered material and colour in `hard_constraints` and the
+            # two raw features in `soft_preferences`, so the soft list is entirely
+            # `feature`-bucket. Since 02-09b a constraint whose bucket the target's
+            # gist cannot supply is not emitted at all, and `feature` is suppliable
+            # only through this table -- the DF floor admits nothing for it (L-6).
+            # The previous strings ("cushioned midsole", "quick lace hardware") are
+            # in no table row, so every product here lost its whole soft list and
+            # the pool went to zero. These two abstract to `ground_contact`
+            # (pliant_tread) and `entry_method` (prong_strap), and they stay
+            # lexically disjoint from `_PHRASES` so the D-34 gate still has
+            # something real to pass.
+            "features": ["Flexible sole", "Buckle closure"],
             "details": {"material": "leather", "color": "black"},
             "description": "Built for long days on rough ground.",
             "categories": ["Clothing, Shoes & Jewelry", _DEPARTMENTS[index % 4], "Boots"],
