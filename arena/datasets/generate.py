@@ -26,6 +26,21 @@ Two asymmetries are deliberate and are the easiest things in the phase to
   See its own body for why; the short version is that a retrieval-backed filter
   deletes exactly the sessions carrying the vocabulary gap (D-35, L-3).
 
+There is a THIRD reduction, and it happens after the gates rather than before
+them. A constraint that spends `AUTHORING_ATTEMPT_CAP` attempts without clearing
+D-33, D-34 and D-35 is DROPPED rather than taken as a reason to abandon the
+corpus -- symmetrically, from every arm of its pair, and a pair that thereby loses
+a whole constraint list is refused outright, because `IntentCard.validate()`
+requires both lists to be non-empty and a half-formed pair is not a smaller pair.
+That is admissible only because it is recorded completely: `arena/datasets/drops.py`
+writes a committed ledger naming every dropped constraint with its attempt count
+and verbatim final rejection reason, every refused pair with the list it lost, the
+counts ride in the registry entry, and `check_recorded_counts` refuses an entry
+whose numbers disagree with the rows and the ledger on disk. `--drop-log` names
+the ledger; it defaults beside the corpus. What is NOT admissible is dropping an
+item nobody authored -- see `author_arm` -- because that is an unanswered queue
+rather than a measured outcome.
+
 Two operator notes:
 
 * L-11: the D-48 baseline runs that consume these corpora must type
@@ -42,6 +57,7 @@ Two operator notes:
           --response-log .scratch/probe-smoke.jsonl \
           --registry .scratch/datasets.json --corpus-root .scratch \
           --divergence-log .scratch/divergence.probe.v1.jsonl \
+          --drop-log .scratch/drops.probe.v1.jsonl \
           --target-snapshot .scratch/targets.probe.v1.json \
           --markdown .scratch/datasets.md
 
@@ -63,21 +79,23 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import statistics
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
 from arena.candidate import current_revision
 from arena.datasets.authoring import (
     AUTHORING_ATTEMPT_CAP,
+    NO_PHRASE_REASON,
     AuthoringError,
     AuthoringRequest,
     AuthoringRunner,
     PendingRequestCollector,
     ReviewPayload,
-    attempt_until,
+    attempt_outcome,
     claude_runner,
     collecting_runner,
     load_prompt,
@@ -99,6 +117,15 @@ from arena.datasets.divergence import (
     record_from_report,
     write_divergence_log,
 )
+from arena.datasets.drops import (
+    DROP_LOG_SCHEMA_VERSION,
+    DroppedConstraint,
+    RefusedPair,
+    drop_log_path,
+    drop_summary,
+    load_drop_log,
+    write_drop_log,
+)
 from arena.datasets.gist import (
     GistPair,
     GistVocabulary,
@@ -114,6 +141,7 @@ from arena.datasets.registry import (
     RegistryError,
     check_cross_check_subset,
     check_pairing,
+    check_recorded_counts,
     check_scenario_mix,
     divergence_from_summary,
     load_registry,
@@ -735,10 +763,15 @@ class AuthoredConstraint:
 
 @dataclass(frozen=True, slots=True)
 class ArmAuthoring:
-    """Everything one authored arm produced: its constraints and its call log."""
+    """Everything one authored arm produced: what landed, what did not, and the calls."""
 
     constraints: tuple[AuthoredConstraint, ...]
     calls: tuple[dict[str, object], ...]
+    # Returned rather than raised on, and returned as a RECORD rather than as a
+    # count. The caller drops these constraints from every arm and writes them to
+    # the committed ledger; a bare count would account for the shortfall while
+    # discarding the reasons, which is the failure docs/STATUS.md names.
+    dropped: tuple[DroppedConstraint, ...]
 
 
 def _gist_bucket(attribute: str) -> str:
@@ -1146,9 +1179,26 @@ def author_arm(
         accepted_by_pair.setdefault(slot_by_id[item_id].pair_id, set()).add(phrase)
         return True, ""
 
-    accepted = attempt_until(
+    outcome = attempt_outcome(
         item_ids, produce, accept, cap=AUTHORING_ATTEMPT_CAP
     )
+    # An item nobody wrote a phrase for is not a constraint the gates rejected,
+    # and it must not be dropped as though it were. On the detached path it is a
+    # queued request waiting to be answered, and a run that dropped it would
+    # publish a corpus that is short by however much of the queue was outstanding
+    # -- silently, since every other signal says the round succeeded. The
+    # collector normally stops such a run when the next attempt's items overlap
+    # the queue, but a request first queued on the FINAL attempt has no next
+    # attempt to be stopped by, and this is the refusal that covers it.
+    unanswered = tuple(
+        item for item in outcome.exhausted if item.reason == NO_PHRASE_REASON
+    )
+    if unanswered:
+        raise AuthoringError(
+            f"{len(unanswered)} item(s) in the {arm!r} arm were never authored:"
+            f" {[item.item_id for item in unanswered]}. Nothing judged them, so"
+            " there is no rejection to record and they are not droppable"
+        )
     constraints = tuple(
         AuthoredConstraint(
             slot=slot_by_id[item_id],
@@ -1156,9 +1206,32 @@ def author_arm(
             phrase=phrase,
             report=reports[item_id],
         )
-        for item_id, phrase in accepted
+        for item_id, phrase in outcome.accepted
     )
-    return ArmAuthoring(constraints=constraints, calls=tuple(calls))
+    dropped = tuple(
+        DroppedConstraint(
+            schema_version=DROP_LOG_SCHEMA_VERSION,
+            item_id=item.item_id,
+            pair_id=slot_by_id[item.item_id].pair_id,
+            arm=arm,
+            target=slot_by_id[item.item_id].target,
+            slot=slot_by_id[item.item_id].slot,
+            position=slot_by_id[item.item_id].position,
+            bucket=slot_by_id[item.item_id].bucket,
+            gist_attribute=slot_by_id[item.item_id].gist_attribute,
+            gist_value=slot_by_id[item.item_id].gist_value,
+            attempts=item.attempts,
+            # VERBATIM, never a category. "lexical overlap 0.1250 on ['made'] and
+            # shared 2-grams ['it s']" is what lets a later reader re-derive the
+            # decision; "divergence" is a summary somebody has already
+            # interpreted, and the interpretation is the part worth checking.
+            reason=item.reason,
+        )
+        for item in outcome.exhausted
+    )
+    return ArmAuthoring(
+        constraints=constraints, calls=tuple(calls), dropped=dropped
+    )
 
 
 def _request_body(
@@ -1200,6 +1273,164 @@ def card_from_constraints(
     )
     card.validate()
     return card
+
+
+def slot_item_ids(pair: PairTarget, slot: str) -> tuple[str, ...]:
+    """The item ids one pair's card occupies in one slot, in card order."""
+
+    # Derived from the CARD rather than re-derived from the gist, so it needs no
+    # vocabulary and no catalog: `constraint_slots` numbers by emission over the
+    # reduced card, so position i in the card is item id i in the slot. This is
+    # the one identity the whole symmetric drop rests on, which is why it is a
+    # named function rather than an f-string at three call sites.
+    code = dict(_SLOT_CODES)[slot]
+    return tuple(
+        f"{pair.pair_id}:{code}{position}"
+        for position in range(len(getattr(pair.card, slot)))
+    )
+
+
+def refused_pairs(
+    pairs: tuple[PairTarget, ...],
+    *,
+    dropped_item_ids: frozenset[str],
+    arms_by_pair: dict[str, tuple[str, ...]],
+) -> tuple[RefusedPair, ...]:
+    """Refuse every pair that lost a WHOLE constraint list to the drops.
+
+    `IntentCard.validate()` requires a non-empty hard list and a non-empty soft
+    list, so a pair that lost either is not a smaller pair -- it is not a card.
+    Emitting it half-formed is not available; the choice is between refusing the
+    pair and refusing the corpus, and refusing the pair is what the recorded
+    shortfall then has to explain.
+
+    The refusal is a property of the PAIR, not of an arm, because the drop is
+    symmetric: the same item ids are removed from control, `probe_sonnet` and
+    `probe_haiku` alike, so all three lose the same list at the same moment. That
+    is exactly what keeps the arms matched on constraint ids, which is the
+    property the entire paired contrast rests on.
+    """
+    refused: list[RefusedPair] = []
+    for pair in pairs:
+        missing: list[str] = []
+        lost: list[str] = []
+        for name in _SLOTS:
+            identifiers = slot_item_ids(pair, name)
+            gone = tuple(
+                identifier
+                for identifier in identifiers
+                if identifier in dropped_item_ids
+            )
+            lost.extend(gone)
+            if identifiers and len(gone) == len(identifiers):
+                missing.append(name)
+        if not missing:
+            continue
+        record = RefusedPair(
+            schema_version=DROP_LOG_SCHEMA_VERSION,
+            pair_id=pair.pair_id,
+            target=pair.target,
+            arms=arms_by_pair.get(pair.pair_id, ()),
+            missing_slots=tuple(sorted(missing)),
+            dropped_item_ids=tuple(sorted(set(lost))),
+        )
+        record.validate()
+        refused.append(record)
+    return tuple(refused)
+
+
+def surviving_positions(
+    pairs: tuple[PairTarget, ...], *, dropped_item_ids: frozenset[str]
+) -> dict[tuple[str, str], dict[int, int]]:
+    """Map each surviving `(pair, slot)` position to its post-drop position.
+
+    Positions are RENUMBERED contiguously rather than left with a gap, for the
+    same reason `constraint_slots` numbers by emission: the committed divergence
+    log keys on `(pair_id, arm, slot, position)`, and the corpus-wide sweep reads
+    control position i against probe position i. One map is built here and applied
+    to every arm, so the arms cannot be renumbered differently -- alignment is
+    structural rather than a coincidence of two loops agreeing.
+    """
+    mapping: dict[tuple[str, str], dict[int, int]] = {}
+    for pair in pairs:
+        for name in _SLOTS:
+            kept = [
+                position
+                for position, identifier in enumerate(slot_item_ids(pair, name))
+                if identifier not in dropped_item_ids
+            ]
+            mapping[(pair.pair_id, name)] = {
+                old: new for new, old in enumerate(kept)
+            }
+    return mapping
+
+
+def apply_drops(
+    constraints: tuple[AuthoredConstraint, ...],
+    *,
+    dropped_item_ids: frozenset[str],
+    refused_pair_ids: frozenset[str],
+    positions: dict[tuple[str, str], dict[int, int]],
+) -> tuple[AuthoredConstraint, ...]:
+    """Remove the dropped constraints and the refused pairs, then renumber.
+
+    Applied to the control arm with the same arguments as to every authored arm.
+    Running one function over all of them is what makes the symmetry a property of
+    the code rather than of three call sites that currently agree.
+    """
+    kept: list[AuthoredConstraint] = []
+    for constraint in constraints:
+        slot = constraint.slot
+        if slot.pair_id in refused_pair_ids:
+            continue
+        if slot.item_id() in dropped_item_ids:
+            continue
+        renumbered = positions.get((slot.pair_id, slot.slot), {})
+        if slot.position not in renumbered:
+            raise GenerateError(
+                f"constraint {slot.item_id()!r} survived the drop but has no"
+                " renumbered position; the arms would disagree about which"
+                " constraint sits where"
+            )
+        kept.append(
+            replace(
+                constraint,
+                slot=replace(slot, position=renumbered[slot.position]),
+            )
+        )
+    return tuple(kept)
+
+
+def assert_arms_match_on_constraint_ids(
+    constraints: tuple[AuthoredConstraint, ...],
+) -> None:
+    """Every arm of a pair must carry the identical `(slot, position)` set.
+
+    Asserted rather than assumed, and asserted AFTER the drop, because the drop is
+    the only step that could break it. `paired_contrast` joins the arms on
+    `pair_id` and the sweep reads control position i against probe position i, so
+    two arms disagreeing here would produce a contrast between constraints that
+    are not counterparts -- a comparison that still computes and no longer means
+    anything.
+
+    The cross-check arm covers a SUBSET of pairs (D-40), so the check is per pair
+    across the arms that pair actually carries, never a corpus-wide arm equality.
+    """
+    by_pair: dict[str, dict[str, set[tuple[str, int]]]] = {}
+    for constraint in constraints:
+        by_pair.setdefault(constraint.slot.pair_id, {}).setdefault(
+            constraint.arm, set()
+        ).add((constraint.slot.slot, constraint.slot.position))
+    for pair_id in sorted(by_pair):
+        arms = by_pair[pair_id]
+        reference = arms[sorted(arms)[0]]
+        for arm in sorted(arms):
+            if arms[arm] != reference:
+                raise GenerateError(
+                    f"pair {pair_id} is not matched on constraint ids after the"
+                    f" drop: arm {arm!r} carries {sorted(arms[arm])} against"
+                    f" {sorted(reference)}"
+                )
 
 
 def divergence_records(
@@ -1482,6 +1713,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", default=None)
     parser.add_argument("--response-log", type=Path, default=None)
     parser.add_argument("--divergence-log", type=Path, default=None)
+    parser.add_argument("--drop-log", type=Path, default=None)
     parser.add_argument("--target-snapshot", type=Path, default=None)
     parser.add_argument(
         "--replay",
@@ -1613,6 +1845,7 @@ def _run(
     seed_label = arguments.seed_label or plan.name
     response_log = arguments.response_log or response_log_path(plan.name)
     divergence_log = arguments.divergence_log or divergence_log_path(plan.name)
+    drop_log = arguments.drop_log or drop_log_path(plan.name)
     snapshot = arguments.target_snapshot
     if snapshot is None and is_probe_corpus(plan.name):
         # Probe corpus only. A snapshot for the 2,800 expanded sessions would add
@@ -1695,24 +1928,7 @@ def _run(
         for target in targets
     )
 
-    rows: list[SampleRow] = []
-    measured: list[AuthoredConstraint] = []
     calls: list[dict[str, object]] = []
-
-    if plan.paired:
-        # The control arm exists only where a pair has two arms to contrast.
-        for pair in pairs:
-            rows.append(
-                build_row(
-                    pair_id=pair.pair_id,
-                    arm="control",
-                    scenario_type=pair.scenario_type,
-                    target=pair.target,
-                    card=pair.card,
-                    profile=profile_for_target(products[pair.target], pair_id=pair.pair_id),
-                )
-            )
-        measured.extend(control_constraints(pairs, products=products))
 
     arms: list[tuple[str, str, str, tuple[PairTarget, ...]]] = [
         (plan.probe_arm, model_alias, prompt_name, pairs)
@@ -1728,6 +1944,13 @@ def _run(
             )
         )
 
+    # AUTHORED FIRST, ASSEMBLED SECOND. The two used to be one loop, which cannot
+    # express the symmetric drop: a constraint the cross-check arm exhausts has to
+    # come out of the control and primary rows too, and those rows were already
+    # built by the time the cross-check arm ran. Nothing about the authoring
+    # changed -- only the point at which a row is minted.
+    authored_arms: list[tuple[str, tuple[PairTarget, ...], tuple[AuthoredConstraint, ...]]] = []
+    dropped: list[DroppedConstraint] = []
     for arm, alias, arm_prompt, arm_pairs in arms:
         if not arm_pairs:
             continue
@@ -1742,11 +1965,71 @@ def _run(
             batch_size=arguments.batch_size,
         )
         calls.extend(authored.calls)
-        measured.extend(authored.constraints)
+        dropped.extend(authored.dropped)
+        authored_arms.append((arm, arm_pairs, authored.constraints))
+
+    if collector is not None and collector.pending:
+        # Nothing may be published from a round that still has work in the queue.
+        # An unanswered request makes its items look exhausted, and a placeholder
+        # review verdict makes an answered item look rejected -- both would now be
+        # DROPPED rather than raised on, so the corpus would come out short by
+        # whatever the queue still holds with a ledger blaming the gates for it.
+        # `main` turns this into the pending-requests exit status, which is the
+        # normal state of a converging detached run.
+        raise GenerateError(
+            f"{len(collector.pending)} request(s) are still queued at"
+            f" {collector.pending_path}; a corpus published now would be short by"
+            " whatever the queue holds and its drop ledger would misattribute the"
+            " shortfall to the gates"
+        )
+
+    arms_by_pair: dict[str, tuple[str, ...]] = {}
+    for pair in pairs:
+        carried = (("control",) if plan.paired else ()) + tuple(
+            arm
+            for arm, arm_pairs, _ in authored_arms
+            if any(member.pair_id == pair.pair_id for member in arm_pairs)
+        )
+        arms_by_pair[pair.pair_id] = carried
+
+    dropped_ids = frozenset(constraint.item_id for constraint in dropped)
+    refused = refused_pairs(
+        pairs, dropped_item_ids=dropped_ids, arms_by_pair=arms_by_pair
+    )
+    refused_ids = frozenset(record.pair_id for record in refused)
+    positions = surviving_positions(pairs, dropped_item_ids=dropped_ids)
+
+    rows: list[SampleRow] = []
+    measured: list[AuthoredConstraint] = []
+    surviving = tuple(pair for pair in pairs if pair.pair_id not in refused_ids)
+    # The control arm is reduced by the SAME call as every authored arm, and its
+    # row is built from the reduced constraints rather than from `pair.card`. A
+    # control that kept a constraint the probe could not author would disclose
+    # something the probe never states, and the measured delta would then be
+    # information content rather than vocabulary -- the asymmetry `authorable_pair`
+    # already refuses, arriving by a different door. Each retained string is still
+    # the evaluator's own output verbatim (D-31); only the subset changed.
+    staged: list[tuple[str, tuple[PairTarget, ...], tuple[AuthoredConstraint, ...]]] = []
+    if plan.paired:
+        staged.append(
+            ("control", surviving, control_constraints(pairs, products=products))
+        )
+    staged.extend(authored_arms)
+
+    for arm, arm_pairs, constraints in staged:
+        retained = apply_drops(
+            constraints,
+            dropped_item_ids=dropped_ids,
+            refused_pair_ids=refused_ids,
+            positions=positions,
+        )
+        measured.extend(retained)
         by_pair: dict[str, list[AuthoredConstraint]] = {}
-        for constraint in authored.constraints:
+        for constraint in retained:
             by_pair.setdefault(constraint.slot.pair_id, []).append(constraint)
         for pair in arm_pairs:
+            if pair.pair_id in refused_ids:
+                continue
             rows.append(
                 build_row(
                     pair_id=pair.pair_id,
@@ -1760,8 +2043,15 @@ def _run(
                     profile=profile_for_target(products[pair.target], pair_id=pair.pair_id),
                 )
             )
+    assert_arms_match_on_constraint_ids(tuple(measured))
 
     solvability: dict[str, int] = {}
+    # `--drop-unsolvable` is a THIRD reduction, taken by an operator who typed the
+    # flag rather than by the gates, and it is subtracted here so the drop
+    # ledger's arithmetic stays about the drops it actually describes. Rolling the
+    # two together would let one reduction absorb the other's shortfall unnoticed,
+    # which is the whole failure mode `check_recorded_counts` exists to catch.
+    unsolvable_pairs = 0
     if arguments.solvability_check:
         unreachable: list[str] = []
         solvability = measure_solvability(
@@ -1772,8 +2062,10 @@ def _run(
             observe=lambda row, hit: None if hit else unreachable.append(row.sample_id),
         )
         if arguments.drop_unsolvable:
-            dropped = frozenset(unreachable)
-            rows = [row for row in rows if row.sample_id not in dropped]
+            unsolvable = frozenset(unreachable)
+            before = {row.pair_id for row in rows}
+            rows = [row for row in rows if row.sample_id not in unsolvable]
+            unsolvable_pairs = len(before - {row.pair_id for row in rows})
 
     ordered = tuple(sorted(rows, key=lambda row: (row.pair_id, row.arm)))
     records = tuple(row.as_record() for row in ordered)
@@ -1799,12 +2091,22 @@ def _run(
         tuple(measured), pair_id_by_target=pair_id_by_target
     )
     write_divergence_log(Path(divergence_log), divergence)
+    Path(drop_log).parent.mkdir(parents=True, exist_ok=True)
+    # Written on every run, including one that dropped nothing: an empty ledger is
+    # a corpus stating that it lost nothing, while an absent file is something a
+    # reader has to interpret.
+    write_drop_log(Path(drop_log), tuple(dropped), refused)
 
     snapshot_targets = 0
     if snapshot is not None:
         Path(snapshot).parent.mkdir(parents=True, exist_ok=True)
+        # The targets actually PUBLISHED, not the targets sampled. A refused pair
+        # contributes no row, and a snapshot that still carried its text would
+        # record a target the corpus does not hold -- and plan 02-11's sweep
+        # asserts the snapshot's key set equals the corpus's target set.
+        published = sorted({row.ground_truth_parent_asin for row in ordered})
         pairs_out = tuple(
-            (target, searchable_text(products[target])) for target in sorted(targets)
+            (target, searchable_text(products[target])) for target in published
         )
         write_target_snapshot(
             Path(snapshot),
@@ -1853,6 +2155,24 @@ def _run(
         target_snapshot_path=Path(snapshot).as_posix() if snapshot is not None else "",
         target_snapshot_sha256=sha256_file(Path(snapshot)) if snapshot is not None else "",
         target_snapshot_count=snapshot_targets,
+        drop_log_path=Path(drop_log).as_posix(),
+        drop_log_sha256=sha256_file(Path(drop_log)),
+        # The shortfall, in the provenance record rather than only in the ledger.
+        # `data/datasets.json` is what a reader of the corpus opens first, and a
+        # registry that stated only how much survived would let the reduction pass
+        # unnoticed exactly as an unexplained row count would.
+        dropped_constraint_count=len(dropped_ids),
+        refused_pair_count=len(refused),
+    )
+    # The recorded counts against the rows actually written, before the entry is
+    # frozen. This is the invariant the docs/STATUS.md warning exists to protect,
+    # and it is checked rather than argued: an entry describing a corpus other
+    # than the published one is the failure mode, and it is silent by nature.
+    check_recorded_counts(
+        entry,
+        records,
+        load_drop_log(Path(drop_log)),
+        sampled_pair_count=len(pairs) - unsolvable_pairs,
     )
     registry_path = Path(arguments.registry)
     existing = load_registry(registry_path) if registry_path.is_file() else ()
@@ -1862,6 +2182,8 @@ def _run(
     Path(arguments.markdown).parent.mkdir(parents=True, exist_ok=True)
     Path(arguments.markdown).write_text(render_markdown(entries), encoding="utf-8")
 
+    surviving_pairs = len({row.pair_id for row in ordered})
+    per_pair = _constraints_by_pair(tuple(measured))
     print(f"corpus={plan.name}")
     print(f"sessions={entry.session_count}")
     print(f"targets={entry.distinct_target_count}")
@@ -1871,10 +2193,41 @@ def _run(
     print(f"calls={entry.call_count}")
     print(f"cost_usd={entry.cost_usd}")
     print(f"model_resolved={entry.generator_model_resolved}")
+    # Printed unconditionally, including the all-zero case. A summary that appeared
+    # only when something was dropped would train an operator to read its absence
+    # as "nothing to see", which is indistinguishable from a run that forgot to
+    # emit it.
+    for name, value in drop_summary(tuple(dropped), refused):
+        print(f"{name}={value}")
+    print(f"sampled_pairs={len(pairs)}")
+    print(f"surviving_pairs={surviving_pairs}")
+    print(f"surviving_constraints={sum(per_pair)}")
+    # `per_pair` cannot be empty here -- a corpus with no constraints does not
+    # reach this line, because `card_from_constraints` and `validate_corpus` both
+    # refuse one long before. Calling fmean straight is therefore honest rather
+    # than unguarded; a `0.0` fallback would print a measured mean of zero
+    # constraints for a case that cannot occur, and 0.0 is a real value some reader
+    # would eventually quote.
+    print(f"constraints_per_pair={statistics.fmean(per_pair):.4f}")
+    print(f"drop_log={Path(drop_log).as_posix()}")
     if solvability:
         print(f"solvability_checked={solvability['checked']}")
         print(f"solvability_unreachable={solvability['unreachable']}")
     return 0
+
+
+def _constraints_by_pair(
+    constraints: tuple[AuthoredConstraint, ...],
+) -> tuple[int, ...]:
+    # Counted as DISTINCT (slot, position) per pair, not as rows: every arm
+    # measures the same constraint set, so counting rows would multiply the card
+    # size by the number of arms and report 2.4 constraints per pair as 5.6.
+    by_pair: dict[str, set[tuple[str, int]]] = {}
+    for constraint in constraints:
+        by_pair.setdefault(constraint.slot.pair_id, set()).add(
+            (constraint.slot.slot, constraint.slot.position)
+        )
+    return tuple(len(by_pair[pair_id]) for pair_id in sorted(by_pair))
 
 
 def _count_scenarios(records: tuple[dict, ...]) -> tuple[tuple[str, int], ...]:

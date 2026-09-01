@@ -84,10 +84,25 @@ DETACHED_DURATION_MS = 0
 PENDING_MODEL_RESOLVED = "pending-external-authoring"
 
 # Re-authoring cap per constraint, then fail loudly. An unbounded retry loop is
-# the denial-of-service path (T-02-06), and a silent give-up is worse than a
+# the denial-of-service path (T-02-06), and a SILENT give-up is worse than a
 # crash: dropping an item would leave the corpus smaller than its recorded
 # session count with nothing in the log to say why.
+#
+# "Loudly" is the requirement and it has two doors, not one. `attempt_until`
+# raises. `attempt_outcome` hands the caller each exhausted item with its attempt
+# count and verbatim final reason, so a caller that writes them to a committed
+# ledger and carries the counts into the registry has been just as loud -- see
+# `arena/datasets/drops.py` and docs/STATUS.md. What neither door permits is the
+# item vanishing with its reason.
 AUTHORING_ATTEMPT_CAP = 3
+
+# The reason recorded when an item came back with no phrase at all. Named, because
+# it is the one exhaustion reason that is NOT a gate verdict: nobody wrote
+# anything, so nothing was judged. A caller that drops exhausted items must treat
+# it differently from a rejection -- dropping a constraint three gates refused is
+# a measured outcome, dropping one nobody authored is a queue that has not been
+# answered yet, and on the detached path it means exactly that.
+NO_PHRASE_REASON = "no phrase returned"
 
 # Every call carries it (T-02-06). The measured 10-item Sonnet call took 49.3 s,
 # so 300 s is roughly 6x headroom -- generous enough that a legitimate slow call
@@ -1009,34 +1024,80 @@ def assert_single_resolved_model(records: tuple[dict[str, object], ...]) -> str:
     return identifiers[0]
 
 
-def attempt_until(
+@dataclass(frozen=True, slots=True)
+class ExhaustedItem:
+    """One item that spent the whole attempt cap, with the reason it last failed."""
+
+    item_id: str
+    attempts: int
+    reason: str
+
+    def validate(self) -> None:
+        if not self.item_id:
+            raise ValueError("an exhausted item requires an item id")
+        if self.attempts < 1:
+            raise ValueError(
+                f"an exhausted item must have been attempted at least once, got"
+                f" {self.attempts}"
+            )
+        # An empty reason is the one field that must not be expressible. The whole
+        # value of handing these back rather than raising is that the caller can
+        # record WHY, and a blank reason is indistinguishable from one nobody
+        # filled in -- which is the silent shortfall this machinery exists to
+        # prevent.
+        if not self.reason:
+            raise ValueError(
+                f"exhausted item {self.item_id} carries no rejection reason"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptOutcome:
+    """Everything the bounded re-authoring loop learned: what stuck, and what did not."""
+
+    accepted: tuple[tuple[str, str], ...]
+    exhausted: tuple[ExhaustedItem, ...]
+
+
+def attempt_outcome(
     item_ids: tuple[str, ...],
     produce: Callable[[tuple[str, ...], int], Mapping[str, str]],
     accept: Callable[[str, str], tuple[bool, str]],
     *,
     cap: int = AUTHORING_ATTEMPT_CAP,
-) -> tuple[tuple[str, str], ...]:
-    """Re-author the rejected items, bounded, then fail loudly with the reasons.
+) -> AttemptOutcome:
+    """Re-author the rejected items, bounded, and REPORT the ones that never landed.
 
-    Failing loudly is the requirement, not a stylistic choice: silently dropping
-    an item would leave the corpus smaller than its recorded session count, and
-    the shortfall would surface much later as an unexplained row-count mismatch
-    rather than here, where the rejection reasons are still in hand.
+    This is the loop; `attempt_until` is this function plus a refusal. The split
+    exists because "fail loudly" and "raise" are not the same requirement. What
+    must never happen is an item disappearing with its rejection reason, leaving
+    the corpus smaller than its recorded session count and the shortfall to
+    surface later as an unexplained row-count mismatch. Raising satisfies that by
+    ending the run; so does handing the caller the item id, the attempt count and
+    the verbatim final reason, PROVIDED the caller records them. The decision
+    between the two belongs to the caller, and the two paths share this one loop
+    so they cannot drift.
+
+    `attempts` counts the rounds an item was actually sent for, so an item
+    accepted on the second round and one that burned all three are distinguishable
+    in the record rather than both reading as `cap`.
     """
     if cap < 1:
         raise ValueError(f"attempt cap must be at least 1, got {cap}")
     pending = tuple(item_ids)
     accepted: dict[str, str] = {}
     reasons: dict[str, str] = {}
+    attempts: dict[str, int] = {}
     for attempt_index in range(cap):
         if not pending:
             break
         produced = produce(pending, attempt_index)
         still: list[str] = []
         for item_id in pending:
+            attempts[item_id] = attempts.get(item_id, 0) + 1
             phrase = produced.get(item_id)
             if phrase is None:
-                reasons[item_id] = "no phrase returned"
+                reasons[item_id] = NO_PHRASE_REASON
                 still.append(item_id)
                 continue
             ok, reason = accept(item_id, phrase)
@@ -1046,12 +1107,51 @@ def attempt_until(
             reasons[item_id] = reason
             still.append(item_id)
         pending = tuple(still)
-    if pending:
+    exhausted = tuple(
+        ExhaustedItem(
+            item_id=item_id,
+            attempts=attempts.get(item_id, 0),
+            # Never blank: an item reaches this tuple only by failing, and every
+            # failing branch above writes a reason. The fallback is here so a
+            # future branch that forgot to cannot produce a silent record.
+            reason=reasons.get(item_id) or "no reason recorded",
+        )
+        # `pending` order follows `item_ids`, which `author_arm` sorts, so the
+        # ledger built from this tuple is byte-stable across runs.
+        for item_id in pending
+    )
+    for item in exhausted:
+        item.validate()
+    return AttemptOutcome(
+        accepted=tuple(
+            (item_id, accepted[item_id])
+            for item_id in item_ids
+            if item_id in accepted
+        ),
+        exhausted=exhausted,
+    )
+
+
+def attempt_until(
+    item_ids: tuple[str, ...],
+    produce: Callable[[tuple[str, ...], int], Mapping[str, str]],
+    accept: Callable[[str, str], tuple[bool, str]],
+    *,
+    cap: int = AUTHORING_ATTEMPT_CAP,
+) -> tuple[tuple[str, str], ...]:
+    """Require EVERY item, or raise naming each failure and its last reason.
+
+    The all-or-nothing door. A caller that cannot express a partial result -- one
+    that would otherwise assemble a card out of whatever happened to land -- takes
+    this one and gets a refusal instead of a quietly smaller corpus.
+    """
+    outcome = attempt_outcome(item_ids, produce, accept, cap=cap)
+    if outcome.exhausted:
         detail = ", ".join(
-            f"{item_id} ({reasons.get(item_id, 'no reason recorded')})"
-            for item_id in pending
+            f"{item.item_id} ({item.reason})" for item in outcome.exhausted
         )
         raise AuthoringError(
-            f"authoring failed after {cap} attempts for {len(pending)} item(s): {detail}"
+            f"authoring failed after {cap} attempts for"
+            f" {len(outcome.exhausted)} item(s): {detail}"
         )
-    return tuple((item_id, accepted[item_id]) for item_id in item_ids)
+    return outcome.accepted
