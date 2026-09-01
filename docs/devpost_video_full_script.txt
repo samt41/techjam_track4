@@ -1,8 +1,8 @@
-# Search That Remembers: expanded presenter script
+SEARCH THAT REMEMBERS: EXPANDED PRESENTER SCRIPT
 
-Synced to the built deck: `AI-MEMORY TARGETTED PRODUCT SEARCH.pptx` (13 slides).
+Synced to the built deck: AI-MEMORY TARGETTED PRODUCT SEARCH.pptx (13 slides).
 Slide numbers, titles, and on-screen facts below follow that file, not the earlier
-storyboard in `devpost_video_storyboard.md`.
+storyboard in devpost_video_storyboard.md.
 
 Anything in square brackets is a cue. Do not read the cue aloud.
 
@@ -10,9 +10,12 @@ Timing: the deck carries printed timing boxes only on slides 8 to 13
 (1:22 through 2:45). Slides 1 to 7 share the 0:00 to 1:22 opening budget; the
 suggested split is in each heading. This expanded script is written for a relaxed
 read-through and rehearsal, so it runs longer than those boxes. For the recorded
-cut, use the bracketed `[TRIM]` sentences as the first things to drop.
+cut, use the bracketed [TRIM] sentences as the first things to drop.
 
-## Slide 1: AI-Memory Targetted Product Search (0:00-0:10)
+
+------------------------------------------------------------------------------
+SLIDE 1: AI-MEMORY TARGETTED PRODUCT SEARCH (0:00-0:10)
+------------------------------------------------------------------------------
 
 Hi everyone. We are OpenCheliped: Samuel, Cervon, and Weichu. This is AI-Memory
 Targetted Product Search.
@@ -20,9 +23,12 @@ Targetted Product Search.
 The idea is simple: shopping search should feel like one conversation, even when
 the customer adds details, rejects something, or changes their mind.
 
-**[FLIP TO SLIDE 2]**
+[FLIP TO SLIDE 2]
 
-## Slide 2: Search that remembers. (0:10-0:21)
+
+------------------------------------------------------------------------------
+SLIDE 2: SEARCH THAT REMEMBERS. (0:10-0:21)
+------------------------------------------------------------------------------
 
 Three stages, and they are on the slide.
 
@@ -35,9 +41,12 @@ justify.
 All of it runs over 50,000 products on CPU only, with zero online API calls. No
 model tokens, no GPU, no credentials, and no vector database.
 
-**[FLIP TO SLIDE 3]**
+[FLIP TO SLIDE 3]
 
-## Slide 3: Largely improved over BM25. (0:21-0:32)
+
+------------------------------------------------------------------------------
+SLIDE 3: LARGELY IMPROVED OVER BM25. (0:21-0:32)
+------------------------------------------------------------------------------
 
 Here is the shape of the system: shopper messages go into an AI intent ledger,
 and the ledger, not the last sentence, is what selects products.
@@ -54,9 +63,12 @@ survivors, and a question policy decides whether a clarification would help. A
 response validator checks the organizer contract, and we save seven typed trace
 events per turn so any decision can be inspected.
 
-**[FLIP TO SLIDE 4]**
+[FLIP TO SLIDE 4]
 
-## Slide 4: The end of forgetful search. (0:32-0:48)
+
+------------------------------------------------------------------------------
+SLIDE 4: THE END OF FORGETFUL SEARCH. (0:32-0:48)
+------------------------------------------------------------------------------
 
 A shopper always starts broad. "I need boots." Then adds a budget: "under 80
 dollars." Then realises he does not want leather. Then changes direction
@@ -71,9 +83,12 @@ That starter reaches a public Hit Rate at 10 of 0.125, an MRR of 0.068034, and a
 average 9.81 turns to the first correct result. BM25 is useful search evidence,
 but by itself it is not a conversation.
 
-**[FLIP TO SLIDE 5]**
+[FLIP TO SLIDE 5]
 
-## Slide 5: Our results (0:48-0:56)
+
+------------------------------------------------------------------------------
+SLIDE 5: OUR RESULTS (0:48-0:56)
+------------------------------------------------------------------------------
 
 The headline, up front.
 
@@ -81,12 +96,15 @@ The default starter is a stateless SQLite FTS5 BM25 search. It scores a
 TechnicalScore of 0.10671. Our agentic, memory-backed product search scores
 0.76884. That is a 7.21 times improvement.
 
-**[NOTE: 7.21x is the TechnicalScore multiple. The 7.36x on slide 8 is the Hit
-Rate at 10 multiple. Do not swap them.]**
+[NOTE: 7.21x is the TechnicalScore multiple. The 7.36x on slide 8 is the Hit
+Rate at 10 multiple. Do not swap them.]
 
-**[FLIP TO SLIDE 6]**
+[FLIP TO SLIDE 6]
 
-## Slide 6: Our agent seeks meaning. (0:56-1:08)
+
+------------------------------------------------------------------------------
+SLIDE 6: OUR AGENT SEEKS MEANING. (0:56-1:08)
+------------------------------------------------------------------------------
 
 This is the part that makes the agent feel conversational.
 
@@ -106,9 +124,12 @@ leather boots." At D we retract the provisional colour, at E we keep the boots
 category because it never conflicted, and at F we add material equals leather and
 bump the intent version.
 
-**[FLIP TO SLIDE 7]**
+[FLIP TO SLIDE 7]
 
-## Slide 7: 1 search route's not enough. (1:08-1:22)
+
+------------------------------------------------------------------------------
+SLIDE 7: 1 SEARCH ROUTE'S NOT ENOUGH. (1:08-1:22)
+------------------------------------------------------------------------------
 
 Once the intent is clean, we search through several routes instead of trusting
 one query.
@@ -128,7 +149,7 @@ the slate is short, but we never relax an exclusion.
 [TRIM] What survives still needs an order. The ranker combines Bayesian log
 contributions from the routes, soft preferences, and privacy-safe aggregate
 profile signals; a stable softmax produces the final scores, and exact ties break
-on `parent_asin` so repeated runs are deterministic. For clarification, the agent
+on parent_asin so repeated runs are deterministic. For clarification, the agent
 compares posterior entropy against expected conditional entropy over up to 64
 products and asks the question expected to remove the most uncertainty, while
 still showing ten products.
@@ -137,9 +158,12 @@ The starter trusts one OR-based BM25 order. We keep BM25 as one retrieval signal
 fuse it with structured evidence, and check that every result is actually
 eligible.
 
-**[FLIP TO SLIDE 8]**
+[FLIP TO SLIDE 8]
 
-## Slide 8: A 7.36x leap over the starter. (1:22-1:37)
+
+------------------------------------------------------------------------------
+SLIDE 8: A 7.36X LEAP OVER THE STARTER. (1:22-1:37)
+------------------------------------------------------------------------------
 
 Here are the final results on the unchanged 200-session public evaluator.
 
@@ -160,9 +184,12 @@ These are descriptive improvements over the organizer's published starter on the
 same 200-session public set. Private evaluation remains the real generalization
 test.
 
-**[FLIP TO SLIDE 9]**
+[FLIP TO SLIDE 9]
 
-## Slide 9: The fixes that moved the needle. (1:37-1:49)
+
+------------------------------------------------------------------------------
+SLIDE 9: THE FIXES THAT MOVED THE NEEDLE. (1:37-1:49)
+------------------------------------------------------------------------------
 
 The largest gains came from understanding catalog structure and conversation
 state, not from adding a larger model.
@@ -184,9 +211,12 @@ milliseconds. Intent Override improved from 0.20 to 0.90.
 The starter indexes raw text once. Our build extracts reusable structure, and our
 dialogue layer prevents a valid retrieval from being rejected by stale intent.
 
-**[FLIP TO SLIDE 10]**
+[FLIP TO SLIDE 10]
 
-## Slide 10: Experiments we refused to oversell. (1:49-2:01)
+
+------------------------------------------------------------------------------
+SLIDE 10: EXPERIMENTS WE REFUSED TO OVERSELL. (1:49-2:01)
+------------------------------------------------------------------------------
 
 Some ideas sounded useful and measured as useless, uncertain, or too expensive.
 
@@ -218,15 +248,15 @@ over that path.
 Improving on BM25 did not mean accepting every extra retrieval idea. Only
 measured, reproducible gains belonged in the shipped path.
 
-**[FLIP TO SLIDE 11]**
+[FLIP TO SLIDE 11]
 
-## Slide 11: Test the conversation, not just the function. (2:01-2:13)
+
+------------------------------------------------------------------------------
+SLIDE 11: TEST THE CONVERSATION, NOT JUST THE FUNCTION. (2:01-2:13)
+------------------------------------------------------------------------------
 
 The suite verifies what changes across turns, not only whether one query returns
 rows.
-
-**[SLIDE PRINTS "745 unittest cases". THE SUITE IS NOW 756. UPDATE THE SLIDE OR
-SAY "MORE THAN 745".]**
 
 We have 756 automated tests running in about ten seconds. The four rows on the
 slide are the ones that matter. Memory: "boots" then "black leather," where both
@@ -238,9 +268,9 @@ Boundary: a question answered with "no preference," which must become a decline
 rather than a fake product value, and the question is not repeated.
 
 Named proofs, if you want to read the code:
-`test_generic_override_retracts_color_but_preserves_boot_category`,
-`test_exclusion_is_never_relaxed_even_with_zero_strict`, and
-`test_declined_question_is_not_repeated`.
+test_generic_override_retracts_color_but_preserves_boot_category,
+test_exclusion_is_never_relaxed_even_with_zero_strict, and
+test_declined_question_is_not_repeated.
 
 [TRIM] Around those we also hold an evaluator byte-integrity test, a
 deterministic artifact build, a repeated fallback-order test, and a typed
@@ -250,9 +280,12 @@ The starter tests lexical retrieval. Our suite tests state transitions,
 constraint safety, deterministic ordering, failure paths, statistics, and the
 organizer contract.
 
-**[FLIP TO SLIDE 12]**
+[FLIP TO SLIDE 12]
 
-## Slide 12: The unfinished frontier: time-boxed, not hidden. (2:13-2:23)
+
+------------------------------------------------------------------------------
+SLIDE 12: THE UNFINISHED FRONTIER: TIME-BOXED, NOT HIDDEN. (2:13-2:23)
+------------------------------------------------------------------------------
 
 These GSD phases remain TODO because the submission deadline arrived first. They
 are plans, not shipped claims, and none of them is in the score I just showed.
@@ -279,13 +312,16 @@ deeper profile prior, soft price proximity, and live pitch preparation. Every
 future candidate must still beat both the deterministic agent we retained and the
 organizer's BM25 reference.
 
-**[FLIP TO SLIDE 13 AND SWITCH TO THE TERMINAL]**
+[FLIP TO SLIDE 13 AND SWITCH TO THE TERMINAL]
 
-## Slide 13: Demo - intent changes, the ranking changes. (2:23-2:45)
+
+------------------------------------------------------------------------------
+SLIDE 13: DEMO - INTENT CHANGES, THE RANKING CHANGES. (2:23-2:45)
+------------------------------------------------------------------------------
 
 I will finish with a real intent-override session from the released public set,
-sample `public_0003`, run with the actual agent and the organizer's normal turn
-policy. The target is `B09YMTWDXJ`, a Casio men's wrist watch, AQ-800E-7A.
+sample public_0003, run with the actual agent and the organizer's normal turn
+policy. The target is B09YMTWDXJ, a Casio men's wrist watch, AQ-800E-7A.
 
 Turn one, the customer asks for watches, wrist watches, stainless steel band. The
 agent returns ten recommendations and the target is already at rank two, but the
@@ -308,4 +344,4 @@ three, reciprocal rank 1.0.
 That is search that remembers. The customer changes their mind, the stored intent
 changes with them, and the ranking changes for a reason we can inspect.
 
-**[STOP RECORDING WITH `RESULT: HIT on turn 3 at rank 1` STILL VISIBLE]**
+[STOP RECORDING WITH "RESULT: HIT on turn 3 at rank 1" STILL VISIBLE]
