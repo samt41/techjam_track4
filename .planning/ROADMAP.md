@@ -32,7 +32,7 @@ numbers are known.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Measurement Rig Core** - Build and validate the statistics engine and leaderboard against retained historical data before any new candidate exists. All 15 plans are complete; re-verification passed 10/10 on 2026-08-31.
-- [x] **Phase 2: Expanded Dataset & Paraphrase Probe** - Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative. (completed 2026-09-01)
+- [ ] **Phase 2: Expanded Dataset & Paraphrase Probe** - NOT COMPLETE: 11 of 14 plans done, no corpus frozen; 02-11/02-12/02-13 blocked on the detached-authoring attempt-cap defect (see `.planning/phases/02-expanded-dataset-paraphrase-probe/02-EXECUTION-REPORT.md`). The 15 SUMMARY files exceed the 14 plans because four corrective plans (02-09a/b, 02-11a/b) were added mid-execution, so a summary count alone misreads this phase as finished. Original goal: Generate an expanded evaluation corpus and a frozen, anti-circular paraphrase probe — the project's first real vocabulary-generalization evidence and the seed of the Innovation narrative.
 - [ ] **Phase 3: Ranking Precision & Conversational Efficiency** - Build and jointly measure MRR/MTTC candidates through the arena, gated by the breakeven rule and re-validated against the paraphrase probe.
 - [ ] **Phase 4: Semantic Asset & Candidate Spikes** - Ship the audited offline semantic asset and measure the two disclosed-cost spike candidates without adopting either by default.
 - [ ] **Phase 5: Go/No-Go Checkpoint** - Record a corrected-gain-based decision to stop or continue score-improvement iteration.
