@@ -18,10 +18,12 @@ The full inference path runs locally on CPU and has deterministic tie-breaking b
 
 | Category | What this project uses |
 | --- | --- |
-| Development tools | CPython 3.11+, `uv` for environment and command management, Git and GitHub for version control, Python's `unittest` for automated tests, and the organizer's unchanged local evaluator for end-to-end measurement. The workflow has no editor-specific requirement. |
-| APIs | The submission implements the organizer's local Python `Agent` contract: `reset` starts a session and `respond` returns the message, optional clarification attribute, ranked recommendations, and token counts. Catalog access uses Python's local `sqlite3` API. No external web, commerce, or model API is called. |
+| Development tools | CPython 3.11+, `uv` for environment and command management, Cursor for collaborative coding, Claude Code and Codex for AI-assisted ideation and execution, Git and GitHub for version control, Python's `unittest` for automated tests, and the organizer's unchanged local evaluator for end-to-end measurement. |
+| APIs | The submission implements the organizer's local Python `Agent` contract: `reset` starts a session and `respond` returns the message, optional clarification attribute, ranked recommendations, and token counts. Catalog access uses Python's local `sqlite3` API. We prototyped live AI endpoints with Cloudflare Workers AI during development, but the submitted inference path calls no external web, commerce, or model API. |
 | Libraries and frameworks | Inference uses only the Python standard library and SQLite FTS5. There are no third-party runtime packages, hosted frameworks, embedding models, or LLM dependencies. |
 | Datasets and assets | The frozen catalog contains 50,000 products from the competition's `Clothing_Shoes_and_Jewelry` selection of the [Amazon Reviews 2023 dataset](https://amazon-reviews-2023.github.io/), published by McAuley Lab at UCSD. Development uses the organizer-provided 200-session public set with Buying, Browsing, Intent Override, and Boundary scenarios plus privacy-safe aggregate user profiles. The SQLite search artifact is built locally from that catalog. No external media, private labels, or model weights are used. See [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) for source and use notes. |
+
+We used Claude Code and Codex during ideation and implementation. They helped us explore several candidate architectures in parallel and dig deeply into retrieval, ranking, conversation state, and evaluation. Not every experiment worked, but the failed and neutral results gave us useful clues about the approach we eventually retained. Cursor was our collaborative coding environment, and we also prototyped live AI endpoints with Cloudflare Workers AI. Those prototypes were development experiments only; the submitted agent remains fully offline, deterministic, and independent of external AI services at runtime.
 
 ## Demo video plan
 
@@ -51,7 +53,7 @@ uv sync
 uv run python -m unittest -v
 ```
 
-The suite is 745 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
+The suite is 772 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
 
 ### Get the catalog
 
