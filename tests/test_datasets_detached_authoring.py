@@ -309,6 +309,7 @@ def generate(
         "--markdown", str(root / "datasets.md"),
         "--response-log", str(root / "responses.jsonl"),
         "--divergence-log", str(root / "divergence.jsonl"),
+        "--drop-log", str(root / "drops.jsonl"),
         "--target-snapshot", str(root / "targets.json"),
     ) + extra
     out, err = io.StringIO(), io.StringIO()

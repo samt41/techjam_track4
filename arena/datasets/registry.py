@@ -24,6 +24,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from arena.datasets.drops import dropped_constraint_ids, refused_pair_ids
 from arena.datasets.schema import (
     ARMS,
     SCENARIO_MIX_TARGET,
@@ -156,6 +157,37 @@ def _require_paired_artifact(
         )
 
 
+def _require_drop_ledger(
+    path: str, digest: str, constraints: int, pairs: int
+) -> None:
+    """A recorded shortfall with no ledger is a silent drop with a number on it.
+
+    Deliberately NOT `_require_paired_artifact`. That helper insists the count is
+    positive exactly when the path is recorded, which is right for a divergence log
+    -- an empty one describes nothing. A drop ledger is the opposite case: writing
+    it on every run, including the runs that dropped nothing, is what makes "this
+    corpus lost nothing" a claim the artifact makes rather than an absence a reader
+    has to interpret. So zero counts with a recorded ledger are legal, and the one
+    combination refused is the dangerous one: a corpus stating it dropped something
+    while pointing at no record of what.
+    """
+    _require_digest(digest, "drop_log_sha256", allow_empty=True)
+    _require_count(constraints, "dropped_constraint_count", minimum=0)
+    _require_count(pairs, "refused_pair_count", minimum=0)
+    if bool(path) != bool(digest):
+        raise ValueError(
+            "drop log path and digest must be recorded together:"
+            f" path={path!r}, sha256={digest!r}"
+        )
+    if (constraints or pairs) and not path:
+        raise ValueError(
+            f"the entry records {constraints} dropped constraint(s) and {pairs}"
+            " refused pair(s) but names no drop ledger; a shortfall with no"
+            " record of its causes is the silent drop the ledger exists to"
+            " prevent"
+        )
+
+
 def validate_dataset_name(name: str) -> str:
     if not isinstance(name, str) or not _DATASET_NAME_RE.fullmatch(name):
         raise ValueError(
@@ -274,6 +306,21 @@ class DatasetEntry:
     target_snapshot_path: str
     target_snapshot_sha256: str
     target_snapshot_count: int
+    # What the corpus LOST, alongside what it kept. A registry that recorded only
+    # the survivors would let an authorised reduction read as a full corpus, and
+    # the shortfall would then surface much later as an unexplained row count with
+    # the rejection reasons long gone -- the failure docs/STATUS.md names under
+    # AUTHORING_ATTEMPT_CAP. The ledger itself is `arena/datasets/drops.py`.
+    #
+    # Defaulted, because a corpus that dropped nothing genuinely has nothing to
+    # record here and the organizer-supplied `public` set predates the pipeline
+    # entirely. The default cannot hide a real drop: `_require_drop_ledger` refuses
+    # a non-zero count with no ledger, and `check_recorded_counts` compares both
+    # numbers against the ledger's own rows before an entry is written.
+    drop_log_path: str = ""
+    drop_log_sha256: str = ""
+    dropped_constraint_count: int = 0
+    refused_pair_count: int = 0
 
     def validate(self) -> None:
         if self.name != PUBLIC_DATASET_NAME:
@@ -344,6 +391,12 @@ class DatasetEntry:
             self.target_snapshot_count,
             label="target_snapshot",
         )
+        _require_drop_ledger(
+            self.drop_log_path,
+            self.drop_log_sha256,
+            self.dropped_constraint_count,
+            self.refused_pair_count,
+        )
 
     def as_record(self) -> dict[str, object]:
         return {
@@ -360,12 +413,16 @@ class DatasetEntry:
             "divergence_log_path": self.divergence_log_path,
             "divergence_log_sha256": self.divergence_log_sha256,
             "divergence_pair_count": self.divergence_pair_count,
+            "drop_log_path": self.drop_log_path,
+            "drop_log_sha256": self.drop_log_sha256,
+            "dropped_constraint_count": self.dropped_constraint_count,
             "frozen_commit": self.frozen_commit,
             "generator_model_alias": self.generator_model_alias,
             "generator_model_resolved": self.generator_model_resolved,
             "name": self.name,
             "path": self.path,
             "prompt_pack": dict(self.prompt_pack),
+            "refused_pair_count": self.refused_pair_count,
             "response_log_path": self.response_log_path,
             "response_log_sha256": self.response_log_sha256,
             "scenario_mix": dict(self.scenario_mix),
@@ -414,6 +471,10 @@ def entry_from_record(record: dict[str, object]) -> DatasetEntry:
         target_snapshot_path=str(record.get("target_snapshot_path", "")),
         target_snapshot_sha256=str(record.get("target_snapshot_sha256", "")),
         target_snapshot_count=record.get("target_snapshot_count", 0),  # type: ignore[arg-type]
+        drop_log_path=str(record.get("drop_log_path", "")),
+        drop_log_sha256=str(record.get("drop_log_sha256", "")),
+        dropped_constraint_count=record.get("dropped_constraint_count", 0),  # type: ignore[arg-type]
+        refused_pair_count=record.get("refused_pair_count", 0),  # type: ignore[arg-type]
     )
     entry.validate()
     return entry
@@ -670,6 +731,69 @@ def check_pairing(rows: tuple[dict, ...]) -> None:
                 )
 
 
+def check_recorded_counts(
+    entry: DatasetEntry,
+    rows: tuple[dict, ...],
+    ledger: tuple[dict[str, object], ...],
+    *,
+    sampled_pair_count: int,
+) -> None:
+    """Every number the registry states must equal the rows and the ledger on disk.
+
+    This is the invariant the `AUTHORING_ATTEMPT_CAP` note in docs/STATUS.md exists
+    to protect, promoted from a warning into a check. Dropping constraints is
+    admissible only because the shortfall is accounted for, and "accounted for"
+    means the arithmetic closes: sessions equal rows written, targets equal
+    distinct targets written, the recorded drop counts equal the ledger's own rows,
+    every refused pair is absent from the corpus, and the pairs that survived plus
+    the pairs that were refused equal the pairs that were sampled.
+
+    Checked before the entry is frozen rather than in a test over the committed
+    file, because a mismatch here is silent by nature -- every individual artifact
+    is well-formed and only their agreement fails. The committed-corpus sweep in
+    plan 02-11 then re-asserts it from the other side.
+    """
+    if entry.session_count != len(rows):
+        raise RegistryError(
+            f"{entry.name} records {entry.session_count} sessions but"
+            f" {len(rows)} rows were written"
+        )
+    targets = distinct_targets(rows)
+    if entry.distinct_target_count != len(targets):
+        raise RegistryError(
+            f"{entry.name} records {entry.distinct_target_count} targets but"
+            f" {len(targets)} distinct targets were written"
+        )
+    recorded_constraints = len(dropped_constraint_ids(ledger))
+    if entry.dropped_constraint_count != recorded_constraints:
+        raise RegistryError(
+            f"{entry.name} records {entry.dropped_constraint_count} dropped"
+            f" constraint(s) but its ledger accounts for {recorded_constraints}"
+        )
+    refused = refused_pair_ids(ledger)
+    if entry.refused_pair_count != len(refused):
+        raise RegistryError(
+            f"{entry.name} records {entry.refused_pair_count} refused pair(s)"
+            f" but its ledger accounts for {len(refused)}"
+        )
+    published = {str(record["pair_id"]) for record in rows}
+    resurrected = sorted(published.intersection(refused))
+    if resurrected:
+        # A pair cannot be both refused and published. If it is, either the
+        # refusal did not take effect or the ledger is describing a different run,
+        # and both read as a well-formed corpus.
+        raise RegistryError(
+            f"{entry.name} publishes pair(s) its drop ledger refuses:"
+            f" {resurrected}"
+        )
+    if len(published) + len(refused) != sampled_pair_count:
+        raise RegistryError(
+            f"{entry.name} publishes {len(published)} pair(s) and refuses"
+            f" {len(refused)}, which does not account for the"
+            f" {sampled_pair_count} sampled"
+        )
+
+
 def check_cross_check_subset(rows: tuple[dict, ...]) -> None:
     """D-40 / MEAS-13: every `probe_haiku` pair also carries a `probe_sonnet` arm."""
 
@@ -823,6 +947,16 @@ def render_markdown(entries: tuple[DatasetEntry, ...]) -> str:
                 f"`{entry.divergence_log_path}`"
                 if entry.divergence_log_path
                 else "_none_",
+                # The shortfall in the RENDERED view, not only in the JSON. This
+                # column is the one a reader meets first, and a table that showed
+                # only session counts would let an authorised reduction read as a
+                # corpus that lost nothing.
+                (
+                    f"{entry.dropped_constraint_count} constraints,"
+                    f" {entry.refused_pair_count} pairs"
+                    if entry.dropped_constraint_count or entry.refused_pair_count
+                    else "_none_"
+                ),
             )
         )
         + " |"
@@ -834,6 +968,13 @@ def render_markdown(entries: tuple[DatasetEntry, ...]) -> str:
         "Generated from `data/datasets.json`, which is the source of truth (D-12)."
         " Edit the JSON and re-render; never edit this file by hand.",
         "",
+        "The `Dropped` column is what a corpus could not author. A constraint that"
+        " spent `AUTHORING_ATTEMPT_CAP` attempts without clearing the D-33/D-34/D-35"
+        " gates is dropped from EVERY arm of its pair, and a pair that thereby loses"
+        " a whole constraint list is refused outright. Both are itemised, with the"
+        " verbatim rejection reason, in the drop ledger named by the entry's"
+        " `drop_log_path`. A corpus showing `_none_` here lost nothing.",
+        "",
         _table(
             (
                 "Name",
@@ -844,8 +985,9 @@ def render_markdown(entries: tuple[DatasetEntry, ...]) -> str:
                 "sha256 (12)",
                 "Frozen at",
                 "Per-pair divergence log",
+                "Dropped",
             ),
-            ("---", "---:", "---:", "---", "---:", "---", "---", "---"),
+            ("---", "---:", "---:", "---", "---:", "---", "---", "---", "---"),
             corpus_rows,
         ),
         "",
