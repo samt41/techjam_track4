@@ -135,6 +135,37 @@ All documents live under `docs/superpowers/`. Status is one of: done, superseded
 
   The remaining justification is the private 800-session set. If its customer language is genuinely out of vocabulary relative to the catalog, this route, or a cheaper offline synonym-augmentation of the catalog, would help. That is a hedge against an unknown, not a measured need. The decision to build is gated on a held-out paraphrase probe, or on private-set feedback, showing a real gap. Until then the effort is not justified, and it would trade away the byte-level determinism the agent currently guarantees.
 
+### Blocking defect: the detached authoring path cannot reach the attempt cap
+
+`probe.v1` is not frozen, and the reason is a defect in the detached authoring path itself
+rather than in the corpus, the gates, or the authored phrases. It is recorded here because the
+symptom — a run that queues work forever without ever failing — looks like slow progress and is
+easy to mistake for one more round being needed.
+
+`attempt_until` counts re-authoring attempts in memory, inside a single process. Every
+`--emit-pending` invocation is a fresh process: it replays attempt 1 from the response log,
+misses attempt 2's request digest, raises `PendingRequestsError` and exits. The counter therefore
+never reaches `AUTHORING_ATTEMPT_CAP = 3` on this path, the cap never trips, and the
+cap-exhaustion drop added for the partial-corpus decision is unreachable. Every queued prompt
+observed carried `{"attempt": 2}`; none ever carried 3.
+
+The consequence compounds. Because the set of still-failing constraints differs between rounds,
+each round re-batches them into different groupings with different digests, so no three-attempt
+chain ever forms under one lineage. Measured on the committed log: 461 constraints were authored
+four separate times, and `probe_v1_0000:s0` appears in four distinct author records
+(`a6c46b57a7`, `aa4eddd86f`, `96cfd5700b`, `e9e3e0ddf6`). The one run that did report
+`authoring failed after 3 attempts for 310 item(s)` was the case where the log happened to line
+up into a replayable three-chain; that was the exception, not the normal path.
+
+The fix is for the collecting runner to let `attempt_until` complete all three attempts within one
+process — accumulating the misses for every attempt instead of aborting at the first — while still
+distinguishing "not yet authored" from "unauthorable", so that a merely unanswered request is never
+mistaken for a cap-exhausted one and dropped. Whatever is built must be proven by a test that the
+cap actually trips on the detached path; nothing currently exercises that, which is why this shipped.
+
+`data/responses/probe.v1.jsonl` (179 records) is committed so the authoring already paid for
+survives and can be replayed rather than re-spent.
+
 ### Current bottleneck, next work
 
 The current public misses are not vocabulary gaps. They are ranking-discrimination cases, investigated down to the belief-contribution level.
