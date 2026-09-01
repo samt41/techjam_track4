@@ -1,0 +1,95 @@
+==== SLIDE 1 AI-MEMORY TARGETTED PRODUCT SEARCH ====
+
+Hey everyone. We are OpenCheliped: Samuel, Cervon, and Weichu. This is AI-Memory Targetted Product Search. We built a shopping agent that remembers what a customer wants, even when the conversation changes halfway through.
+
+==== SLIDE 2 SEARCH THAT REMEMBERS. ====
+
+Here is the difference in one sentence. The default starter searches the latest message with BM25. We turn the whole conversation into structured intent, search the catalog, enforce the customer's constraints, and return products we can actually justify.
+
+And it is practical. We search 50,000 products locally on CPU with zero online API calls, zero model tokens, no GPU, and no credentials.
+
+==== SLIDE 3 LARGELY IMPROVED OVER BM25. ====
+
+This diagram is the system in one view. A message comes in, and the Constraint Extractor turns it into typed facts. The Preference Ledger updates what the customer currently wants. The Search Planner runs structured and full-text retrieval. Then the Eligibility Gate removes anything that breaks a hard requirement, and the Candidate Belief Model ranks what is left.
+
+Finally, the Question Policy chooses the most useful clarification. So BM25 is still there, but now it is one useful signal inside a complete conversational system.
+
+==== SLIDE 4 THE END OF FORGETFUL SEARCH. ====
+
+Think about how people actually shop. Someone asks for boots, adds an 80-dollar budget, says no leather, and then switches to hiking shoes. That is one evolving request.
+
+The starter sees four separate BM25 queries. It forgets the budget, loses the exclusion, and does not know the new category replaces the old one. That is why the starter reaches only 0.125 Hit Rate at 10, 0.068034 MRR, and 9.81 turns to the first correct result on the public set.
+
+==== SLIDE 5 OUR RESULTS ====
+
+Here is the headline. The default SQLite FTS5 BM25 starter scores 0.10671 TechnicalScore. Our deterministic, memory-backed agent scores 0.76884 on the exact same 200 sessions. That is 7.21 times the starter's combined score.
+
+==== SLIDE 6 OUR AGENT SEEKS MEANING. ====
+
+This is where the memory actually lives. We do not turn the whole chat into one giant search string. We store typed constraints: the attribute, value, strength, exclusion, confidence, and operation.
+
+So required leather, preferred leather, and not leather are three different instructions. If the customer says, "I prefer red boots," and then, "Ignore that; I need leather boots," we remove red, keep boots, add leather, and start a new intent version.
+
+BM25 can find the word leather. Our ledger understands what the customer meant by it.
+
+==== SLIDE 7 1 SEARCH ROUTE'S NOT ENOUGH. ====
+
+We also found that one search route is not enough. Structured metadata is great for exact attributes. SQLite FTS5 is great for relevant language. We combine both with Reciprocal Rank Fusion at k equals 60, cap each route at 1,000 hits, and materialize at most 5,000 candidates.
+
+Then the eligibility gate removes every product that violates a hard requirement or exclusion. The survivors are ranked using Bayesian evidence from retrieval, soft preferences, and privacy-safe profile signals. Exact ties break on parent_asin, so the same input always gives the same order.
+
+The starter trusts one BM25 list. We combine several types of evidence and verify that each result actually fits.
+
+==== SLIDE 8 A 7.36X LEAP OVER THE STARTER. ====
+
+Now for the main result. On the unchanged 200-session public evaluator, the starter finds 25 targets. Our agent finds 184. That is 159 more successful sessions.
+
+Hit Rate at 10 rises from 12.5 percent to 92 percent, or 7.36 times the starter. MRR rises from 0.068034 to 0.524466, a 670.89 percent improvement. The first correct result arrives 65.09 percent sooner, dropping from 9.81 turns to 3.425. And TechnicalScore rises from 0.10671 to 0.76884, a 620.49 percent improvement.
+
+These are public-set results. We are not pretending they guarantee the private score, but they show a very clear improvement over the same frozen BM25 baseline.
+
+==== SLIDE 9 THE FIXES THAT MOVED THE NEEDLE. ====
+
+So what actually moved the score? Mostly careful engineering.
+
+Attribute classification, catalog-derived material recovery, and better handling of overrides moved Hit Rate at 10 from 0.760 to 0.915. Separator normalization then moved it to 0.920.
+
+We found inconsistent colon spacing in 131 concepts across 705 products. Fixing that one catalog issue moved a target from rank 154 all the way to rank one. We also replaced SQL filters taking 263 to 293 milliseconds with posting-set filters taking just 3 to 7 milliseconds. Intent Override improved from 0.20 to 0.90.
+
+No larger model. Just better structure, better state, and faster retrieval.
+
+==== SLIDE 10 EXPERIMENTS WE REFUSED TO OVERSELL. ====
+
+We also want to show what did not work, because this is where it is easy to fool yourself with a leaderboard.
+
+Every idea was tested on paired sessions using bootstrap and permutation tests, Holm-Bonferroni correction, minimum detectable difference, and a winner's-curse correction over 10,000 replicates.
+
+Always-on exploration and a popularity tie-break changed zero outcomes. A TF-IDF fallback looked 0.006110 better, but its confidence interval crossed zero and its Holm-adjusted p-value was 1.0. So we called it what it was: not detectable.
+
+Beating BM25 did not mean adding every idea. It meant keeping only the improvements the evidence could support.
+
+==== SLIDE 11 TEST THE CONVERSATION, NOT JUST THE FUNCTION. ====
+
+We did not only test isolated functions. Our 756 automated tests cover memory, overrides, exclusions, declined questions, deterministic ranking, evaluator integrity, and the organizer contract.
+
+For example, "red boots" followed by "ignore that; leather boots" must remove red but keep boots. And "not leather" must stay excluded even when there are no strict matches. Those are conversation failures a normal lexical search test would never catch.
+
+==== SLIDE 12 THE UNFINISHED FRONTIER: TIME-BOXED, NOT HIDDEN. ====
+
+We ran out of time, so this is the honest boundary of the submission. Phase 1, the measurement rig, is complete. Phase 2, the expanded dataset and paraphrase probe, is still in progress.
+
+Phases 3 through 8 remain TODO. They cover ranking and efficiency experiments, semantic spikes, the go or no-go checkpoint, submission hardening, the Innovation and Impact narrative, and final clean-environment verification.
+
+None of that unfinished work is included in our 0.920 result. Every future idea still has to beat both the agent we retained and the organizer's BM25 reference.
+
+==== SLIDE 13 DEMO - INTENT CHANGES, THE RANKING CHANGES. ====
+
+Let us finish with a real Intent Override session from the public set. The target is B09YMTWDXJ, a Casio AQ-800E-7A wristwatch.
+
+The customer first asks for a stainless-steel-band watch. The target appears at rank two, but the intended override has not happened yet, so it correctly does not count as a hit. On turn two, it drops outside the top ten.
+
+Then the customer says, "Actually, ignore my earlier preference. What I need is: Water Resistant."
+
+The ledger removes the stale preference, keeps the relevant watch context, and reranks the same offline catalog. The target comes back at rank one.
+
+That is the result we wanted to show: the customer changes their mind, the system understands the change, and the right product moves to the top. Final result: hit on turn three at rank one.

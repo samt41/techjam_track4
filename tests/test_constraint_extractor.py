@@ -7,6 +7,7 @@ from pathlib import Path
 
 from starter.shopping_agent.catalog_index import CatalogIndex
 from starter.shopping_agent.constraint_extractor import (
+    STOPWORDS,
     ConstraintExtractor,
     _resolve_phrase,
 )
@@ -54,6 +55,22 @@ def extractor_products() -> list[dict[str, object]]:
             })
             number += 1
     return products
+
+
+class StopwordsTest(unittest.TestCase):
+    """STOPWORDS is public API for arena/datasets/divergence.py (D-54)."""
+
+    def test_stopwords_is_a_generic_list_carrying_no_garment_vocabulary(self) -> None:
+        self.assertIsInstance(STOPWORDS, frozenset)
+        self.assertTrue(STOPWORDS)
+        self.assertIn("the", STOPWORDS)
+        # "no"/"not" are present, which is why the D-34 gate is lexical only and
+        # negation faithfulness is reviewed separately under D-35.
+        self.assertIn("no", STOPWORDS)
+        # The two words a catalog-derived stop list wrongly dropped. Their
+        # absence is the property that makes the list safe to reuse as-is.
+        self.assertNotIn("buckle", STOPWORDS)
+        self.assertNotIn("dress", STOPWORDS)
 
 
 class ResolvePhraseTest(unittest.TestCase):

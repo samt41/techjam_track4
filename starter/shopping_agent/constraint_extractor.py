@@ -76,7 +76,15 @@ _ATTRIBUTE_RANK = {attribute: rank for rank, attribute in enumerate(_ATTRIBUTE_P
 # and "no" also occur as junk catalog metadata; a generic list suppresses them
 # without any evaluator- or catalog-specific tuning. It contains no garment
 # vocabulary (a catalog-derived stop list would wrongly drop "buckle"/"dress").
-_STOPWORDS = frozenset({
+# Public, and public deliberately (D-54): the D-34 lexical-divergence gate in
+# arena/datasets/divergence.py measures authored probe-phrase content tokens
+# after removing these words, so one list serves both the gazetteer and the gate
+# instead of two lists that drift apart. It carries no leading underscore because
+# a private name imported across packages is the worse precedent.
+# Note the list contains "no" and "not", so negation is invisible to a *lexical*
+# gate by construction. That is intended: negation drift is caught by the D-35
+# faithfulness review, never by token overlap.
+STOPWORDS = frozenset({
     "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your",
     "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she",
     "her", "hers", "herself", "it", "its", "itself", "they", "them", "their",
@@ -106,7 +114,7 @@ def _resolve_phrase(
     that should never manufacture a constraint. Pure and deterministic — the
     gazetteer is frozen at construction from these counts.
     """
-    if phrase in _STOPWORDS:
+    if phrase in STOPWORDS:
         return None
     has_size = Attribute.SIZE in candidates
     if len(phrase) == 1 and not has_size:

@@ -1,0 +1,972 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from arena.adjudication import AdjudicationRow
+from arena.candidate import (
+    CandidateSpec,
+    candidate_overrides,
+    spec_name_from_record,
+)
+from arena.metrics import (
+    SessionOutcome,
+    efficiency,
+    hit_rate_curve,
+    metric_summary,
+    scenario_breakout,
+    technical_score,
+)
+from arena.statistics import RESAMPLE_COUNT
+from arena.store import (
+    ArenaStoreError,
+    BASELINES_ROOT,
+    SESSIONS_FILENAME,
+    SUMMARY_FILENAME,
+    load_sessions,
+    write_json,
+)
+
+LEADERBOARD_SCHEMA_VERSION = 1
+
+# D-12: the JSON is the source of truth that tests assert against and that Phase 3/4/5
+# append to; the Markdown is a generated view. A print-only CLI was rejected because a
+# report that exists only in a terminal cannot be cited by the Innovation or Technical
+# Execution narrative.
+LEADERBOARD_JSON_PATH = BASELINES_ROOT / "leaderboard.json"
+LEADERBOARD_MARKDOWN_PATH = Path("experiments/LEADERBOARD.md")
+
+CORPUS_BASELINES_SCHEMA_VERSION = 1
+
+# D-53. Both destinations are pinned OUTSIDE the paths .gitignore excludes, and the
+# choice is load-bearing rather than tidy. `.gitignore` line 9 excludes
+# `experiments/*/` -- every DIRECTORY under experiments/ -- while line 15 re-includes
+# `experiments/baselines/`. So the JSON is committed because it sits in the one
+# re-included directory, and the Markdown is committed because it sits at the top level
+# of experiments/ beside LEADERBOARD.md rather than in a subdirectory of its own.
+# L-13: a generated artifact placed anywhere else under experiments/ is silently
+# gitignored, which would make D-04/D-43's "frozen means committed" quietly false --
+# the file would exist on the machine that generated it and nowhere else, and a reader
+# checking the repository would find a report the prose cites but git does not carry.
+CORPUS_BASELINES_JSON_PATH = BASELINES_ROOT / "corpus_baselines.json"
+CORPUS_BASELINES_MARKDOWN_PATH = Path("experiments/CORPUS_BASELINES.md")
+
+# Enough to identify a candidate by eye in a table cell; the full digest is always
+# present in the JSON, so nothing is lost by truncating the DISPLAY column only.
+_FINGERPRINT_DISPLAY_LENGTH = 12
+
+# Below this magnitude a fixed 6-dp format would print a real, nonzero value as
+# `0.000000`. The value that makes this load-bearing rather than cosmetic is the
+# permutation p: its Phipson-Smyth floor is 1/(R+1), which at R=10,000 is 9.999e-05.
+_SCIENTIFIC_NOTATION_BELOW = 1e-4
+
+# Three numbers in this report differ from figures quoted elsewhere in .planning/, and
+# one correction is deliberately absent. Stating why converts three apparent
+# inconsistencies into three demonstrations of statistical care; leaving them unstated
+# would make a careful report look careless.
+HOW_TO_READ = """\
+Seven items below could be misread as inconsistencies: three numbers that legitimately
+differ from figures quoted elsewhere in `.planning/`, one correction that is
+deliberately absent, and three properties of this report that a reader would otherwise
+have to infer. Each is stated here so that an apparent inconsistency reads as what it
+is.
+
+**1. Per-bucket sigma comes from the bucket's own observed rate.** Every
+per-scenario row computes its binomial sigma from that bucket's OWN observed `p` and
+its own `n`, never from the overall `p = 0.92` applied to a bucket `n`. MEAS-09's
+illustrative `0.086` at n=10 and `0.050` at n=30 were computed the second way. The
+bucket's own `p = 0.90` gives `0.094868` at n=10 and `0.054772` at n=30. This report
+prints the latter pair, and the latter pair is the correct one.
+
+**2. Sigma-hat is the paired-difference bootstrap standard error.** The sigma fed
+into the winner's-curse order-statistic correction is the paired-difference bootstrap
+SE of TechnicalScore -- typically 0.002 to 0.008 on this data -- and NOT the 0.019
+absolute binomial SE of HR@10 quoted in `PROJECT.md` and `PITFALLS.md`. Selection
+happens on the paired delta, so the noise in the selection statistic is the
+paired-delta noise. The resulting correction is roughly an order of magnitude smaller
+than the 0.022-0.030 figure quoted elsewhere, and the smaller number is the
+methodologically correct one. Sigma-hat, `k` and `E[max k]` are printed as three
+separate columns so that `corrected dTS = dTS - sigma-hat * E[max k]` can be
+re-derived by hand rather than trusted.
+
+**3. The achievable MDD at n=200 is far smaller than an unpaired estimate suggests.**
+`PROJECT.md`'s "3,900-15,700 paired sessions to detect dTS = 0.01" describes the
+weakly-correlated regime. Measured on this repository's 200 real sessions, a
+realistic ranking candidate that promotes ten sessions to rank 1 yields dTS
+`+0.011931` against an MDD of roughly `0.0104` -- detectable at n=200. Pairing does
+all of the work: the paired bootstrap SE is roughly `0.0037` where an effectively
+unpaired one is `0.025922`, a sevenfold difference. `01-RESEARCH.md` records
+`0.003715` for that measurement at its own resample count; the adjudication table
+below prints the SE actually observed for each pair, so the two agree to three
+significant figures rather than digit for digit.
+
+**4. Per-scenario numbers are deliberately not Holm-corrected.** The Holm family is
+the non-baseline candidates against a common baseline within one adjudication event
+(D-19). Per-scenario rows are descriptive non-inferiority gates that state their own
+sigma; they are not primary hypotheses. Folding four scenarios into the family would
+inflate it fourfold, destroy power on the one comparison that decides anything, and
+add power to a Boundary bucket of n=10 that can detect nothing regardless. The
+omission is deliberate, not an oversight.
+
+**5. The per-scenario TechnicalScore must be n-weighted, not averaged.** Each
+per-scenario TechnicalScore is computed from that bucket's OWN HR@10, MRR and MTTC, so
+it is the score that bucket would have scored in isolation. Combining the four back into
+the overall score is legitimate but only under SAMPLE-SIZE weighting. Every term is
+n-weighted-linear across a partition of the sessions: HR@10 and MRR are means, the mean
+MTTC over all sessions is the n-weighted mean of the bucket MTTCs, and
+`Efficiency = clip((11 - mean(MTTC)) / 10, 0, 1)` is affine in that mean, its clip
+inactive because an achievable MTTC lies in `[1, 11]`. So the n-weighted combination
+reproduces the overall TechnicalScore to within 6-dp rounding -- on the anchor,
+`0.7688401` against `0.76884`, a `1e-07` discrepancy that is rounding and nothing else.
+
+An UNWEIGHTED average of the four buckets does NOT reproduce it, and that is the
+misreading this note exists to prevent: on the anchor a flat mean of the four gives
+`0.761956` against the true `0.76884`, understating the score by `0.006884`. The four
+buckets are n=10, n=80, n=80 and n=30, so a flat average silently gives the n=10
+Boundary bucket eight times the influence its evidence supports. The overall figure is
+always the correct one to quote. As in item 4, these per-scenario rows are descriptive
+non-inferiority gates and are never Holm-corrected, and a bucket's score should not be
+compared across buckets of unequal size without reading its sigma column first.
+
+**6. A degenerate arm still counts toward the Holm family and `correction_k`.** An arm
+whose delta and standard error are both zero remains in the family, because the family
+size is a property of the experimental DESIGN, and shrinking it after seeing which arms
+turned out degenerate would be a data-dependent family definition. `--include` is the
+a-priori mechanism for a retained record that belongs in the report without joining the
+family. Two `assumptions` keys state this in machine-readable form so the claim can be
+checked against the payload rather than taken on trust: `holm_family_size` and
+`holm_family_includes_degenerate_arms`. Every value on every adjudication row is now
+MEASURED: no field is a hard-coded constant on any path, including the zero-variance
+one, where the permutation p and the MDD were previously asserted by a special case. The
+payload field `is_degenerate` on each adjudication row is descriptive only and feeds no
+decision. Deliberate choice, recorded here so it is not read as an oversight: the
+rendered "Pairwise adjudication" table stays at its existing fourteen columns and is NOT
+widened to show `is_degenerate`. Widening it was the alternative and would have been
+mechanically safe. It was rejected because this disclosure already sends the reader to
+the machine-readable payload keys, the report's own header declares
+`experiments/baselines/leaderboard.json` the source of truth, and a fifteenth column on
+an already-fourteen-column table costs legibility for an auditor who can read the field
+straight from the payload. The per-scenario breakout is the only rendered table widened.
+
+**7. The 95% interval uses the `(R + 1)` order-statistic convention.** The lower and
+upper bounds are the `floor(0.025 * (R + 1))`-th and `ceil(0.975 * (R + 1))`-th order
+statistics of the sorted replicates, which at `R = 10,000` are indices `249` and `9750`.
+The two bounds are mirror images of one another, and the resulting nominal coverage is
+at or above 95% at every admissible resample count. The previous report's bounds were
+computed one index differently and gave 94.99% coverage with asymmetric tails, so a
+reader comparing this report against the previous one will see the CI move slightly and
+nothing else move with it. `standard_error`, the MDD, sigma-hat, `E[max k]` and the
+corrected delta are all unchanged, because only the interval indices moved and the
+resampling stream itself did not.
+
+**Verdict vocabulary.** The `verdict` column holds exactly four values, and a reader
+who guesses at them will mis-read the adjudication table.
+
+- `win` -- all three D-23 criteria passed jointly.
+- `significant, below ship bar` -- the difference IS statistically detected, but it
+  fails the corrected 0.01 practical floor and/or the HR@10 exchange-rate check. It
+  is real and not worth shipping.
+- `no difference` -- not significant, AND the test was powered to see an effect of
+  the observed size, so this null carries information.
+- `not detectable` -- not significant, and the observed delta sits below the MDD, so
+  the null is uninformative and must NOT be read as evidence of equivalence.
+
+The `failed criteria` column names exactly which bar a non-win row missed; a `win` is
+exactly a row whose failed-criteria cell is empty.
+
+**The practical floor is two sessions.** A floor of 0.01 TechnicalScore is exactly
+two best-case session flips out of 200, because at n=200 a single session can move
+TechnicalScore by at most `0.005`.
+
+**HR@10 is never the sort key.** Candidates are ordered by TechnicalScore descending,
+tie-broken by ascending fingerprint. `experiments/RUNS.md` is sorted by HR@10
+throughout, and `PROJECT.md` names that ordering as actively misleading about the
+score.
+
+**Precision.** `experiments/RUNS.md` records the retained aggregates to four decimal
+places while this report prints six, so the two agree only after rounding.
+
+**Efficiency rounding.** Efficiency is printed rounded to 6 dp at output, exactly as
+`evaluator/local_evaluator.py:286` rounds it, while the UNROUNDED value is what feeds
+TechnicalScore. `0.7575` here and `0.7575000000000001` inside the score computation
+are the same number, correctly reported.
+
+**A permutation p has a floor.** A Monte-Carlo permutation p is
+`(exceedances + 1) / (resamples + 1)` (Phipson-Smyth), so it can never honestly be
+zero; its smallest attainable value is `1 / (resamples + 1)`. A row printed at that
+value sits at the resolution limit of the resample count and must not be read as
+`p = 0`.
+"""
+
+# D-53. Carried in the payload rather than only in the rendered view, so a reader who
+# opens the JSON gets the caveat too. Every claim below is the record's own words about
+# what these rows are and what was deliberately NOT computed for them.
+CORPUS_BASELINES_READING = """\
+These rows are ONE candidate measured across FOUR corpora -- `public`,
+`expanded_dev.v1`, `expanded_confirm.v1` and `probe.v1` -- and NOT four candidates
+measured against one corpus. Every row names the dataset it was measured against for
+exactly that reason (D-45).
+
+They are therefore not comparable to one another as candidates. A different corpus is a
+different `dataset_sha256`, and `arena.adjudication.adjudicate` refuses two arms whose
+`dataset_sha256` disagree, by design. That refusal is why these rows live in their own
+file and never in `experiments/LEADERBOARD.md`, whose entire premise is a same-corpus
+comparison. They are not routed through `--include` either: a report-only row still
+lands in the leaderboard's candidate table, which is the misreading this file exists to
+prevent (D-53).
+
+No Holm-Bonferroni family and no winner's-curse order-statistic correction is applied to
+anything below, and both omissions are deliberate rather than overlooked. Each
+correction is a property of SELECTING among competing candidates against a common
+baseline (D-19, D-21). Nothing here is selected, tested against a baseline, or declared
+a champion: there is one candidate and no hypothesis, so there is no family to correct
+and no maximum of k to debias.
+
+`corpus_count` is emitted in the payload so the number of corpora is answered by the
+record itself rather than by counting table lines. It is four. D-45 and D-48 both say
+"five"; that wording predates D-46, which consolidated the probe's three arms
+(`control`, `probe_sonnet`, `probe_haiku`) into a single `data/probe.v1.jsonl`, and
+D-58 corrects the count to four.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateEntry:
+    """One arena arm as the leaderboard sees it: identity, provenance, and outcomes."""
+
+    name: str
+    fingerprint: str
+    run_id: str
+    code_revision: str
+    code_revision_dirty: bool
+    # Ordered pairs rather than a dict, matching CandidateSpec: a dict admits
+    # insertion-order variation, which would let one configuration mint two
+    # fingerprints.
+    overrides: tuple[tuple[str, str], ...]
+    sessions: tuple[SessionOutcome, ...]
+    # T-01-16b: a synthetic validation control sitting in the same table as a measured
+    # configuration is a spoofing surface. The `synthetic-` name prefix and the report's
+    # stated convention are the primary mitigation; this field carries the record's own
+    # words so the JSON says it too, not only the rendered view.
+    provenance: str = ""
+
+
+def _spec_from_payload(record: dict[str, object], run_directory: Path) -> CandidateSpec:
+    run_id = str(record.get("run_id", run_directory.name))
+    # Fail closed on an unrecorded tree state, exactly as arena.candidate's
+    # code_revision_dirty() does: a clean flag that could not be established would let a
+    # run with uncommitted changes masquerade as the committed revision it names.
+    # The rescued anchor-legacy record reads "unknown_revision" / "unknown" with
+    # provenance_complete false; CandidateSpec.validate() admits both literals by
+    # design, so the anchor fingerprints through the same path as any other record.
+    spec = CandidateSpec(
+        # Resolved through the one authority rather than from run_id: `name` is inside
+        # the hashed payload, so reading the wrong field here recomputes a fingerprint
+        # that disagrees with the one the record stores.
+        name=spec_name_from_record(record, run_id),
+        code_revision=str(record.get("code_revision", "unknown_revision")),
+        code_revision_dirty=bool(record.get("code_revision_dirty", True)),
+        overrides=candidate_overrides(dict(record.get("overrides", {}))),
+        catalog_sha256=str(record.get("catalog_sha256", "unknown")),
+        dataset_sha256=str(record.get("dataset_sha256", "unknown")),
+    )
+    spec.validate()
+    # Fail closed on a record that cannot identify itself. Every downstream consumer
+    # reads spec.fingerprint -- as the leaderboard identity, as the report's
+    # baseline_fingerprint, as the champion tie-break key, and as the RNG seed via
+    # pair_seed -- while record["fingerprint"], written by arena/arena.py, was read by
+    # nothing. That divergence shipped once already (experiments/RUNS.md, "Which numbers
+    # are current"): a record was reported under a digest that appeared nowhere in its
+    # own summary.json, and because the fingerprint seeds the bootstrap and permutation
+    # streams, the CI, p, MDD and sigma-hat all changed silently with it.
+    # test_every_record_derives_the_fingerprint_it_stores catches this, but only for
+    # records that are ALREADY committed -- one commit too late. The check therefore
+    # lives on the read path, which spec_from_record and entry_from_record both route
+    # through, so neither reader needs its own copy.
+    stored = record.get("fingerprint")
+    if stored is not None and str(stored) != spec.fingerprint:
+        raise ArenaStoreError(
+            f"{run_directory.name} stores fingerprint {stored}"
+            f" but derives {spec.fingerprint}"
+        )
+    # A record storing NO fingerprint is admitted, and that is not laxity. The rescued
+    # experiments/baselines/anchor-legacy record legitimately carries no such key -- it
+    # is a rescue of a provenance-free file, and its provenance_complete is false -- so
+    # there is nothing for it to diverge from. Do not later "harden" this branch into a
+    # refusal: doing so would reject the MEAS-16 anchor.
+    return spec
+
+
+def spec_from_record(run_directory: Path) -> CandidateSpec:
+    """The spec a retained record describes, for callers that need the arm as well.
+
+    CandidateEntry keeps the fingerprint but not the two digests it was computed
+    from, so a caller building an adjudication arm cannot reconstruct a matching
+    spec from the entry alone. Routing both that caller and entry_from_record
+    through one mapping is what keeps an arm's fingerprint identical to the
+    leaderboard row it is reported beside; two hand-rolled reconstructions would
+    silently mint two fingerprints for one record.
+    """
+    record = json.loads(
+        (run_directory / SUMMARY_FILENAME).read_text(encoding="utf-8")
+    )
+    return _spec_from_payload(record, run_directory)
+
+
+def entry_from_record(run_directory: Path) -> CandidateEntry:
+    record = json.loads(
+        (run_directory / SUMMARY_FILENAME).read_text(encoding="utf-8")
+    )
+    sessions = load_sessions(run_directory / SESSIONS_FILENAME)
+    run_id = str(record.get("run_id", run_directory.name))
+    spec = _spec_from_payload(record, run_directory)
+    return CandidateEntry(
+        name=spec.name,
+        fingerprint=spec.fingerprint,
+        run_id=run_id,
+        code_revision=spec.code_revision,
+        code_revision_dirty=spec.code_revision_dirty,
+        overrides=spec.overrides,
+        sessions=sessions,
+        provenance=str(record.get("provenance", "")),
+    )
+
+
+def build_leaderboard(
+    entries: tuple[CandidateEntry, ...],
+    rows: tuple[AdjudicationRow, ...],
+    *,
+    baseline_fingerprint: str | None,
+) -> dict[str, object]:
+    entry_fingerprints = [entry.fingerprint for entry in entries]
+    duplicates = sorted(
+        fingerprint
+        for fingerprint in set(entry_fingerprints)
+        if entry_fingerprints.count(fingerprint) > 1
+    )
+    if duplicates:
+        displayed = ", ".join(
+            _display_fingerprint(fingerprint) for fingerprint in duplicates
+        )
+        raise ArenaStoreError(
+            f"leaderboard entries must have unique fingerprints: {displayed}"
+        )
+
+    summaries = {
+        entry.fingerprint: metric_summary(entry.sessions) for entry in entries
+    }
+    scores = {
+        fingerprint: technical_score(summary)
+        for fingerprint, summary in summaries.items()
+    }
+    # D-14. TechnicalScore DESCENDING, tie-broken by ASCENDING fingerprint -- the stable
+    # final tie-break discipline of ranking.py:96-113. HR@10 is NEVER the sort key:
+    # experiments/RUNS.md is sorted by HR@10 throughout and PROJECT.md names that as
+    # actively misleading about the score, because MRR and Efficiency can move a great
+    # deal while HR@10 does not move at all. Ties are real here -- TechnicalScore is
+    # rounded to 6 dp, so the value lattice has a 1e-6 pitch.
+    ordered = sorted(
+        entries,
+        key=lambda entry: (-scores[entry.fingerprint], entry.fingerprint),
+    )
+
+    candidates: list[dict[str, object]] = []
+    curves: list[dict[str, object]] = []
+    scenarios: list[dict[str, object]] = []
+    for entry in ordered:
+        summary = summaries[entry.fingerprint]
+        candidates.append(
+            {
+                "name": entry.name,
+                "fingerprint": entry.fingerprint,
+                "run_id": entry.run_id,
+                "code_revision": entry.code_revision,
+                "code_revision_dirty": entry.code_revision_dirty,
+                "overrides": dict(entry.overrides),
+                "provenance": entry.provenance,
+                "sample_count": summary.sample_count,
+                # hit_rate_at_10, mrr and mttc arrive already 6-dp rounded from
+                # metric_summary, and technical_score rounds its own result. Re-rounding
+                # any of them here would be a no-op at best and a second rounding step at
+                # worst, so they pass through untouched.
+                "hit_rate_at_10": summary.hit_rate_at_10,
+                "mrr": summary.mrr,
+                "mttc": summary.mttc,
+                # The ONE exception. arena.metrics.efficiency deliberately returns the
+                # UNROUNDED value because the unrounded term is what reproduces the
+                # TechnicalScore anchor, mirroring evaluator/local_evaluator.py:279-280.
+                # The evaluator applies its 6-dp rounding only at OUTPUT
+                # (local_evaluator.py:286), which is why the anchor-legacy summary.json
+                # legitimately reads 0.7575 while efficiency() returns
+                # 0.7575000000000001. This module is an output boundary, so it rounds
+                # exactly where the evaluator rounds. Nothing here may write the
+                # unrounded value to a file (T-01-16c).
+                "efficiency": round(efficiency(summary), 6),
+                "technical_score": scores[entry.fingerprint],
+            }
+        )
+        curves.append(
+            {
+                "fingerprint": entry.fingerprint,
+                # JSON object keys must be strings, so the integer depths are stringified
+                # here rather than surviving a json round-trip as ints that come back as
+                # strings and silently break a lookup downstream.
+                "curve": {
+                    str(depth): value
+                    for depth, value in hit_rate_curve(entry.sessions).items()
+                },
+            }
+        )
+        for scenario in scenario_breakout(entry.sessions):
+            # binomial_standard_error is written UNROUNDED, unlike efficiency above.
+            # The two rules differ on purpose and must not be "harmonised": the sigma is
+            # an analysis quantity asserted at places=12 by plans 01-03 and 01-09
+            # (0.09486832980505137 and friends), not a figure the evaluator also emits,
+            # so there is no output-rounding convention to match.
+            # The per-bucket composite is added HERE rather than inside
+            # arena.metrics.ScenarioSummary.as_record(), and the placement is
+            # load-bearing. arena/metrics.py is a transcription of the evaluator's own
+            # metric chain (its module comment says so, and D-06/D-08 make the
+            # cross-agreement between the two independent paths the phase's validation
+            # evidence). The evaluator emits NO per-scenario composite, so adding one
+            # there would make the transcription claim false and would bury a
+            # leaderboard presentation choice inside the module whose agreement with
+            # the evaluator is what is being validated. This module is the output
+            # boundary, where the other output-only concerns -- efficiency rounding and
+            # fingerprint truncation -- already live.
+            #
+            # No second round() here: technical_score already rounds its own result to
+            # 6 dp, exactly as the candidate table's technical_score does.
+            scenarios.append(
+                {
+                    "fingerprint": entry.fingerprint,
+                    **scenario.as_record(),
+                    "technical_score": technical_score(scenario.summary),
+                }
+            )
+
+    observed_resamples = tuple(sorted({row.resamples for row in rows}))
+    # Describes what actually produced these rows rather than what the constant says.
+    # A committed report generated at a test resample count is exactly the failure
+    # T-01-20 guards against, and it is only visible if the number is recorded.
+    if len(observed_resamples) > 1:
+        raise ArenaStoreError(
+            f"adjudication rows disagree on resample count {observed_resamples}"
+        )
+    resample_count = observed_resamples[0] if observed_resamples else None
+
+    return {
+        "schema_version": LEADERBOARD_SCHEMA_VERSION,
+        # Top level, not per row: a reader must never have to infer which arm the deltas
+        # in the adjudication table are measured against (D-13).
+        "baseline_fingerprint": baseline_fingerprint,
+        # The machine-readable form of the HOW_TO_READ block, so a downstream consumer
+        # can check the methodology claims without parsing prose.
+        "assumptions": {
+            "per_bucket_sigma_source": "bucket-observed p and n (D-15)",
+            "winners_curse_sigma_source": (
+                "paired-difference bootstrap SE of TechnicalScore (D-21)"
+            ),
+            "holm_family": (
+                "non-baseline candidates against a common baseline (D-19);"
+                " an arm whose delta and standard error are both zero still counts"
+                " toward the family and toward correction_k, because the family size"
+                " is a property of the experimental design and shrinking it after"
+                " seeing which arms turned out degenerate would be a data-dependent"
+                " family definition; --include is the a-priori mechanism for a"
+                " retained record that belongs in the report without joining the"
+                " family"
+            ),
+            # Derived from the rows themselves, on the same "describe what actually
+            # produced these rows" discipline as resample_count above: the multiplier
+            # applied to every permutation_p is then re-derivable from the payload
+            # alone, instead of being a claim the reader must take on trust or dig out
+            # of the source. Zero is the honest answer for a report that adjudicated
+            # nothing.
+            "holm_family_size": len(rows),
+            # Stated as the standing policy rather than computed from the rows: it
+            # describes the RULE for joining the family, so it must read the same
+            # whether or not this particular report happened to contain a degenerate
+            # arm.
+            "holm_family_includes_degenerate_arms": True,
+            "practical_floor": 0.01,
+            "resample_count": resample_count,
+            "efficiency_rounding": (
+                "6 dp at output, matching evaluator/local_evaluator.py:286"
+            ),
+            "per_scenario_holm_corrected": False,
+        },
+        "candidates": candidates,
+        "hit_rate_curve": curves,
+        "scenario_breakout": scenarios,
+        # Input order, so the caller owns adjudication presentation. as_record() already
+        # returns a plain mapping with `verdict` as a string and `failed_criteria` as a
+        # list, so the row serializes directly.
+        "adjudication": [row.as_record() for row in rows],
+    }
+
+
+def _display_fingerprint(fingerprint: str) -> str:
+    # Truncated in the DISPLAY column only; the full digest is always in the JSON.
+    return fingerprint[:_FINGERPRINT_DISPLAY_LENGTH]
+
+
+def _cell(value: object) -> str:
+    # bool before int: bool IS an int in Python, so the int arm would print True as 1.
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, int):
+        return str(value)
+    number = float(value)
+    if number == 0.0:
+        return "0.0"
+    if abs(number) < _SCIENTIFIC_NOTATION_BELOW:
+        # A permutation p at its Phipson-Smyth floor of 1/(R+1) is 9.999e-05 at
+        # R=10,000. Under a flat 6-dp format that real value would print as
+        # `0.000000` and read as `p = 0`, which no Monte-Carlo permutation p can be.
+        return f"{number:.4e}"
+    # Six decimal places throughout, which is why the assumptions block states that
+    # experiments/RUNS.md's four-place aggregates agree only after rounding.
+    return f"{number:.6f}"
+
+
+def _table(
+    header: tuple[str, ...],
+    alignment: tuple[str, ...],
+    rows: tuple[str, ...],
+) -> str:
+    # The `| _none_ |` fallback mirrors run_public.py:308: an empty body would emit a
+    # header and separator with nothing under them, which renders as a malformed table
+    # rather than as an honest "no rows".
+    body = "\n".join(rows) or "| " + " | ".join(["_none_"] * len(header)) + " |"
+    return (
+        "| " + " | ".join(header) + " |\n"
+        "| " + " | ".join(alignment) + " |\n"
+        + body
+        + "\n"
+    )
+
+
+def render_markdown(payload: dict[str, object]) -> str:
+    """Render the committed report. A pure function of the payload -- no I/O, no clock."""
+    assumptions = payload["assumptions"]
+    candidates = payload["candidates"]
+    baseline = payload["baseline_fingerprint"]
+    baseline_cell = (
+        f"`{_display_fingerprint(baseline)}`" if baseline else "_not set_"
+    )
+    # Built from the candidate table, which build_leaderboard has already ordered, so
+    # the three dependent tables inherit that order without re-deriving it.
+    names = {item["fingerprint"]: item["name"] for item in candidates}
+
+    candidate_rows = tuple(
+        "| `{name}` | `{fingerprint}` | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{efficiency}` | `{technical_score}` |".format(
+            name=item["name"],
+            fingerprint=_display_fingerprint(item["fingerprint"]),
+            hit_rate=_cell(item["hit_rate_at_10"]),
+            mrr=_cell(item["mrr"]),
+            mttc=_cell(item["mttc"]),
+            efficiency=_cell(item["efficiency"]),
+            technical_score=_cell(item["technical_score"]),
+        )
+        for item in candidates
+    )
+    candidate_table = _table(
+        ("Candidate", "Fingerprint", "HR@10", "MRR", "MTTC", "Efficiency", "TechnicalScore"),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:"),
+        candidate_rows,
+    )
+
+    curve_rows = tuple(
+        "| `{name}` | `{at_1}` | `{at_3}` | `{at_5}` | `{at_10}` |".format(
+            name=names.get(item["fingerprint"], item["fingerprint"]),
+            at_1=_cell(item["curve"]["1"]),
+            at_3=_cell(item["curve"]["3"]),
+            at_5=_cell(item["curve"]["5"]),
+            at_10=_cell(item["curve"]["10"]),
+        )
+        for item in payload["hit_rate_curve"]
+    )
+    curve_table = _table(
+        ("Candidate", "HR@1", "HR@3", "HR@5", "HR@10"),
+        ("---", "---:", "---:", "---:", "---:"),
+        curve_rows,
+    )
+
+    scenario_rows = tuple(
+        "| `{name}` | `{scenario}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{technical_score}` | `{sigma}` | {grade} |".format(
+            name=names.get(item["fingerprint"], item["fingerprint"]),
+            scenario=item["scenario_type"],
+            count=item["sample_count"],
+            hit_rate=_cell(item["hit_rate_at_10"]),
+            mrr=_cell(item["mrr"]),
+            mttc=_cell(item["mttc"]),
+            technical_score=_cell(item["technical_score"]),
+            sigma=_cell(item["binomial_standard_error"]),
+            grade=_cell(item["decision_grade"]),
+        )
+        for item in payload["scenario_breakout"]
+    )
+    # Nine entries, wrapped one per line: at nine the single-line spelling runs to 118
+    # characters, past the width this file holds elsewhere. TechnicalScore sits between
+    # MTTC and binomial sigma so the metric quartet reads in the same order as the
+    # Candidates table above.
+    scenario_table = _table(
+        (
+            "Candidate",
+            "Scenario",
+            "n",
+            "HR@10",
+            "MRR",
+            "MTTC",
+            "TechnicalScore",
+            "binomial sigma",
+            "Decision-grade?",
+        ),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---"),
+        scenario_rows,
+    )
+
+    adjudication_rows = tuple(
+        "| `{name}` | `{baseline}` | `{delta}` | `[{lower}, {upper}]` | `{permutation_p}` |"
+        " `{holm_p}` | `{mdd}` | `{sigma_hat}` | {k} | `{expected_max}` |"
+        " `{corrected}` | {floor} | {verdict} | {failed} |".format(
+            name=item["candidate_name"],
+            baseline=_display_fingerprint(item["baseline_fingerprint"]),
+            delta=_cell(item["delta"]),
+            lower=_cell(item["ci_lower"]),
+            upper=_cell(item["ci_upper"]),
+            permutation_p=_cell(item["permutation_p"]),
+            holm_p=_cell(item["holm_p"]),
+            mdd=_cell(item["minimum_detectable_difference"]),
+            sigma_hat=_cell(item["standard_error"]),
+            k=item["correction_k"],
+            expected_max=_cell(item["expected_max_of_k"]),
+            corrected=_cell(item["corrected_delta"]),
+            floor=_cell(item["clears_practical_floor"]),
+            verdict=item["verdict"],
+            failed=(
+                "`" + ", ".join(item["failed_criteria"]) + "`"
+                if item["failed_criteria"]
+                else "_none_"
+            ),
+        )
+        for item in payload["adjudication"]
+    )
+    adjudication_table = _table(
+        (
+            "Candidate",
+            "Baseline",
+            "dTS",
+            "95% CI",
+            "perm p",
+            "Holm p",
+            "MDD",
+            "sigma-hat",
+            "k",
+            "E[max k]",
+            "corrected dTS",
+            "clears floor",
+            "verdict",
+            "failed criteria",
+        ),
+        (
+            "---",
+            "---",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---:",
+            "---",
+            "---",
+            "---",
+        ),
+        adjudication_rows,
+    )
+
+    return (
+        "# Arena Leaderboard\n"
+        "\n"
+        "> **Generated file -- never hand-edit.** `experiments/baselines/leaderboard.json`\n"
+        "> is the source of truth; this Markdown is a view rendered from it by\n"
+        "> `arena/leaderboard.py`. Regenerate both rather than editing this file.\n"
+        ">\n"
+        "> Any candidate whose name begins `synthetic-` is a deterministic fixture used\n"
+        "> to validate the measurement rig, not a measured agent configuration. It is\n"
+        "> listed so the adjudication machinery is demonstrably exercised, and it must\n"
+        "> never be read as a real result.\n"
+        "\n"
+        f"- Schema version: `{payload['schema_version']}`\n"
+        f"- Baseline for every delta below: {baseline_cell}\n"
+        f"- Resamples per adjudication: `{assumptions['resample_count']}`\n"
+        f"- Practical floor: `{assumptions['practical_floor']}` TechnicalScore\n"
+        f"- Per-scenario rows Holm-corrected: `{assumptions['per_scenario_holm_corrected']}`\n"
+        "\n"
+        "## How to read this report\n"
+        "\n"
+        f"{HOW_TO_READ}"
+        "\n"
+        "## Candidates\n"
+        "\n"
+        "Ordered by TechnicalScore descending, tie-broken by ascending fingerprint.\n"
+        "\n"
+        f"{candidate_table}"
+        "\n"
+        "## HitRate@K curve\n"
+        "\n"
+        "Computed from retained session outcomes alone; no agent was invoked.\n"
+        "\n"
+        f"{curve_table}"
+        "\n"
+        "## Per-scenario breakout\n"
+        "\n"
+        "Each sigma is the bucket's own binomial standard error, unrounded. A row that\n"
+        "is not decision-grade cannot resolve a one-session swing from noise on its own.\n"
+        "\n"
+        f"{scenario_table}"
+        "\n"
+        "## Pairwise adjudication\n"
+        "\n"
+        "A p-value is a property of a PAIR, not of a candidate, so every row names the\n"
+        "baseline it was measured against.\n"
+        "\n"
+        f"{adjudication_table}"
+        "\n"
+        "Compare this report with retained rows in `experiments/RUNS.md`.\n"
+    )
+
+
+def write_leaderboard(
+    payload: dict[str, object],
+    *,
+    json_path: Path = LEADERBOARD_JSON_PATH,
+    markdown_path: Path = LEADERBOARD_MARKDOWN_PATH,
+) -> tuple[Path, Path]:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(json_path, payload)
+    markdown_path.write_text(render_markdown(payload), encoding="utf-8")
+    return (json_path, markdown_path)
+
+
+def build_corpus_baselines(
+    rows: tuple[tuple[str, CandidateEntry], ...],
+) -> dict[str, object]:
+    """The D-53 payload: ONE candidate measured across the four Phase 2 corpora.
+
+    Deliberately not a leaderboard. `build_leaderboard` compares candidates that
+    share a corpus; this compares corpora that share a candidate, so the two
+    payloads carry disjoint identity keys (`baseline_fingerprint` and
+    `adjudication` appear only in the leaderboard) and neither can be rendered by
+    the other's renderer. That structural separation is the mitigation, because a
+    reader who sees four different-corpus rows inside a same-corpus table has no
+    way to tell from the table itself that the comparison is meaningless.
+    """
+    if not rows:
+        # Refused rather than rendered as an empty table. An empty corpus-baselines
+        # report is never a legitimate artifact -- its entire claim is "one candidate,
+        # measured here, here, here and here" -- and a header with a `_none_` body
+        # would publish that claim with no evidence behind it. `_table`'s fallback is
+        # correct for an adjudication section that legitimately adjudicated nothing;
+        # it is not correct for the only section this file has.
+        raise ArenaStoreError("corpus baselines require at least one corpus row")
+
+    dataset_names = [dataset_name for dataset_name, _ in rows]
+    duplicate_names = sorted(
+        name for name in set(dataset_names) if dataset_names.count(name) > 1
+    )
+    if duplicate_names:
+        raise ArenaStoreError(
+            "corpus baselines must have unique dataset names:"
+            f" {', '.join(duplicate_names)}"
+        )
+
+    fingerprints = [entry.fingerprint for _, entry in rows]
+    duplicate_fingerprints = sorted(
+        fingerprint
+        for fingerprint in set(fingerprints)
+        if fingerprints.count(fingerprint) > 1
+    )
+    if duplicate_fingerprints:
+        displayed = ", ".join(
+            _display_fingerprint(fingerprint) for fingerprint in duplicate_fingerprints
+        )
+        raise ArenaStoreError(
+            f"corpus baselines must have unique fingerprints: {displayed}"
+        )
+
+    # The premise of this table is exactly one candidate across many corpora. A second
+    # candidate name arriving here is the D-45 misreading coming in through a different
+    # door: the rows would then differ in BOTH the corpus and the configuration, so no
+    # row could be attributed to either.
+    names = sorted({entry.name for _, entry in rows})
+    if len(names) != 1:
+        raise ArenaStoreError(
+            f"corpus baselines must describe one candidate; found: {', '.join(names)}"
+        )
+
+    # Explicit sort, never the caller's insertion order -- the same discipline
+    # build_leaderboard applies to its candidate table. `dataset_name` is unique by the
+    # refusal above, so it is a total order and needs no further tie-break.
+    ordered = sorted(rows, key=lambda item: item[0])
+
+    corpora: list[dict[str, object]] = []
+    for dataset_name, entry in ordered:
+        summary = metric_summary(entry.sessions)
+        corpora.append(
+            {
+                # First key by intent: a row that does not say which corpus produced it
+                # is the exact artifact D-45 exists to prevent.
+                "dataset_name": dataset_name,
+                "run_id": entry.run_id,
+                "name": entry.name,
+                "fingerprint": entry.fingerprint,
+                "code_revision": entry.code_revision,
+                "code_revision_dirty": entry.code_revision_dirty,
+                "overrides": dict(entry.overrides),
+                "provenance": entry.provenance,
+                "sample_count": summary.sample_count,
+                "hit_rate_at_10": summary.hit_rate_at_10,
+                "mrr": summary.mrr,
+                "mttc": summary.mttc,
+                # Rounded here for the same reason build_leaderboard rounds it: this is
+                # an output boundary and arena.metrics.efficiency deliberately returns
+                # the unrounded term that feeds TechnicalScore (T-01-16c).
+                "efficiency": round(efficiency(summary), 6),
+                "technical_score": technical_score(summary),
+                "scenario_breakout": [
+                    {
+                        **scenario.as_record(),
+                        "technical_score": technical_score(scenario.summary),
+                    }
+                    for scenario in scenario_breakout(entry.sessions)
+                ],
+            }
+        )
+
+    return {
+        "schema_version": CORPUS_BASELINES_SCHEMA_VERSION,
+        # Singular, and at the top level: the whole table is one candidate, so naming it
+        # per row would invite reading the rows as four different arms.
+        "candidate_name": names[0],
+        # Emitted so the four-versus-five question is answered by the payload rather
+        # than by counting rendered table lines (D-58).
+        "corpus_count": len(ordered),
+        "reading": CORPUS_BASELINES_READING,
+        "corpora": corpora,
+    }
+
+
+def render_corpus_baselines_markdown(payload: dict[str, object]) -> str:
+    """Render the corpus-baselines report. Pure function of the payload -- no I/O, no clock."""
+    corpora = payload["corpora"]
+
+    corpus_rows = tuple(
+        "| `{dataset}` | `{run_id}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{efficiency}` | `{technical_score}` |".format(
+            dataset=item["dataset_name"],
+            run_id=item["run_id"],
+            count=item["sample_count"],
+            hit_rate=_cell(item["hit_rate_at_10"]),
+            mrr=_cell(item["mrr"]),
+            mttc=_cell(item["mttc"]),
+            efficiency=_cell(item["efficiency"]),
+            technical_score=_cell(item["technical_score"]),
+        )
+        for item in corpora
+    )
+    corpus_table = _table(
+        ("Corpus", "Run", "n", "HR@10", "MRR", "MTTC", "Efficiency", "TechnicalScore"),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:"),
+        corpus_rows,
+    )
+
+    # Deliberately the leaderboard's own per-scenario columns, in the leaderboard's own
+    # order, with only the leading identity column changed from Candidate to Corpus. A
+    # reader moving between the two reports should not have to relearn the table.
+    scenario_rows = tuple(
+        "| `{dataset}` | `{scenario}` | {count} | `{hit_rate}` | `{mrr}` | `{mttc}` |"
+        " `{technical_score}` | `{sigma}` | {grade} |".format(
+            dataset=item["dataset_name"],
+            scenario=scenario["scenario_type"],
+            count=scenario["sample_count"],
+            hit_rate=_cell(scenario["hit_rate_at_10"]),
+            mrr=_cell(scenario["mrr"]),
+            mttc=_cell(scenario["mttc"]),
+            technical_score=_cell(scenario["technical_score"]),
+            sigma=_cell(scenario["binomial_standard_error"]),
+            grade=_cell(scenario["decision_grade"]),
+        )
+        for item in corpora
+        for scenario in item["scenario_breakout"]
+    )
+    scenario_table = _table(
+        (
+            "Corpus",
+            "Scenario",
+            "n",
+            "HR@10",
+            "MRR",
+            "MTTC",
+            "TechnicalScore",
+            "binomial sigma",
+            "Decision-grade?",
+        ),
+        ("---", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---"),
+        scenario_rows,
+    )
+
+    return (
+        "# Corpus Baselines\n"
+        "\n"
+        "> **Generated file -- never hand-edit.**\n"
+        "> `experiments/baselines/corpus_baselines.json` is the source of truth; this\n"
+        "> Markdown is a view rendered from it by `arena/leaderboard.py`. Regenerate\n"
+        "> both rather than editing this file.\n"
+        "\n"
+        f"- Schema version: `{payload['schema_version']}`\n"
+        f"- Candidate: `{payload['candidate_name']}`\n"
+        f"- Corpora measured: `{payload['corpus_count']}`\n"
+        "\n"
+        "## How to read this report\n"
+        "\n"
+        f"{payload['reading']}"
+        "\n"
+        "## Per-corpus baseline\n"
+        "\n"
+        "One candidate, one row per corpus, ordered by corpus name. These rows are not\n"
+        "a ranking and must not be read as one.\n"
+        "\n"
+        f"{corpus_table}"
+        "\n"
+        "## Per-scenario breakout\n"
+        "\n"
+        "Each sigma is the bucket's own binomial standard error, unrounded. A row that\n"
+        "is not decision-grade cannot resolve a one-session swing from noise on its own.\n"
+        "\n"
+        f"{scenario_table}"
+        "\n"
+        "Compare this report with `experiments/LEADERBOARD.md`, which is the\n"
+        "same-corpus candidate comparison these rows are deliberately kept out of.\n"
+    )
+
+
+def write_corpus_baselines(
+    payload: dict[str, object],
+    *,
+    json_path: Path = CORPUS_BASELINES_JSON_PATH,
+    markdown_path: Path = CORPUS_BASELINES_MARKDOWN_PATH,
+) -> tuple[Path, Path]:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(json_path, payload)
+    markdown_path.write_text(render_corpus_baselines_markdown(payload), encoding="utf-8")
+    return (json_path, markdown_path)
