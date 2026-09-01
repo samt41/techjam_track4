@@ -31,6 +31,8 @@ The [Devpost video storyboard](docs/devpost_video_storyboard.md) provides a 13-s
 uv run python -m experiments.demo_session --sample-id public_0003
 ```
 
+The [full Devpost video script](docs/devpost_video_full_script.md) expands that storyboard into word-for-word narration, slide copy, animation cues, transitions, and a recording checklist for Cervon, Samuel, and Weichu.
+
 The demo harness uses the public label only to annotate the presentation result. The submitted `Agent` still receives exactly the same aggregate profile and customer messages as it does under the unchanged evaluator.
 
 ## Quick start
