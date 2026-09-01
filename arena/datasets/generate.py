@@ -767,19 +767,42 @@ def constraint_slots(
         for position, phrase in enumerate(getattr(pair.card, name)):
             bucket = classify_constraint(phrase)
             # Preference order: an unspent pair in this constraint's own bucket,
-            # then any unspent pair, then a spent pair back in the right bucket,
+            # then a SPENT pair back in the right bucket, then any unspent pair,
             # then any pair at all.
             #
-            # Reuse is admitted deliberately rather than refused. A control card
-            # carries up to four constraints while a thin product's gist may hold
-            # two or three, so refusing reuse would drop every attribute-poor
-            # target from the pool -- and attribute-poor products are not
-            # randomly distributed, so the corpus would skew toward richly
-            # described listings. That is precisely the silent skew D-30's
-            # stratification exists to prevent, and it would be a far worse
-            # defect than a card stating one attribute twice in two different
-            # wordings. The two phrases are still forced apart by the
-            # pair-uniqueness gate in `author_arm`.
+            # Bucket agreement outranks novelty, and having those two the other
+            # way round is what makes a slot structurally unsatisfiable rather
+            # than merely repetitive. A slot handed a gist from the wrong bucket
+            # asks the author for two contradictory things at once: D-33
+            # `preserves_bucket` requires the phrase to classify back into
+            # `bucket`, D-35 faithfulness requires it to mean the gist, and the
+            # committed author prompt forbids inventing an attribute the pair
+            # does not state. So a `color` slot shown `entry_method=toothed_fastener`
+            # fails faithfulness if it names a colour and fails the bucket gate if
+            # it does not -- no phrase passes, and the item burns every one of
+            # AUTHORING_ATTEMPT_CAP attempts. A spent same-bucket pair is at worst
+            # a repeat; a fresh cross-bucket pair cannot be authored at all.
+            #
+            # Reuse is admitted deliberately rather than refused, and this
+            # ordering asks for MORE of it. A control card carries up to four
+            # constraints while a thin product's gist may hold two or three, so
+            # refusing reuse would drop every attribute-poor target from the pool
+            # -- and attribute-poor products are not randomly distributed, so the
+            # corpus would skew toward richly described listings. That is
+            # precisely the silent skew D-30's stratification exists to prevent,
+            # and it would be a far worse defect than a card stating one attribute
+            # twice in two different wordings. The two phrases are still forced
+            # apart by the pair-uniqueness gate in `author_arm`.
+            #
+            # The last two branches survive for the buckets the gist cannot reach
+            # at all. `classify_constraint` can return `use_case` and `budget`,
+            # and no gist attribute maps to either (gist.py's `_GIST_ATTRIBUTES`
+            # excludes them), so such a slot has no satisfiable pair anywhere in
+            # the catalogue and novelty is the only remaining tie-break.
+            #
+            # Every branch reads its candidates in `catalogue` order, which
+            # `gist_for_target` sorted on (attribute, value), so the first match
+            # is a stable tie-break rather than an insertion-order accident.
             chosen = next(
                 (
                     entry
@@ -788,8 +811,6 @@ def constraint_slots(
                 ),
                 None,
             )
-            if chosen is None and available:
-                chosen = available[0]
             if chosen is None:
                 chosen = next(
                     (
@@ -797,8 +818,12 @@ def constraint_slots(
                         for entry in catalogue
                         if _gist_bucket(entry[0].attribute) == bucket
                     ),
-                    catalogue[0],
+                    None,
                 )
+            if chosen is None and available:
+                chosen = available[0]
+            if chosen is None:
+                chosen = catalogue[0]
             if chosen in available:
                 available.remove(chosen)
             gist_pair, payload = chosen
