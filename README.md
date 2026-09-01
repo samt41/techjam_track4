@@ -4,6 +4,35 @@ This Track 4 submission is a headless Python shopping agent for the TechJam Conv
 
 The implementation is deterministic and standard-library-only at inference time. It uses catalog-derived metadata indexes, SQLite FTS5, reciprocal-rank fusion, hard eligibility checks, information-gain questions, slate rotation, and bounded leave-one-constraint-out exploration.
 
+## Project description
+
+Shopping requests rarely arrive fully formed. A shopper may begin with a broad category, add a budget or material, reject an attribute, correct an earlier answer, or change direction after seeing the first results. Treating every turn as an isolated keyword query loses that context and can surface products that contradict what the shopper just said.
+
+This agent treats the conversation as structured, revisable state. It extracts typed constraints from each message, distinguishes hard requirements from soft preferences and exclusions, replaces conflicting values, and retains earlier details that still matter. Aggregate profile signals can personalize ranking without exposing raw user history. Shoppers can revise a request without restating every earlier detail.
+
+On each turn, the agent searches the frozen 50,000-product catalog through both structured metadata indexes and SQLite FTS5. Reciprocal-rank fusion combines the retrieval routes, an eligibility gate removes products that violate hard constraints, and an auditable Bayesian score ranks the remaining candidates. The agent can ask the unanswered question with the highest expected information gain while still returning up to ten recommendations. It rotates previously shown products and, only when the strict result set is too small, fills the slate with clearly disclosed near matches that relax one non-exclusion constraint.
+
+The full inference path runs locally on CPU and has deterministic tie-breaking by `parent_asin`. It needs no network connection, GPU, vector database, model server, API key, or paid model call. On the unchanged 200-session public evaluator, the retained run reaches 0.920 Hit Rate@10 and 0.5245 MRR, compared with 0.125 and 0.068034 for the organizer's BM25 baseline. These public results are development evidence; the private evaluation remains the final test of generalization.
+
+### Development tools, APIs, libraries, and data
+
+| Category | What this project uses |
+| --- | --- |
+| Development tools | CPython 3.11+, `uv` for environment and command management, Git and GitHub for version control, Python's `unittest` for automated tests, and the organizer's unchanged local evaluator for end-to-end measurement. The workflow has no editor-specific requirement. |
+| APIs | The submission implements the organizer's local Python `Agent` contract: `reset` starts a session and `respond` returns the message, optional clarification attribute, ranked recommendations, and token counts. Catalog access uses Python's local `sqlite3` API. No external web, commerce, or model API is called. |
+| Libraries and frameworks | Inference uses only the Python standard library and SQLite FTS5. There are no third-party runtime packages, hosted frameworks, embedding models, or LLM dependencies. |
+| Datasets and assets | The frozen catalog contains 50,000 products from the competition's `Clothing_Shoes_and_Jewelry` selection of the [Amazon Reviews 2023 dataset](https://amazon-reviews-2023.github.io/), published by McAuley Lab at UCSD. Development uses the organizer-provided 200-session public set with Buying, Browsing, Intent Override, and Boundary scenarios plus privacy-safe aggregate user profiles. The SQLite search artifact is built locally from that catalog. No external media, private labels, or model weights are used. See [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) for source and use notes. |
+
+## Demo video plan
+
+The [Devpost video storyboard](docs/devpost_video_storyboard.md) provides a 13-slide, approximately 2:45 recording plan with on-screen copy, voiceover, architecture and state-flow diagrams, BM25 comparisons, test cases, measured results, failed experiments, and the complete unfinished GSD roadmap. It ends with a runnable Intent Override session from the released public set:
+
+```powershell
+uv run python -m experiments.demo_session --sample-id public_0003
+```
+
+The demo harness uses the public label only to annotate the presentation result. The submitted `Agent` still receives exactly the same aggregate profile and customer messages as it does under the unchanged evaluator.
+
 ## Quick start
 
 Requirements:
@@ -20,7 +49,7 @@ uv sync
 uv run python -m unittest -v
 ```
 
-The suite is 167 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
+The suite is 745 tests and runs in a few seconds. It needs no catalog download because it builds tiny fixture catalogs in temporary directories.
 
 ### Get the catalog
 
@@ -128,7 +157,7 @@ None of this happens again at query time.
 7. Each route returns a bounded, ordered candidate list, and every route result is recorded as a typed retrieval trace.
 8. The candidate pool is bounded to the top 5,000 by cheap evidence-only fusion before any product is materialized, so scoring never runs on an unbounded set.
 9. The eligibility gate re-checks each candidate against the active hard constraints as defense. → a product that violates any hard requirement or exclusion is removed here, before ranking, and an exclusion is never relaxed.
-10. Strict candidates are ranked by an auditable Bayesian posterior. Route evidence, soft-preference matches, profile grounding, and a quality prior each contribute a typed, logged term, combined through a stable softmax. Previously shown products within the current intent version sort last, which rotates the slate across turns.
+10. Strict candidates are ranked by an auditable Bayesian posterior. Route evidence, soft-preference matches, and profile grounding contribute typed, logged terms combined through a stable softmax. The reserved quality-prior term is logged but neutral in the shipped configuration. Previously shown products within the current intent version sort last, which rotates the slate across turns.
 11. The clarifying question is estimated from the full preliminary strict population, choosing the unanswered attribute that most reduces expected posterior entropy. This is computed before any tail fill, so the question sees the true spread rather than the final slate.
 12. The slate is assembled. → on the common path the strict pool already fills all ten slots and no exploration runs. → only if the pool cannot fill the slate does counterfactual tail fill add disclosed near matches that each relax exactly one non-exclusion constraint, and the empty-pool case always triggers this last-resort fill regardless of configuration.
 13. Response validation removes unknown or duplicate identifiers and discloses any relaxed requirement.
@@ -149,13 +178,23 @@ After a run, a separate analyzer reads the traces and attributes every public mi
 
 Every tuned constant and hardcoded choice in the code, with how principled each is, plus the state of each design document and what unbuilt work is gated on, is recorded in [docs/STATUS.md](docs/STATUS.md).
 
-## Limitations and honest notes
+## Limitations and future work
 
 - Retrieval combines structured attribute matching, lexical FTS5, and Bayesian ranking. No embeddings, local model, or LLM is used. A measured miss classification found zero of the current public misses to be vocabulary gaps, because the simulator speaks the target product's own catalog words. Open-vocabulary synonym resolution is therefore deferred and gated on evidence that a real gap exists, most plausibly on the private set. See the [semantic concept-retrieval design](docs/superpowers/specs/2026-08-29-offline-semantic-concept-retrieval-design.md).
 - The remaining public misses are ranking-discrimination cases, where the target is retrieved into the pool but ranks below the slate among near-identical products. This, not vocabulary, is the current bottleneck.
 - Public evaluation contains only 200 sessions. Private performance may differ, so tuning directly to individual public targets is avoided.
 - Display-only prices, such as an em-dash placeholder or a "from" price, are treated as unknown so they cannot falsely satisfy a hard budget constraint.
 - The catalog and the built artifact are large and are not committed to Git.
+
+Given more time, the team would test the planned offline semantic fallback on independently authored paraphrases before deciding whether to ship it. The other priorities are ranking signals that can separate near-identical eligible products without target-specific tuning, broader multi-turn evaluation outside the public simulator's vocabulary, and a smaller artifact that keeps the same deterministic behavior. Every ranking change would still need paired evaluation and an explicit stable tie-break.
+
+## Team member contributions
+
+This project was completed collaboratively by:
+
+- Cervon, contributor
+- Samuel, contributor
+- Weichu, contributor
 
 ## Competition contract
 
