@@ -1,250 +1,311 @@
 # Search That Remembers: expanded presenter script
 
+Synced to the built deck: `AI-MEMORY TARGETTED PRODUCT SEARCH.pptx` (13 slides).
+Slide numbers, titles, and on-screen facts below follow that file, not the earlier
+storyboard in `devpost_video_storyboard.md`.
+
 Anything in square brackets is a cue. Do not read the cue aloud.
 
-## Slide 1: Search That Remembers
+Timing: the deck carries printed timing boxes only on slides 8 to 13
+(1:22 through 2:45). Slides 1 to 7 share the 0:00 to 1:22 opening budget; the
+suggested split is in each heading. This expanded script is written for a relaxed
+read-through and rehearsal, so it runs longer than those boxes. For the recorded
+cut, use the bracketed `[TRIM]` sentences as the first things to drop.
 
-Hi everyone. We are Cervon, Samuel, and Weichu, and this is Search That
-Remembers.
+## Slide 1: AI-Memory Targetted Product Search (0:00-0:10)
+
+Hi everyone. We are OpenCheliped: Samuel, Cervon, and Weichu. This is AI-Memory
+Targetted Product Search.
 
 The idea is simple: shopping search should feel like one conversation, even when
 the customer adds details, rejects something, or changes their mind.
 
-Our agent searches 50,000 products locally on a CPU. It uses no runtime API calls,
-model tokens, GPU, credentials, or vector database. The default BM25 starter only
-searches the latest message. We keep its lexical value, but add memory for the
-shopper's current intent.
-
 **[FLIP TO SLIDE 2]**
 
-## Slide 2: The End of Forgetful Search
+## Slide 2: Search that remembers. (0:10-0:21)
 
-Imagine a customer says, "I need boots." Then, "Under 80 dollars." Then, "Not
-leather." Finally, "Actually, make that hiking shoes."
+Three stages, and they are on the slide.
 
-To a person, that is obviously one request developing over time. The starter sees
-four separate BM25 queries. It does not retain the budget, understand that leather
-is excluded, or know that hiking shoes replace boots.
+Today's starter is one-shot keywords: product details from the customer go
+straight into a lexical query. We replace that with an auditable conversation.
+Turns are parsed by deterministic rules against an indexed catalog, then filtered
+algorithmically. The outcome is the proven next turn and a product slate we can
+justify.
 
-That starter reaches a public Hit Rate at 10 of 0.125, an MRR of 0.068034, and an
-average 9.81 turns to the first correct result. BM25 is useful search evidence, but
-by itself it is not a conversation.
+All of it runs over 50,000 products on CPU only, with zero online API calls. No
+model tokens, no GPU, no credentials, and no vector database.
 
 **[FLIP TO SLIDE 3]**
 
-## Slide 3: The Architecture of Intent
+## Slide 3: Largely improved over BM25. (0:21-0:32)
 
-This is the whole architecture. It looks busy, but the flow is pretty simple.
+Here is the shape of the system: shopper messages go into an AI intent ledger,
+and the ledger, not the last sentence, is what selects products.
 
-First, we work out what changed in the new message. The Constraint Extractor turns
-that into typed facts, and the Preference Ledger updates the active intent. The
-Search Planner runs several local retrieval routes. Then the Eligibility Gate
-removes products that break hard requirements, the Candidate Belief Model ranks
-the survivors, and the Question Policy decides whether a clarification would help.
+The default starter searched only the latest message. Our agent carries the
+shopper's intent across turns. It is a local shopping agent that follows a
+changing request instead of treating every sentence as a brand-new search.
 
-The Response Validator checks the organizer contract, and we save seven typed trace
-events per turn so we can inspect what happened. Instead of jumping straight from
-tokens to a BM25 list, we separate understanding, eligibility, ranking, and
-dialogue into stages we can test.
+[TRIM] Under that arrow there are real stages. A constraint extractor turns the
+new message into typed facts. The preference ledger updates the active intent. A
+search planner runs several local retrieval routes. An eligibility gate removes
+products that break hard requirements, a candidate belief model ranks the
+survivors, and a question policy decides whether a clarification would help. A
+response validator checks the organizer contract, and we save seven typed trace
+events per turn so any decision can be inspected.
 
 **[FLIP TO SLIDE 4]**
 
-## Slide 4: The Marketplace Memory
+## Slide 4: The end of forgetful search. (0:32-0:48)
 
-This is the part that makes the agent feel conversational.
+A shopper always starts broad. "I need boots." Then adds a budget: "under 80
+dollars." Then realises he does not want leather. Then changes direction
+entirely: "actually, make that hiking shoes."
 
-We do not save the chat as one giant search string. We save typed constraints with
-an attribute, value, strength, exclusion flag, confidence, and operation.
+To a person, that is obviously one request developing over time. A naive
+stateless search engine sees four separate queries. It does not retain the
+budget, understand that leather is excluded, or know that hiking shoes replace
+boots.
 
-If the customer says, "I prefer red boots," and later says, "Ignore that, I need
-leather boots," the system removes red, keeps boots, adds leather, and starts a new
-intent version. It also treats "not leather" and "no preference" as completely
-different state changes.
-
-BM25 can match the word leather, but it cannot reliably know whether leather is
-wanted or forbidden. Our ledger keeps that meaning explicit, so a negative
-constraint never becomes positive ranking evidence by accident.
+That starter reaches a public Hit Rate at 10 of 0.125, an MRR of 0.068034, and an
+average 9.81 turns to the first correct result. BM25 is useful search evidence,
+but by itself it is not a conversation.
 
 **[FLIP TO SLIDE 5]**
 
-## Slide 5: The Retrieval Conductor and Constraint Firewall
+## Slide 5: Our results (0:48-0:56)
 
-Once the intent is clean, we search through several routes instead of trusting one
-query.
+The headline, up front.
 
-Structured metadata finds exact facts. Exact and expanded SQLite FTS5 find useful
-language. A category route protects broader recall. We combine the routes using
-Reciprocal Rank Fusion with k equals 60, cap each route at 1,000 hits, and
-materialize at most 5,000 candidates so the CPU work stays bounded.
+The default starter is a stateless SQLite FTS5 BM25 search. It scores a
+TechnicalScore of 0.10671. Our agentic, memory-backed product search scores
+0.76884. That is a 7.21 times improvement.
 
-Then the constraint firewall checks every candidate. A product that violates a
-hard requirement or explicit exclusion cannot enter the strict ranking pool. We
-may use a one-constraint near match if the slate is short, but we never relax an
-exclusion.
-
-The starter trusts one OR-based BM25 order. We keep BM25 as one retrieval signal,
-fuse it with structured evidence, and check that every result is actually eligible.
+**[NOTE: 7.21x is the TechnicalScore multiple. The 7.36x on slide 8 is the Hit
+Rate at 10 multiple. Do not swap them.]**
 
 **[FLIP TO SLIDE 6]**
 
-## Slide 6: The Evidence Engine
+## Slide 6: Our agent seeks meaning. (0:56-1:08)
 
-Now we have eligible products, but we still need a stable order and a useful next
-question.
+This is the part that makes the agent feel conversational.
 
-The ranker combines Bayesian log contributions from retrieval routes, soft
-preferences, and privacy-safe aggregate profile signals. A stable softmax produces
-the final scores, and exact ties use `parent_asin`, so repeated runs stay
-deterministic.
+"Must have," "I prefer," "not," "ignore that," and "no preference" all cause
+different state changes. BM25 can match the word "leather," but it cannot
+distinguish required leather, preferred leather, and "not leather."
 
-For clarification, the agent compares posterior entropy and expected conditional
-entropy over up to 64 products. In normal language, it asks the question expected
-to remove the most uncertainty. It still shows up to ten products while asking and
-does not repeat a question the customer declined.
+So we do not save the chat as one giant search string. We save typed constraints:
+attribute, value, strength, excluded, confidence, and operator. Hard constraints
+sit at confidence 0.90 or above, soft ones stay evidence, negation is scoped, and
+every turn resolves to SET, REMOVE, DECLINE, or RETRACT_PROVISIONAL against a
+versioned intent.
 
-BM25 gives a relevance order. Our system adds contribution-level reasons and an
-information-gain question policy.
+Follow the boxes. At A the customer says, "I prefer red boots," so at B we store
+category equals boots and colour equals red. At C they say, "Ignore that, I need
+leather boots." At D we retract the provisional colour, at E we keep the boots
+category because it never conflicted, and at F we add material equals leather and
+bump the intent version.
 
 **[FLIP TO SLIDE 7]**
 
-## Slide 7: Proof Before Promotion
+## Slide 7: 1 search route's not enough. (1:08-1:22)
 
-This is how we stopped ourselves from believing every higher number. Honestly, on
-only 200 public sessions, it is very easy to overreact to a tiny movement.
+Once the intent is clean, we search through several routes instead of trusting
+one query.
 
-The organizer's TechnicalScore is 50 percent Hit Rate at 10, 30 percent MRR, and
-20 percent turn efficiency. We compare candidates on the same samples using a
-paired nonparametric bootstrap and paired permutation test, both with 10,000
-replicates. We also use Holm-Bonferroni correction, minimum detectable difference,
-the Phipson-Smyth p-value floor, and a winner's-curse correction.
+Structured metadata finds exact facts. Full-text search finds useful language. A
+category route protects broader recall. Those are the improved parameters on the
+slide: metadata search, FTS5 categories and filters, category quality, Reciprocal
+Rank Fusion at k equals 60, and a bounded set of materialised candidates. We cap
+each route at 1,000 hits and materialise at most 5,000 candidates, so the CPU
+work stays bounded.
 
-Our ship bar is a corrected TechnicalScore gain of at least 0.01 without an unpaid
-recall loss. The default BM25 result stays frozen as the external baseline, and our
-own experiments face this stricter gate.
+Then a deterministic filter removes anything that breaks the shopper's
+requirements. A product that violates a hard requirement or an explicit exclusion
+cannot enter the strict ranking pool. We may allow a one-constraint near match if
+the slate is short, but we never relax an exclusion.
+
+[TRIM] What survives still needs an order. The ranker combines Bayesian log
+contributions from the routes, soft preferences, and privacy-safe aggregate
+profile signals; a stable softmax produces the final scores, and exact ties break
+on `parent_asin` so repeated runs are deterministic. For clarification, the agent
+compares posterior entropy against expected conditional entropy over up to 64
+products and asks the question expected to remove the most uncertainty, while
+still showing ten products.
+
+The starter trusts one OR-based BM25 order. We keep BM25 as one retrieval signal,
+fuse it with structured evidence, and check that every result is actually
+eligible.
 
 **[FLIP TO SLIDE 8]**
 
-## Slide 8: A 7.36x Leap Over the Starter
+## Slide 8: A 7.36x leap over the starter. (1:22-1:37)
 
 Here are the final results on the unchanged 200-session public evaluator.
 
-The default BM25 starter finds 25 targets, for a Hit Rate at 10 of 12.5 percent.
-Our agent finds 184, for 92 percent. That is 159 additional successful sessions,
-79.5 percentage points higher, and 7.36 times the starter result.
+The agent finds 184 of 200 targets. The starter finds 25. That is 159 additional
+successful sessions.
 
-MRR rises from 0.068034 to 0.524466, a 670.89 percent improvement. Mean turns to
-first correct drops from 9.81 to 3.425, so the right product arrives 65.09 percent
-sooner. TechnicalScore rises from 0.10671 to 0.76884, a 620.49 percent increase.
+Hit Rate at 10 goes from 12.5 percent to 92.0 percent: 79.5 points, a 636 percent
+increase, 7.36 times. MRR goes from 0.068034 to 0.524466, up 670.89 percent, 7.71
+times. Mean turns to first correct drops from 9.81 to 3.425, so the right product
+arrives 6.385 turns sooner, a 65.09 percent reduction. TechnicalScore goes from
+0.10671 to 0.76884, up 620.49 percent, 7.21 times.
 
-Scenario Hit Rate at 10 is 0.90 for Boundary, 0.95 for Browsing, 0.90 for Buying,
-and 0.90 for Intent Override. These are public development results, not a promise
-about the private set. The private evaluation is still the real generalization
+Scenario Hit Rate at 10 is 0.90 Boundary, 0.95 Browsing, 0.90 Buying, and 0.90
+Intent Override. The retained agent posts an efficiency of 0.7575 with zero
+prompt tokens and zero completion tokens.
+
+These are descriptive improvements over the organizer's published starter on the
+same 200-session public set. Private evaluation remains the real generalization
 test.
 
 **[FLIP TO SLIDE 9]**
 
-## Slide 9: The Fixes That Moved the Needle
+## Slide 9: The fixes that moved the needle. (1:37-1:49)
 
-The biggest gains did not come from adding a huge model. They came from cleaning up
-the catalog and handling conversation state correctly.
+The largest gains came from understanding catalog structure and conversation
+state, not from adding a larger model.
 
-Attribute classification, material recovery, and better override retention moved
-Hit Rate at 10 from 0.760 to 0.915. Separator normalization then moved it to 0.920.
-The catalog had 131 concepts across 705 products with inconsistent colon spacing,
-and fixing that moved one target from rank 154 to rank one.
+Hit Rate at 10 started at 0.760. Document-frequency attribute classification,
+catalog-derived material vocabulary, and soft-retain on override took it to
+0.915. Separator normalization took it to 0.920.
 
-We also replaced slow correlated SQL filters that took 263 to 293 milliseconds
-with posting-set filters that take about 3 to 7 milliseconds. Intent Override
-improved from 0.20 to 0.90, a 70-point gain.
+That last one is the story in the middle of the slide. One concept had two raw
+forms: "material: alloy" with a space, and "material:alloy" without. NFKC,
+casefold, and a separator-aware match key normalize both to the same thing. 131
+concepts across 705 products used inconsistent colon spacing, and repairing it
+moved one target from rank 154 to rank one.
 
-So the improvement over BM25 came from reusable catalog structure and from not
-letting stale intent reject an otherwise correct result.
+We also rewrote slow correlated EXISTS and NOT EXISTS filters that took 263 to
+293 milliseconds into posting-set IN and NOT IN filters that take 3 to 7
+milliseconds. Intent Override improved from 0.20 to 0.90.
+
+The starter indexes raw text once. Our build extracts reusable structure, and our
+dialogue layer prevents a valid retrieval from being rejected by stale intent.
 
 **[FLIP TO SLIDE 10]**
 
-## Slide 10: Experiments We Refused to Oversell
+## Slide 10: Experiments we refused to oversell. (1:49-2:01)
 
-Some ideas sounded good and then did basically nothing. We kept those results too.
+Some ideas sounded useful and measured as useless, uncertain, or too expensive.
 
-Always-on tail exploration changed zero outcomes. A popularity tie-break also
-changed nothing. Keyed-feature recovery produced no public gain, although we kept
-it for catalog correctness. Per-value regular-expression matching took more than
-two minutes, so precomputed indexes replaced it.
+Every idea walked the same path on the slide: idea, same-session test,
+statistical gate, then ship, reject, or defer. The gate is not casual. The
+organizer's TechnicalScore is 50 percent Hit Rate at 10, 30 percent MRR, and 20
+percent turn efficiency. We compare candidates on the same samples with a paired
+nonparametric bootstrap and a paired permutation test, both at 10,000 replicates,
+with Holm-Bonferroni correction, a minimum detectable difference, the
+Phipson-Smyth p-value floor, and a winner's-curse correction. Our ship bar is a
+corrected TechnicalScore gain of at least 0.01 with no unpaid recall loss.
 
-The forced TF-IDF fallback looked 0.006110 higher in TechnicalScore, but its 95
-percent confidence interval ran from negative 0.018892 to positive 0.031311. The
-permutation p-value was 0.645335, the Holm-adjusted p-value was 1.0, and the honest
-verdict was "not detectable."
+Four verdicts came back. Rejected: always-on tail exploration changed zero
+outcomes, and a popularity tie-break changed nothing because route evidence had
+already separated the candidates. The tail-only ablation was delta zero,
+confidence interval zero to zero, p equals 1.0, byte-identical across all 200
+sessions.
 
-Improving on BM25 did not mean adding every possible retrieval trick. It meant
-measuring each one and being willing to say, "No, this did not help."
+Uncertain: the forced TF-IDF fallback looked 0.006110 higher in TechnicalScore,
+but its 95 percent confidence interval ran from negative 0.018892 to positive
+0.031311, the permutation p-value was 0.645335, the Holm-adjusted p-value was
+1.0, and the minimum detectable difference was 0.035987. Verdict: not detectable.
+
+Correctness only: keyed-feature recovery produced zero public gain, and we
+retained it purely for catalog correctness and private-set robustness. Replaced:
+per-value regular expressions exceeded two minutes, so precomputed indexes took
+over that path.
+
+Improving on BM25 did not mean accepting every extra retrieval idea. Only
+measured, reproducible gains belonged in the shipped path.
 
 **[FLIP TO SLIDE 11]**
 
-## Slide 11: Test the Conversation
+## Slide 11: Test the conversation, not just the function. (2:01-2:13)
 
-We have 756 automated tests, and the full suite runs in about eight seconds. More
-important than the count is what those tests prove.
+The suite verifies what changes across turns, not only whether one query returns
+rows.
 
-We test memory across turns, overrides that remove only the conflicting value,
-exclusions that can never be relaxed, and "no preference" replies that become a
-decline instead of a fake product value.
+**[SLIDE PRINTS "745 unittest cases". THE SUITE IS NOW 756. UPDATE THE SLIDE OR
+SAY "MORE THAN 745".]**
 
-We also test the organizer response contract, the first ten unique valid
-`parent_asin` values, evaluator byte integrity, deterministic artifact builds,
-stable fallback order, bounded turn history, and the statistical pipeline.
+We have 756 automated tests running in about ten seconds. The four rows on the
+slide are the ones that matter. Memory: "boots" then "black leather," where both
+turns return ten unique items and the later results satisfy accumulated intent.
+Override: "red boots" then "ignore that; leather boots," where red retracts,
+boots remain, and leather becomes active. Exclusion: "boots, but not leather,"
+where no leather recommendation ever appears and the exclusion is never relaxed.
+Boundary: a question answered with "no preference," which must become a decline
+rather than a fake product value, and the question is not repeated.
 
-The starter BM25 tests lexical retrieval. Our suite proves that conversation state
-changes safely and that the same input still produces the same ranking.
+Named proofs, if you want to read the code:
+`test_generic_override_retracts_color_but_preserves_boot_category`,
+`test_exclusion_is_never_relaxed_even_with_zero_strict`, and
+`test_declined_question_is_not_repeated`.
+
+[TRIM] Around those we also hold an evaluator byte-integrity test, a
+deterministic artifact build, a repeated fallback-order test, and a typed
+turn-history cap.
+
+The starter tests lexical retrieval. Our suite tests state transitions,
+constraint safety, deterministic ordering, failure paths, statistics, and the
+organizer contract.
 
 **[FLIP TO SLIDE 12]**
 
-## Slide 12: The Unfinished Frontier
+## Slide 12: The unfinished frontier: time-boxed, not hidden. (2:13-2:23)
 
-We also want to be honest about what is unfinished. These GSD phases are TODOs
-because the submission deadline arrived first. None of them is included in the
-score I just showed.
+These GSD phases remain TODO because the submission deadline arrived first. They
+are plans, not shipped claims, and none of them is in the score I just showed.
 
-Phase 1, the measurement rig, is complete at 15 out of 15 plans. Phase 2, the
-expanded dataset and paraphrase probe, is 11 out of 14. The remaining work includes
-publishing the 300-pair probe and 100-pair cross-check, two expanded corpora, four
-baselines, and paired contrasts.
+Phase 1, the measurement rig, is the completed foundation: 15 of 15 plans, with
+the statistics rig verified 10 out of 10. Phase 2, the paraphrase probe, is 11 of
+14; the 300-pair probe and 100-pair cross-check, two expanded corpora, four
+baselines, and paired contrasts remain.
 
-Phase 3 is TODO for ranking precision and conversational efficiency. Phase 4 is
-TODO for an audited synonym asset, ONNX reranking, and runtime LLM extraction with
-an offline fallback. Phase 5 is the go or no-go checkpoint based on corrected
-marginal gain.
+Phase 3 is ranking and efficiency: bounded slate feedback, frozen linear
+reranking, normalized fusion, confidence-based commitment. Phase 4 is semantic
+spikes: a frozen synonym asset, ONNX reranking, and runtime LLM extraction with
+an offline fallback. Phase 5 is the go/no-go, gated on winner's-curse-corrected
+marginal gain around 0.005 TechnicalScore.
 
-Phase 6 is submission hardening: lazy artifact building, bounded memory across 800
-sessions, soft deadlines, blocked-network proof, and artifact-size evidence. Phase
-7 is the final Innovation and Impact narrative. Phase 8 is clean-environment
-reproduction, the public video and links, disclosures, and the final audit.
+Phase 6 is hardening: lazy build, bounded memory across 800 sessions, soft
+deadlines, blocked-network proof, and artifact-size justification. Phase 7 is the
+evidence-backed Innovation and Impact narrative after the probe. Phase 8 is
+submission: clean reproduction, public video and links, packaged turn history,
+disclosures, and the final audit.
 
-We also deferred SPLADE weights, dense ONNX retrieval, a deeper profile prior, soft
-price scoring, and live pitch preparation to version two. Every future candidate
-still has to beat both our retained agent and the default BM25 reference.
+Still deferred to version two: SPLADE term weights, dense ONNX retrieval, a
+deeper profile prior, soft price proximity, and live pitch preparation. Every
+future candidate must still beat both the deterministic agent we retained and the
+organizer's BM25 reference.
 
 **[FLIP TO SLIDE 13 AND SWITCH TO THE TERMINAL]**
 
-## Slide 13: Demo - Intent Changes, Ranking Changes
+## Slide 13: Demo - intent changes, the ranking changes. (2:23-2:45)
 
-I will finish with a real Intent Override session from the released public set.
-This uses the actual agent and the organizer's normal turn policy.
+I will finish with a real intent-override session from the released public set,
+sample `public_0003`, run with the actual agent and the organizer's normal turn
+policy. The target is `B09YMTWDXJ`, a Casio men's wrist watch, AQ-800E-7A.
 
-The target is `B09YMTWDXJ`, a Casio AQ-800E-7A wristwatch. The customer first asks
-for a wristwatch with a stainless steel band. The target appears at rank two, but
-the evaluator correctly does not count it because the target intent is not active
-yet. On turn two, it moves outside the top ten.
+Turn one, the customer asks for watches, wrist watches, stainless steel band. The
+agent returns ten recommendations and the target is already at rank two, but the
+evaluator correctly does not count it, because the target intent is not active
+yet.
 
-Now the customer says, "Actually, ignore my earlier preference. What I need is:
-Water Resistant."
+Turn two, the customer says "no brand preference." That is stored as a decline,
+the question is suppressed, and the target drops outside the top ten.
 
-Starter BM25 would search another bag of words. Our preference ledger recognizes
-the override, removes the stale constraint, keeps the compatible watch context,
-and reranks the same offline catalog.
+Turn three: "Actually, ignore my earlier preference. What I need is: Water
+Resistant." Starter BM25 would just search another bag of words. Our ledger
+retracts the provisional steel-band intent, keeps the compatible watches context,
+activates water resistance, increments the intent version, and resets slate
+suppression for that new version.
 
-The target returns at rank one. The final result is a hit on turn three at rank
-one. That is Search That Remembers: the customer changes their mind, the stored
-intent changes with them, and the ranking changes for a reason we can inspect.
+The agent reranks the same offline 50,000-product catalog and the target comes
+back at rank one. Final result: hit on turn three at rank one, first hit turn
+three, reciprocal rank 1.0.
+
+That is search that remembers. The customer changes their mind, the stored intent
+changes with them, and the ranking changes for a reason we can inspect.
 
 **[STOP RECORDING WITH `RESULT: HIT on turn 3 at rank 1` STILL VISIBLE]**
