@@ -18,6 +18,7 @@ fails loudly instead of silently costing money, and the recorded argv proves no
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -915,6 +916,63 @@ class PendingExitStatusTest(unittest.TestCase):
 
     def test_the_pending_status_is_distinct_from_the_failure_status(self) -> None:
         self.assertNotIn(PENDING_REQUESTS_EXIT_STATUS, (0, 1))
+
+
+def digest_argument_source(module_source: str) -> str:
+    """How `external_response_record` fills the response's `request_digest`."""
+
+    tree = ast.parse(module_source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "external_response_record"
+    )
+    call = next(
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "AuthoringResponse"
+    )
+    keyword = next(
+        entry for entry in call.keywords if entry.arg == "request_digest"
+    )
+    return ast.dump(keyword.value)
+
+
+class DigestProvenanceTest(unittest.TestCase):
+    """The digest is TAKEN from the queue, never re-derived from a rebuild.
+
+    Asserted on the source because the two are observationally identical while the
+    tamper guard holds -- the guard proves the rebuild agrees, so a recomputing
+    version passes every behavioural test in this module. That equivalence is
+    exactly why the distinction is worth pinning: someone who later relaxed the
+    guard would silently be left with a recomputed digest, and a recomputed digest
+    always agrees with itself. The failure mode is then a replay miss with nothing
+    to say why, which is unrecoverable without re-authoring the whole queue.
+    """
+
+    def test_the_response_takes_the_recorded_digest(self) -> None:
+        source = Path(authoring_module.__file__).read_text(encoding="utf-8")
+        self.assertEqual(
+            digest_argument_source(source),
+            ast.dump(ast.Name(id="recorded_digest", ctx=ast.Load())),
+        )
+
+    def test_the_scan_would_notice_a_recomputed_digest(self) -> None:
+        # Two-sided: a scan that could not tell the two apart would pass on the
+        # very mutation it exists to forbid.
+        rewritten = (
+            "def external_response_record(pending, items, *, model_resolved):\n"
+            "    response = AuthoringResponse(\n"
+            "        request_digest=request_digest(request),\n"
+            "    )\n"
+        )
+        self.assertNotEqual(
+            digest_argument_source(rewritten),
+            ast.dump(ast.Name(id="recorded_digest", ctx=ast.Load())),
+        )
 
 
 class SubprocessIsolationTest(unittest.TestCase):
