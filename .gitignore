@@ -17,6 +17,8 @@ experiments/semantic/model-cache/
 experiments/semantic/generated/
 experiments/reranking/runs/
 experiments/reranking/model-cache/
+experiments/reranking/training-data/
+experiments/reranking/checkpoints/
 **/__pycache__/
 data/catalog.jsonl
 data/*.artifacts/
