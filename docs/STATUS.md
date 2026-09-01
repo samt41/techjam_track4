@@ -42,6 +42,41 @@ Fixed numbers chosen by measurement. They are not catalog-derived, so a very dif
 - Bounds and caps: ranker population cap 5,000 (`ranking.py`), clarification population cap 64 (`clarification.py`), belief trace cap 20 (`coordinator.py`), retrieval route limit 1,000 (`retrieval.py`). These bound per-turn work. They affect latency and, for the ranker cap, recall of very deep candidates. The 5,000 cap was chosen so recall is not truncated on this catalog.
 - Artifact text field weights (`catalog_artifacts.py`): title 6.0, category 4.0, feature 2.5, details 2.5, store 1.5, description 1.0. These weight the FTS index at build time.
 
+### Deliberate zeros: the provenance the detached authoring path cannot observe
+
+A different tier again, and the only one where a hardcoded value is recording an
+absence rather than a choice. It is here because the numbers look tuned and are
+not — they are the measured truth, and the alternative to stating them plainly
+was to invent something plausible.
+
+- `DETACHED_COST_USD = 0.0`, `DETACHED_DURATION_MS = 0`, and zeroed `usage`
+  counters (`arena/datasets/authoring.py`). Build-time only; they do not affect
+  the shipped agent. A corpus is normally authored by `claude_runner`, which
+  spawns `claude -p` and reads a metered envelope back: `total_cost_usd`,
+  `duration_ms` and the four token counters are all reported by the tool. The
+  DETACHED path — `collecting_runner` plus `external_response_record`, reached
+  with `--emit-pending` — exists for a machine that has no `claude` on PATH. It
+  writes the requests it cannot answer to a queue file, an operator has them
+  answered outside this process, and the answers are appended to the same
+  response log. On that path no subprocess runs, so **nothing is billed, timed,
+  or counted, and there is no number to record**. Those three fields are
+  therefore written as zero, which is the amount this repository actually
+  observed. Writing an estimate instead would be worse than useless: the
+  registry entry sums `cost_usd` across the log into the corpus's recorded spend,
+  and `docs/STATUS.md` above uses the measured per-call latency to justify
+  `CALL_TIMEOUT_SECONDS`, so a fabricated number would silently corrupt both a
+  cost claim and a future timeout decision.
+
+  Because a run of zeros is ambiguous on its own — it reads equally as "not
+  billed" and as "nobody filled this in" — every detached record also carries
+  `session_id = "detached-external-authoring"` (`DETACHED_SESSION_ID`). That is
+  the field to grep to tell a subagent-authored log from a metered one, and it is
+  the reason a reader should not read a detached corpus's `cost_usd=0.0` as
+  evidence that authoring was free. Everything else about the path is identical:
+  the same `request_digest` key, the same D-33/D-34/D-35 gates, the same
+  `replay_runner`, and — proven end to end in
+  `tests/test_datasets_detached_authoring.py` — a byte-identical corpus.
+
 ### Hardcoded word relations, still present
 
 These are the exact thing to be skeptical of. They are small hand-written maps of word relations.

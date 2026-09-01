@@ -36,6 +36,18 @@ Two operator notes:
           --divergence-log .scratch/divergence.probe.v1.jsonl \
           --target-snapshot .scratch/targets.probe.v1.json \
           --markdown .scratch/datasets.md
+
+* `--emit-pending` is the DETACHED authoring path, for a machine with no `claude`
+  on PATH. It answers from `--replay` where it can and writes the requests it
+  cannot answer to a queue file, exiting `PENDING_REQUESTS_EXIT_STATUS`. An
+  operator has the queue answered elsewhere, appends the answers to the same log
+  with `authoring.external_response_record` plus `authoring.append_response_log`,
+  and runs the identical command again. Repeat until it exits 0, at which point
+  the normal gated publish has already run. Nothing downstream is aware of the
+  difference: the D-33 bucket gate, the D-34 divergence gate, the D-35
+  faithfulness review, the D-45 publish validation and the D-50 replay
+  reproducibility all execute exactly as they do on the subprocess path, because
+  the substitution is only in who produces the text.
 """
 
 from __future__ import annotations
@@ -55,9 +67,11 @@ from arena.datasets.authoring import (
     AuthoringError,
     AuthoringRequest,
     AuthoringRunner,
+    PendingRequestCollector,
     ReviewPayload,
     attempt_until,
     claude_runner,
+    collecting_runner,
     load_prompt,
     log_record,
     prompt_revision,
@@ -271,6 +285,13 @@ _SOLVABILITY_WORK_LIMIT = 1_000_000
 # make the strata depend on the catalog file, which is one more thing that has to
 # hold still for a corpus to be reproducible.
 _PRICE_BANDS = (("under_20", 20.0), ("under_50", 50.0), ("under_100", 100.0))
+
+# The exit status `--emit-pending` uses when the round wrote work to the queue.
+# Distinct from 1 on purpose: a driving script has to tell "answer these and run
+# me again", which is the normal state of a converging detached run, apart from
+# "this corpus cannot be built", which is not. Anything that treated both as
+# failure would abandon the corpus after the first round.
+PENDING_REQUESTS_EXIT_STATUS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -1368,6 +1389,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="replay a committed response log; no subprocess is spawned",
     )
     parser.add_argument(
+        "--emit-pending",
+        type=Path,
+        default=None,
+        help=(
+            "detached authoring: answer from --replay where possible and write the"
+            " requests it cannot answer to this queue file, exiting"
+            f" {PENDING_REQUESTS_EXIT_STATUS}. No subprocess is spawned"
+        ),
+    )
+    parser.add_argument(
         "--concurrency",
         type=int,
         default=4,
@@ -1400,8 +1431,30 @@ def main(argv: tuple[str, ...] | None = None) -> int:
         )
         return 1
 
+    if arguments.emit_pending is not None and arguments.replay is None:
+        # The queue and the log it is filling are two halves of one file pair, and
+        # --replay already names that log. A second replay flag would let an
+        # operator collect against one log and answer into another, which
+        # converges only by luck.
+        print(
+            "--emit-pending requires --replay <log>: the queue is collected"
+            " against the same response log the answers are appended to",
+            file=sys.stderr,
+        )
+        return 1
+
+    collector: PendingRequestCollector | None = None
     try:
-        return _run(arguments)
+        if arguments.emit_pending is not None:
+            # Built INSIDE the try: a malformed or ambiguous response log makes the
+            # collector refuse at construction, and that is an ordinary generation
+            # failure rather than a pending round. Constructing it outside would
+            # let that refusal escape `main` uncaught.
+            collector = collecting_runner(
+                replay_path=Path(arguments.replay),
+                pending_path=Path(arguments.emit_pending),
+            )
+        return _run(arguments, collector)
     except (
         GenerateError,
         RegistryError,
@@ -1411,11 +1464,27 @@ def main(argv: tuple[str, ...] | None = None) -> int:
         ValueError,
         FileExistsError,
     ) as error:
+        if collector is not None and collector.pending:
+            # A collecting round that queued anything ALWAYS ends in an exception:
+            # a queued request leaves its items with no phrase, `attempt_until`
+            # refuses to return, and the collector itself stops the run at the
+            # wave boundary. So the exception is the expected terminator here, not
+            # a failure, and the queue is what the round produced. A round that
+            # queued NOTHING falls through to the failure path below, which is
+            # what must happen -- a genuine gate failure with a complete log is a
+            # real failure and repeating the round would not fix it.
+            print(f"pending_requests={len(collector.pending)}")
+            print(f"pending_path={collector.pending_path.as_posix()}")
+            print(f"response_log={Path(arguments.replay).as_posix()}")
+            return PENDING_REQUESTS_EXIT_STATUS
         print(f"corpus generation failed: {error}", file=sys.stderr)
         return 1
 
 
-def _run(arguments: argparse.Namespace) -> int:
+def _run(
+    arguments: argparse.Namespace,
+    collector: PendingRequestCollector | None = None,
+) -> int:
     plan = corpus_plan(arguments.corpus)
     stem = corpus_stem(plan.name)
     size = arguments.pairs if plan.paired else arguments.sessions
@@ -1450,7 +1519,10 @@ def _run(arguments: argparse.Namespace) -> int:
         # weight as this phase's real risk.
         snapshot = target_snapshot_path(plan.name)
 
-    runner: AuthoringRunner = (
+    # The collector is a runner: on a hit it IS replay, and on a miss it queues
+    # instead of guessing. Substituting it changes only who produces the text --
+    # every gate, the publish sequence and the registry freeze are untouched.
+    runner: AuthoringRunner = collector if collector is not None else (
         replay_runner(arguments.replay) if arguments.replay else claude_runner
     )
     vocabulary = load_vocabulary()
