@@ -6,6 +6,8 @@ dependencies = []
 
 [project.optional-dependencies]
 semantic-experiment = [
+    "accelerate>=0.20.3,<2",
+    "datasets>=2,<5",
     "numpy>=2.0,<3",
     "sentence-transformers>=5.1,<6",
 ]
