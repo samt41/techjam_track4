@@ -18,6 +18,23 @@ the log at roughly 2-4 MiB instead of 10-40 MiB (L-16, where the repo-weight ris
 is the log and not the 3.2 MiB of corpora), and it means a reviewer can re-derive
 the corpus from committed bytes but cannot re-audit the parse step itself. The
 parse is therefore kept small, total, and tested rather than trusted.
+
+There is a SECOND way to answer a request, and its provenance is weaker in one
+specific, documented respect. `claude_runner` spawns the tool and reads a metered
+envelope back. The DETACHED path -- `collecting_runner` plus
+`external_response_record` -- emits the unanswered requests to a queue file, an
+operator has them answered outside this process, and the answers are appended to
+the same log. Everything downstream is identical: the same digest key, the same
+gates, the same `replay_runner`. What is NOT identical is the metering. No
+subprocess ran here, so no `total_cost_usd`, no `duration_ms` and no `usage`
+counters exist to record. Those fields are written as `0.0` / `0` because that is
+the true amount this repository observed, never as a plausible-looking estimate:
+a fabricated cost would make the corpus's recorded spend a fiction, and a
+fabricated latency would corrupt the throughput measurement the next corpus is
+planned against. `session_id` carries `DETACHED_SESSION_ID` so a reader of a
+committed log can tell a subagent-authored record from a metered one at a glance
+rather than having to infer it from a suspicious run of zeros. `docs/STATUS.md`
+records the same caveat for a reader who never opens this module.
 """
 
 from __future__ import annotations
@@ -42,6 +59,29 @@ PROMPTS_DIRECTORY = Path(__file__).resolve().parent / "assets" / "prompts"
 RESPONSE_LOG_ROOT = Path("data/responses")
 
 RESPONSE_LOG_SCHEMA_VERSION = 1
+
+PENDING_REQUEST_SCHEMA_VERSION = 1
+
+# The `session_id` a detached record carries. A sentinel rather than an empty
+# string for the same reason `_claude_cli_version` records "unavailable": an empty
+# provenance field is indistinguishable from one nobody filled in, whereas this
+# value says which path produced the record and is greppable across a committed
+# log.
+DETACHED_SESSION_ID = "detached-external-authoring"
+
+# What a detached response records for the three metered fields. Zero is the
+# measured truth on this path -- no process ran, so nothing was billed, timed, or
+# counted -- and inventing a plausible number would turn the corpus's recorded
+# spend and latency into fiction. See the module docstring and docs/STATUS.md.
+DETACHED_COST_USD = 0.0
+DETACHED_DURATION_MS = 0
+
+# The `model_resolved` on the placeholder returned for an unanswered request. It
+# is deliberately not a real id and deliberately not an alias, because
+# `AuthoringResponse.validate()` refuses an alias and a real id here would be a
+# lie. It cannot reach a committed log: a run that recorded even one pending
+# request leaves those items unaccepted, and `attempt_until` refuses to return.
+PENDING_MODEL_RESOLVED = "pending-external-authoring"
 
 # Re-authoring cap per constraint, then fail loudly. An unbounded retry loop is
 # the denial-of-service path (T-02-06), and a silent give-up is worse than a
@@ -80,6 +120,18 @@ _KINDS: tuple[str, ...] = ("author", "review")
 # never an input, it is only ever read back off the response (Pitfall 7).
 _MODEL_ALIASES: tuple[str, ...] = ("haiku", "sonnet")
 
+_PENDING_REQUEST_FIELDS: tuple[str, ...] = (
+    "item_ids",
+    "kind",
+    "model_alias",
+    "prompt",
+    "prompt_name",
+    "prompt_revision",
+    "request_digest",
+    "schema_json",
+    "schema_version",
+)
+
 _RESPONSE_LOG_FIELDS: tuple[str, ...] = (
     "cost_usd",
     "duration_ms",
@@ -106,6 +158,16 @@ _MAINTAINER_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 class AuthoringError(RuntimeError):
     """Raised when an authoring call, its parse, or its replay cannot be trusted."""
+
+
+class PendingRequestsError(AuthoringError):
+    """Raised when a collecting run has gathered every request this wave can offer.
+
+    Not a failure: it is the wave boundary. `collecting_runner` keeps going for as
+    long as the requests it cannot answer are independent of one another, and
+    raises here the moment it meets one whose existence depends on an answer it
+    has just queued. The caller turns this into the pending-requests exit status.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,10 +494,11 @@ def log_record(request: AuthoringRequest, response: AuthoringResponse) -> dict[s
     }
 
 
-def write_response_log(path: Path, records: tuple[dict[str, object], ...]) -> None:
-    # Canonical form is not cosmetic: the log is committed, so a re-derivation
-    # that reordered keys would show as a diff indistinguishable from a changed
-    # measurement. Record order is the call order and is preserved.
+def _assert_log_fields(records: tuple[dict[str, object], ...]) -> None:
+    # Extracted so `write_response_log` and `append_response_log` cannot drift
+    # apart. The wording and the 1-based numbering are `write_response_log`'s own
+    # and are preserved verbatim: a detached path that widened the whitelist for
+    # its own convenience is exactly the regression this check exists to stop.
     for number, record in enumerate(records, 1):
         missing = sorted(set(_RESPONSE_LOG_FIELDS) - set(record))
         extra = sorted(set(record) - set(_RESPONSE_LOG_FIELDS))
@@ -443,10 +506,18 @@ def write_response_log(path: Path, records: tuple[dict[str, object], ...]) -> No
             raise AuthoringError(
                 f"response log record {number} has missing={missing} extra={extra}"
             )
-    path.write_text(
-        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
-        encoding="utf-8",
-    )
+
+
+def _serialize_log(records: tuple[dict[str, object], ...]) -> str:
+    return "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
+
+
+def write_response_log(path: Path, records: tuple[dict[str, object], ...]) -> None:
+    # Canonical form is not cosmetic: the log is committed, so a re-derivation
+    # that reordered keys would show as a diff indistinguishable from a changed
+    # measurement. Record order is the call order and is preserved.
+    _assert_log_fields(records)
+    path.write_text(_serialize_log(records), encoding="utf-8")
 
 
 def load_response_log(path: Path) -> tuple[dict[str, object], ...]:
@@ -502,13 +573,12 @@ def _response_from_record(record: dict[str, object]) -> AuthoringResponse:
     return response
 
 
-def replay_runner(path: Path) -> AuthoringRunner:
-    """A runner backed by the frozen log. A production path, not only a test path.
+def _response_index(path: Path) -> dict[str, AuthoringResponse]:
+    """Load a log into its digest-keyed replay index, refusing ambiguity.
 
-    Replay is what makes corpus regeneration offline and byte-reproducible, which
-    is the whole of the determinism claim on this surface (D-50). It is keyed on
-    the request digest, so a prompt edit, a model change, or a different item
-    batch all miss the log loudly instead of silently replaying the wrong call.
+    Shared by `replay_runner` and `collecting_runner` so the two cannot diverge on
+    what they consider a usable log. Both the duplicate refusal and the wrapping
+    of a malformed record are the replay runner's own, moved rather than rewritten.
     """
     index: dict[str, AuthoringResponse] = {}
     try:
@@ -523,6 +593,18 @@ def replay_runner(path: Path) -> AuthoringRunner:
             index[digest] = _response_from_record(record)
     except (KeyError, TypeError, ValueError) as error:
         raise AuthoringError(f"malformed response log at {path}: {error}") from error
+    return index
+
+
+def replay_runner(path: Path) -> AuthoringRunner:
+    """A runner backed by the frozen log. A production path, not only a test path.
+
+    Replay is what makes corpus regeneration offline and byte-reproducible, which
+    is the whole of the determinism claim on this surface (D-50). It is keyed on
+    the request digest, so a prompt edit, a model change, or a different item
+    batch all miss the log loudly instead of silently replaying the wrong call.
+    """
+    index = _response_index(path)
 
     def runner(request: AuthoringRequest) -> AuthoringResponse:
         digest = request_digest(request)
@@ -534,6 +616,375 @@ def replay_runner(path: Path) -> AuthoringRunner:
         return index[digest]
 
     return runner
+
+
+@dataclass(frozen=True, slots=True)
+class PendingRequest:
+    """One request the log cannot answer, carrying everything needed to answer it.
+
+    Self-sufficiency is the whole contract. Whoever answers this record does so
+    with no access to this repository, so the record must hold the prompt itself
+    rather than a pointer to it -- and it holds the prompt EXACTLY as
+    `claude_runner` would have written it to stdin, that is, after `load_prompt`
+    has stripped the maintainer notes and normalized the newlines. Handing over
+    the prompt NAME and letting the answerer re-read the file is the failure mode
+    worth naming: the maintainer note tells the author what the measurement is for
+    (D-57), and a single re-derived byte of whitespace mints a different
+    `request_digest`, so the answer would be filed under a key the generator never
+    looks up and replay would miss it with nothing to say why.
+    """
+
+    schema_version: int
+    request_digest: str
+    kind: str
+    model_alias: str
+    prompt_name: str
+    prompt_revision: str
+    schema_json: str
+    item_ids: tuple[str, ...]
+    prompt: str
+
+    def validate(self) -> None:
+        if self.schema_version != PENDING_REQUEST_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported pending request schema version {self.schema_version}"
+            )
+        if not self.request_digest or not self.prompt_revision:
+            raise ValueError("pending request requires its digest and prompt revision")
+        if self.kind not in _KINDS:
+            raise ValueError(f"kind must be one of {_KINDS}, got {self.kind!r}")
+        if self.model_alias not in _MODEL_ALIASES:
+            raise ValueError(
+                f"model alias must be one of {_MODEL_ALIASES}, got {self.model_alias!r}"
+            )
+        if not self.prompt.strip():
+            raise ValueError("pending request requires a non-empty prompt")
+        if not self.item_ids:
+            raise ValueError("pending request requires at least one item id")
+
+    def as_record(self) -> dict[str, object]:
+        return {
+            "item_ids": list(self.item_ids),
+            "kind": self.kind,
+            "model_alias": self.model_alias,
+            "prompt": self.prompt,
+            "prompt_name": self.prompt_name,
+            "prompt_revision": self.prompt_revision,
+            "request_digest": self.request_digest,
+            "schema_json": self.schema_json,
+            "schema_version": self.schema_version,
+        }
+
+
+def pending_request(request: AuthoringRequest) -> PendingRequest:
+    """Describe an unanswered `AuthoringRequest` for whoever will answer it."""
+
+    record = PendingRequest(
+        schema_version=PENDING_REQUEST_SCHEMA_VERSION,
+        # Computed from the request in hand, exactly as `claude_runner` computes
+        # it, so the queue and the generator agree on the key by construction.
+        request_digest=request_digest(request),
+        kind=request.kind,
+        model_alias=request.model_alias,
+        prompt_name=request.prompt_name,
+        prompt_revision=prompt_revision(request.prompt_name),
+        schema_json=request.schema_json,
+        item_ids=tuple(request.item_ids),
+        prompt=request.prompt,
+    )
+    record.validate()
+    return record
+
+
+def write_pending_requests(path: Path, records: tuple[PendingRequest, ...]) -> None:
+    """Rewrite the pending queue. One canonical JSON object per line."""
+
+    # Rewritten whole rather than appended to, because the queue describes ONE
+    # wave: a stale record left over from a previous round would ask for a request
+    # the generator has already had answered, and the answer would be dead weight
+    # in the log that `append_response_log` then has to refuse as a duplicate.
+    for record in records:
+        record.validate()
+    path.write_text(
+        "".join(
+            json.dumps(record.as_record(), sort_keys=True) + "\n" for record in records
+        ),
+        encoding="utf-8",
+    )
+
+
+def load_pending_requests(path: Path) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise AuthoringError(f"cannot read pending requests at {path}: {error}") from error
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        # json.loads only -- never pickle, eval or yaml (T-02-11).
+        try:
+            record = json.loads(line)
+        except ValueError as error:
+            raise AuthoringError(
+                f"invalid pending request in {path} at line {number}: {error}"
+            ) from error
+        if not isinstance(record, dict):
+            raise AuthoringError(
+                f"invalid pending request in {path} at line {number}: "
+                f"expected an object, got {type(record).__name__}"
+            )
+        rows.append(record)
+    return tuple(rows)
+
+
+def _pending_placeholder(request: AuthoringRequest) -> AuthoringResponse:
+    # An empty item list is a legitimate shape in this system -- it is what a model
+    # that returned `[]` produces -- so nothing downstream needs a special case for
+    # it. The items simply go unaccepted, which is precisely the state a queued
+    # request should leave the run in.
+    response = AuthoringResponse(
+        items=(),
+        model_resolved=PENDING_MODEL_RESOLVED,
+        session_id=DETACHED_SESSION_ID,
+        usage=tuple((name, 0) for name in _USAGE_COUNTERS),
+        cost_usd=DETACHED_COST_USD,
+        duration_ms=DETACHED_DURATION_MS,
+        request_digest=request_digest(request),
+        prompt_revision=prompt_revision(request.prompt_name),
+    )
+    response.validate()
+    return response
+
+
+class PendingRequestCollector:
+    """A replay runner that QUEUES what the log cannot answer instead of guessing.
+
+    Satisfies `AuthoringRunner`, and on a hit is `replay_runner` exactly: the same
+    index, the same duplicate-digest refusal, the same logged response object.
+
+    The interesting half is the miss, because authoring is adaptive. The first
+    attempt's batches are enumerable up front, but a re-authoring attempt exists
+    only because specific items failed their gates, and a review request's prompt
+    contains phrases that do not exist until the author call has been answered. So
+    the full request set is not knowable in advance and the queue has to converge
+    over several rounds rather than being emitted once.
+
+    The rule that decides how much one round may collect is dependency, expressed
+    as item overlap. Two requests naming disjoint item sets cannot depend on each
+    other: an author batch's prompt is built from its own items' gist payloads,
+    and a review batch's from its own items' phrases. So every miss whose items
+    are disjoint from all already-queued misses is genuinely needed and is queued.
+    The first miss that touches an item already queued is a request whose very
+    existence is conditional on an answer nobody has given yet -- re-authoring an
+    item because no phrase came back is an artefact of the empty queue, not a real
+    gate failure -- so it is refused, NOT queued, and the run stops. Queueing it
+    would spend an author's effort on a prompt the converged run may never issue.
+
+    That makes one run collect exactly one dependency-free wave, which is the most
+    the loop structure permits: `arena/datasets/generate.py` fans an entire arm's
+    author stage out before it consumes any of it, so a wave is every batch of one
+    stage rather than a single batch. The probe corpus therefore converges in one
+    round per stage -- author and review for each of the two arms -- rather than
+    in one round per batch.
+    """
+
+    def __init__(self, *, replay_path: Path | None, pending_path: Path) -> None:
+        # A missing log is the FIRST round, not an error: nothing has been answered
+        # yet. A malformed or ambiguous one still raises, through the shared index.
+        self._index: dict[str, AuthoringResponse] = (
+            _response_index(replay_path)
+            if replay_path is not None and Path(replay_path).is_file()
+            else {}
+        )
+        self._pending_path = Path(pending_path)
+        self._pending: list[PendingRequest] = []
+        self._queued_digests: set[str] = set()
+        self._queued_items: set[str] = set()
+        self._pending_path.parent.mkdir(parents=True, exist_ok=True)
+        # Written empty up front so the file always describes this run rather than
+        # the last one, and so "converged" reads as an empty queue rather than as
+        # an absent file a reader has to interpret.
+        self._flush()
+
+    @property
+    def pending(self) -> tuple[PendingRequest, ...]:
+        return tuple(self._pending)
+
+    @property
+    def pending_path(self) -> Path:
+        return self._pending_path
+
+    def _flush(self) -> None:
+        write_pending_requests(self._pending_path, tuple(self._pending))
+
+    def __call__(self, request: AuthoringRequest) -> AuthoringResponse:
+        digest = request_digest(request)
+        logged = self._index.get(digest)
+        if logged is not None:
+            return logged
+        if digest in self._queued_digests:
+            # An identical request repeated inside one run carries no new
+            # information, so it is neither queued twice nor treated as a
+            # dependency on itself. Checked BEFORE the overlap rule below, which
+            # would otherwise swallow this case and leave the de-duplication a
+            # branch nothing could reach.
+            return _pending_placeholder(request)
+        overlapping = sorted(self._queued_items.intersection(request.item_ids))
+        if overlapping:
+            raise PendingRequestsError(
+                f"{len(self._pending)} request(s) queued at {self._pending_path};"
+                f" stopping before a request that depends on an unanswered one"
+                f" through item(s) {overlapping}"
+            )
+        record = pending_request(request)
+        self._pending.append(record)
+        self._queued_digests.add(digest)
+        self._queued_items.update(request.item_ids)
+        self._flush()
+        return _pending_placeholder(request)
+
+
+def collecting_runner(
+    *, replay_path: Path | None, pending_path: Path
+) -> PendingRequestCollector:
+    """Replay what the log holds, queue what it does not. See the class docstring."""
+
+    return PendingRequestCollector(replay_path=replay_path, pending_path=pending_path)
+
+
+def _assert_items_match_schema(
+    items: tuple[dict[str, object], ...], schema_json: str
+) -> None:
+    """Check answered items against the schema the request would have enforced.
+
+    `claude -p --json-schema` enforces this shape inside the tool. On the detached
+    path nothing does, so an answer shaped `{"id": ..., "text": ...}` would parse
+    as JSON, carry a requested id, and then silently produce no phrase -- costing a
+    whole round trip to rediscover. The check is deliberately narrow: key sets and
+    the two value forms this repository's two schemas actually use.
+    """
+    try:
+        schema = json.loads(schema_json)
+        item_schema = schema["items"]
+        properties = item_schema["properties"]
+        required = sorted(item_schema["required"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise AuthoringError(
+            f"pending request carries an unreadable item schema: {error}"
+        ) from error
+    for position, item in enumerate(items, 1):
+        keys = sorted(item)
+        if keys != required:
+            raise AuthoringError(
+                f"answered item {position} has keys {keys}, expected {required}"
+            )
+        for name in required:
+            expected = properties[name]
+            value = item[name]
+            if "enum" in expected and value not in expected["enum"]:
+                raise AuthoringError(
+                    f"answered item {position} field {name!r} is {value!r},"
+                    f" expected one of {sorted(expected['enum'])}"
+                )
+            if expected.get("type") == "string" and not isinstance(value, str):
+                raise AuthoringError(
+                    f"answered item {position} field {name!r} must be a string,"
+                    f" got {type(value).__name__}"
+                )
+
+
+def external_response_record(
+    pending: dict[str, object],
+    items: tuple[dict[str, object], ...],
+    *,
+    model_resolved: str,
+) -> dict[str, object]:
+    """Turn an externally-produced answer into a response-log record.
+
+    The digest is the pending record's own, VERBATIM. The request is rebuilt from
+    the queue only to check that it agrees -- a disagreement means the queue file
+    was edited in transit, and the answer would then be filed under a key the
+    generator never looks up. Recomputing the digest from the rebuilt request
+    instead of checking against the recorded one is the quiet version of that same
+    bug: it would always "agree", and replay would miss with nothing to say why.
+    """
+    missing = sorted(set(_PENDING_REQUEST_FIELDS) - set(pending))
+    extra = sorted(set(pending) - set(_PENDING_REQUEST_FIELDS))
+    if missing or extra:
+        raise AuthoringError(
+            f"pending request has missing={missing} extra={extra}"
+        )
+    if pending["schema_version"] != PENDING_REQUEST_SCHEMA_VERSION:
+        raise AuthoringError(
+            f"unsupported pending request schema version"
+            f" {pending['schema_version']!r}"
+        )
+    recorded_digest = str(pending["request_digest"])
+    try:
+        item_ids = tuple(str(value) for value in pending["item_ids"])  # type: ignore[union-attr]
+        request = AuthoringRequest(
+            kind=str(pending["kind"]),
+            model_alias=str(pending["model_alias"]),
+            prompt_name=str(pending["prompt_name"]),
+            prompt=str(pending["prompt"]),
+            schema_json=str(pending["schema_json"]),
+            item_ids=item_ids,
+        )
+        request.validate()
+    except (TypeError, ValueError) as error:
+        raise AuthoringError(f"pending request is malformed: {error}") from error
+    if request_digest(request) != recorded_digest:
+        raise AuthoringError(
+            f"pending request {recorded_digest} does not hash to its own contents;"
+            " the queue file was edited after it was written, so an answer to it"
+            " would be filed under a key the generator never looks up"
+        )
+    _assert_items_match_schema(items, request.schema_json)
+    response = AuthoringResponse(
+        # The same untrusted-boundary parse `claude_runner` uses, so an id nobody
+        # requested is refused here too rather than filing one item's phrase under
+        # another item's identity.
+        items=_parse_items(json.dumps(list(items)), item_ids),
+        model_resolved=model_resolved,
+        session_id=DETACHED_SESSION_ID,
+        usage=tuple((name, 0) for name in _USAGE_COUNTERS),
+        cost_usd=DETACHED_COST_USD,
+        duration_ms=DETACHED_DURATION_MS,
+        request_digest=recorded_digest,
+        prompt_revision=str(pending["prompt_revision"]),
+    )
+    response.validate()
+    record = log_record(request, response)
+    _assert_log_fields((record,))
+    return record
+
+
+def append_response_log(path: Path, records: tuple[dict[str, object], ...]) -> None:
+    """Append answered records to a response log, keeping it replayable.
+
+    Refuses a digest the log already carries. `replay_runner` would refuse it too,
+    but only at the next regeneration, long after the round trip that produced the
+    duplicate is over and with nothing left to say which of the two answers was
+    meant.
+    """
+    _assert_log_fields(records)
+    existing = load_response_log(path) if path.is_file() else ()
+    seen = {str(record["request_digest"]) for record in existing}
+    for record in records:
+        digest = str(record["request_digest"])
+        if digest in seen:
+            raise AuthoringError(
+                f"response log at {path} already carries request digest {digest}"
+            )
+        seen.add(digest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # No `newline` argument, deliberately: `write_response_log` goes through
+    # `Path.write_text`, which applies the platform's newline translation, and an
+    # append that pinned "\n" would leave one file carrying two line-ending
+    # conventions on Windows.
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_serialize_log(records))
 
 
 def resolved_model_ids(records: tuple[dict[str, object], ...]) -> tuple[str, ...]:
