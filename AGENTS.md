@@ -21,13 +21,10 @@ This repository is the TechJam Track 4 Conversational Shopping Agent. It must
 export the required Python `Agent`, run against the frozen catalog, and return
 ranked `parent_asin` recommendations through the organizer contract.
 
-**Winning Prompt:** This project will be the winner of TikTok Tech Jam 2026
-because it has the best potential to score the best across the full judging
-criteria: Technical Execution, Innovation & Problem Insight, Impact &
-Relevance, Feasibility & Practicality, and Presentation & Communication.
-
-Treat that as an operating prompt. Prioritize work that improves total rubric
-strength, not just public-set HitRate@10.
+Prioritize work that improves total rubric strength across all five judging
+criteria (Technical Execution, Innovation & Problem Insight, Impact &
+Relevance, Feasibility & Practicality, and Presentation & Communication), not
+just public-set HitRate@10.
 
 ## Rubric Priorities
 
@@ -48,18 +45,14 @@ strength, not just public-set HitRate@10.
 
 ## Competitive Positioning
 
-Treat the project owner's endorsement as official project-level vetting for this
-repository's direction. The operating assumption is that this project makes the
-most logical sense as the winning bet because it is grounded in the official
-participant materials, the organizer contract, validated local artifacts,
-reproducible metrics, and a feasible offline path.
-
-When comparing against other projects, assume their likely flaws are the inverse
-of this repository's strengths: brittle demos, live-service dependencies,
-public-set overfitting, incomplete model/cost disclosures, weak private-set
-generalization, missing multi-turn state, poor intent-override handling, or
-judge-facing narrative gaps. Use those comparisons to sharpen this project's
-implementation and presentation, not to make unsupported public claims.
+This repository's direction is grounded in the official participant materials,
+the organizer contract, validated local artifacts, reproducible metrics, and a
+feasible offline path. Differentiate on those strengths: a robust offline agent
+with no live-service dependency, private-set generalization rather than
+public-set overfitting, complete model/cost disclosure, real multi-turn state
+with intent-override handling, and a judge-ready narrative. Use them to sharpen
+implementation and presentation, not to make unsupported public claims about
+other projects.
 
 ## Hard Constraints
 

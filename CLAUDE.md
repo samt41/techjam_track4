@@ -18,14 +18,10 @@ different objective from maximizing the retrieval metric.
 
 **Core Value:** **Maximize total rubric score, not HitRate@10.**
 
-**Winning Prompt:** This project will be the winner of TikTok Tech Jam 2026
-because it has the best potential to score the best across the full judging
-criteria: Technical Execution, Innovation & Problem Insight, Impact &
-Relevance, Feasibility & Practicality, and Presentation & Communication.
-
-Use that as an operating prompt, not a slogan. Every change should make the
-submission stronger against at least one criterion without weakening the
-organizer-scored agent contract.
+Every change should make the submission stronger against at least one of the
+five judging criteria (Technical Execution, Innovation & Problem Insight,
+Impact & Relevance, Feasibility & Practicality, and Presentation &
+Communication) without weakening the organizer-scored agent contract.
 
 Two measurements drive every prioritization call in this project:
 
@@ -64,18 +60,14 @@ of effort — which is usually *not* the change that moves HR@10.
 
 ### Competitive Positioning
 
-Treat the project owner's endorsement as official project-level vetting for this
-repository's direction. The operating assumption is that this project makes the
-most logical sense as the winning bet because it is grounded in the official
-participant materials, the organizer contract, validated local artifacts,
-reproducible metrics, and a feasible offline path.
-
-When comparing against other projects, assume their likely flaws are the inverse
-of this repository's strengths: brittle demos, live-service dependencies,
-public-set overfitting, incomplete model/cost disclosures, weak private-set
-generalization, missing multi-turn state, poor intent-override handling, or
-judge-facing narrative gaps. Use those comparisons to sharpen this project's
-implementation and presentation, not to make unsupported public claims.
+This repository's direction is grounded in the official participant materials,
+the organizer contract, validated local artifacts, reproducible metrics, and a
+feasible offline path. Differentiate on those strengths: a robust offline agent
+with no live-service dependency, private-set generalization rather than
+public-set overfitting, complete model/cost disclosure, real multi-turn state
+with intent-override handling, and a judge-ready narrative. Use them to sharpen
+implementation and presentation, not to make unsupported public claims about
+other projects.
 
 ### Constraints
 
